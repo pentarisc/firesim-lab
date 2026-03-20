@@ -79,7 +79,7 @@ fi
 
 # ── Validate version exists (check run.sh) ────────────────────────────────────
 
-if ! curl -fsSL "${REPO_RAW}/run.sh" -o /dev/null; then
+if ! curl -fsSL "${REPO_RAW}/docker/run.sh" -o /dev/null; then
 echo "$(_red "Error:") Version '$VERSION' not found."
 echo "  Check available tags/branches at:"
 echo "  ${REPO_BASE}"
