@@ -116,7 +116,7 @@ done
 
 # Make run.sh executable
 
-chmod +x "${INSTALL_DIR}/run.sh"
+chmod +x "${INSTALL_DIR}/docker/run.sh"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
@@ -125,12 +125,12 @@ echo "  $(_green "✓  Installation complete.")"
 echo ""
 echo "  $(_bold "Next step — run the launcher:")"
 echo ""
-echo "    $(_cyan "cd ${INSTALL_DIR}")"
+echo "    $(_cyan "cd ${INSTALL_DIR}/docker")"
 echo "    $(_cyan "./run.sh")"
 echo ""
 echo "  The launcher will prompt you for your target project directory"
 echo "  and then start the firesim-lab Docker container."
 echo ""
 echo "  $(_bold "To re-run the launcher any time:")"
-echo "    ${INSTALL_DIR}/run.sh"
+echo "    ${INSTALL_DIR}/docker/run.sh"
 echo ""
