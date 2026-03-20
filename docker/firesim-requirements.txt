@@ -1,0 +1,42 @@
+# firesim-requirements.txt
+
+# Core
+psutil
+doit>=0.34.0
+gitpython
+humanfriendly
+colorama
+argcomplete
+
+# Scientific / plotting
+numpy
+pandas
+matplotlib
+kiwisolver
+pyparsing
+
+# Graphviz binding
+graphviz
+
+# AWS + FS
+awscli
+s3fs==0.4.2
+aiohttp
+
+# Testing
+pytest
+pytest-dependency
+pytest-mock
+moto
+sure
+
+# Dev tools
+black
+mypy
+
+# Docs
+sphinx
+sphinx_rtd_theme
+
+# Misc
+pylddwrap

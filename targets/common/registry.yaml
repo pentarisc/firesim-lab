@@ -1,0 +1,161 @@
+# =============================================================================
+#  firesim-lab/targets/common/registry.yaml
+#
+#  Central registry of available bridges and platform features.
+#  new-target.py reads this to discover options, validate CLI input, and
+#  drive code generation.
+#
+#  To add a new bridge: append a block following the same schema.
+# =============================================================================
+
+bridges:
+
+  - id: uart
+    label: UART Bridge
+    description: >
+      Connects the target's UART TX/RX pins to the host via a token channel.
+      Host driver writes received bytes to a file or stdout.
+    makefrag: uart.mk
+    cpp_define: ENABLE_UART_BRIDGE
+    cpp_header: uart.h
+    gg_scala_dir: null
+    module_macro_prefix: UARTBRIDGEMODULE
+    max_instances: 4
+    driver_class: uart_t
+    # Available substitutions: {idx}, {struct}, {args}
+    constructor_template: "new uart_t(*this, {struct}, {idx}, {args})"
+    scala_bridge_package: firesimlab.bridges
+    runtime_plusargs:
+      - flag: "+uart-loopback"
+        description: "Echo TX bytes back to RX (no host file needed)"
+      - flag: "+uart-out=<path>"
+        description: "Write TX bytes to the given file"
+    requires: []
+
+  - id: fased
+    label: FASED Memory Timing Model
+    description: >
+      Attaches a target AXI4 port to the FASED DRAM timing model.
+      The C++ driver is built into firesim-lib automatically; this entry
+      adds makefrag documentation and the GoldenGate symlink hook only.
+    makefrag: fased.mk
+    cpp_define: null            # handled by firesim_top_t base class
+    cpp_header: null
+    gg_scala_dir: null
+    module_macro_prefix: FASEDMEMORYTIMINGMODEL
+    max_instances: 1
+    driver_class: null          # auto-registered by firesim_top_t
+    constructor_template: null
+    scala_bridge_package: firesim.bridges
+    runtime_plusargs:
+      - flag: "+mm-unified-latency=<cycles>"
+        description: "Simple unified read/write latency model"
+      - flag: "+dramsim"
+        description: "Enable DRAMSim2 timing model"
+      - flag: "+fased-init-depth=<n>"
+        description: "Initial DRAM row-buffer fill depth"
+    requires: []
+
+  - id: blockdev
+    label: Block Device Bridge
+    description: >
+      Exposes a block device (disk image) to the target via a request/response
+      token bridge. Backed by a raw binary image on the host.
+    makefrag: blockdev.mk
+    cpp_define: ENABLE_BLOCKDEV_BRIDGE
+    cpp_header: blockdev.h
+    gg_scala_dir: null
+    module_macro_prefix: BLOCKDEVBRIDGEMODULE
+    max_instances: 2
+    driver_class: blockdev_t
+    constructor_template: "new blockdev_t(*this, {struct}, {idx}, {args})"
+    scala_bridge_package: firesimlab.bridges
+    runtime_plusargs:
+      - flag: "+blkdev-in-mem=1"
+        description: "Back the block device with an in-memory buffer (for testing)"
+      - flag: "+blkdev-img=<path>"
+        description: "Path to a raw disk image file"
+    requires: []
+
+  - id: iceblk
+    label: IceBlk (lightweight block device)
+    description: >
+      Lightweight alternative to BlockDevBridge — single-port, no DMA,
+      suitable for small bare-metal targets that only need read access.
+    makefrag: iceblk.mk
+    cpp_define: ENABLE_ICEBLK_BRIDGE
+    cpp_header: iceblk.h
+    gg_scala_dir: null
+    module_macro_prefix: ICEBLKBRIDGEMODULE
+    max_instances: 1
+    driver_class: iceblk_t
+    constructor_template: "new iceblk_t(*this, {struct}, {idx}, {args})"
+    scala_bridge_package: firesimlab.bridges
+    runtime_plusargs:
+      - flag: "+iceblk-img=<path>"
+        description: "Path to a raw disk image file"
+    requires: []
+
+  - id: simplenic
+    label: Simple NIC Bridge
+    description: >
+      Token-based network bridge backed by a switch process on the host.
+      Enables multi-node FireSim simulations.
+    makefrag: simplenic.mk
+    cpp_define: ENABLE_SIMPLENIC_BRIDGE
+    cpp_header: simplenic.h
+    gg_scala_dir: null
+    module_macro_prefix: SIMPLENICBRIDGEMODULE
+    max_instances: 1
+    driver_class: simplenic_t
+    constructor_template: "new simplenic_t(*this, {struct}, {idx}, {args})"
+    scala_bridge_package: firesimlab.bridges
+    runtime_plusargs:
+      - flag: "+niclog=<path>"
+        description: "Log NIC token traffic to file"
+      - flag: "+nic-loopback"
+        description: "Loopback NIC TX to RX (single-node test)"
+    requires: []
+
+# ---------------------------------------------------------------------------
+# Features — non-bridge build-time scaffolding options
+# ---------------------------------------------------------------------------
+features:
+
+  - id: verilog-blackbox
+    label: Verilog BlackBox DUT
+    description: >
+      Generate a Chisel BlackBox wrapper and a stub Verilog module sized to
+      match the selected bridges (AXI4 for FASED, UART pins, etc.)
+    requires_bridge: []
+
+  - id: multi-clock
+    label: Multi-clock target
+    description: >
+      Adds a RationalClockBridge and generates a multi-clock TargetTop
+      scaffold exposing separate clock domains to the DUT.
+    requires_bridge: []
+
+  - id: printf-synthesis
+    label: Printf synthesis
+    description: >
+      Enables GoldenGate printf synthesis pass so target Chisel printf()
+      calls are bridged to the host at simulation time.
+    requires_bridge: []
+
+# ---------------------------------------------------------------------------
+# Platforms — choices for --platform
+# ---------------------------------------------------------------------------
+platforms:
+
+  - id: verilator
+    label: "Verilator (software metasimulation)"
+    config_suffix: VerilatorConfig
+
+  - id: vcs
+    label: "VCS (software metasimulation)"
+    config_suffix: VCSConfig
+
+  - id: f2
+    label: "AWS F2 FPGA"
+    config_suffix: F2Config

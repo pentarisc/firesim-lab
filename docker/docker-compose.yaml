@@ -1,0 +1,158 @@
+# =============================================================================
+#  docker-compose.yaml — firesim-lab simulation environment
+#
+#  Tier layout (all three tiers present at runtime):
+#    /firesim          — baked into image (immutable, Tier 1)
+#    /firesim-lab      — baked into image (immutable, Tier 2)
+#    /target           — mounted from host (your project, Tier 3)
+#
+#  Named volumes:
+#    sbt-ivy-cache     — ~/.ivy2        (Ivy artifact cache)
+#    sbt-coursier      — ~/.cache/coursier (Coursier resolver cache)
+#    sbt-boot          — ~/.sbt/boot    (SBT launcher bootstrap)
+#    sbt-global        — ~/.sbt/1.0     (global SBT plugins/settings)
+#
+#  The image pre-warms these caches during build (pip install + sbt update).
+#  Named volumes persist them across container restarts so re-runs are fast
+#  even after the container is removed.  The image-internal cache acts as a
+#  warm seed; Docker merges image layers with volume contents on first start.
+#
+#  Required .env variables (written by run.sh):
+#    HOST_TARGET_DIR   — absolute path to the user's target project on the host
+#    FIRESIM_IMAGE     — image name:tag  (e.g. myorg/firesim-lab:latest)
+#    CONTAINER_NAME    — name for the running container
+# =============================================================================
+
+services:
+  firesim-lab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        FIRESIM_COMMIT: ${FIRESIM_COMMIT:-main}
+        FIRESIM_LAB_COMMIT: ${FIRESIM_LAB_COMMIT:-main}
+        SBT_VERSION: ${SBT_VERSION:-1.10.1}
+        JAVA_VERSION: ${JAVA_VERSION:-17}
+        
+    image: ${FIRESIM_IMAGE:-firesim-lab:latest}
+    container_name: ${CONTAINER_NAME:-firesim-lab}
+
+    user: "${HOST_UID}:${HOST_GID}"
+
+    # Keep stdin open so `docker exec` and interactive sessions work.
+    # The default command drops into bash; override on the CLI if needed.
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+    # ── Environment variables visible inside the container ──────────────────
+    environment:
+      # Tier 1 — FireSim checkout (baked into image)
+      FIRESIM_ROOT: /firesim
+
+      # Tier 2 — firesim-lab framework (baked into image)
+      FIRESIM_LAB_ROOT: /firesim-lab
+
+      # Tier 3 — user target project (mounted from host)
+      TARGET_ROOT: /target
+
+      # All elaboration outputs and simulator binaries land here.
+      # This path is inside the mounted volume so it survives restarts.
+      GENERATED_DIR: /target/generated-src
+
+      # SBT options — memory limits and disable the interactive supershell
+      # (supershell does not render correctly in non-TTY CI environments).
+      SBT_OPTS: "-Xmx8g -Xss8m -Dsbt.supershell=false"
+
+      # SBT_COMMAND is used by firesim's Makefile to invoke SBT.
+      # We override it here to point at the target's own build.sbt so that
+      # the full ProjectRef chain (target → firesim-lab → firesim) resolves
+      # from the target's root rather than from firesim/sim/.
+      SBT_COMMAND: >-
+        sbt
+        --rootdir /target
+        -Xmx8g -Xss8m
+        -Dsbt.supershell=false
+
+      # Verilator thread count — set to number of physical cores for speed.
+      # Override in .env or on the command line.
+      VERILATOR_THREADS: ${VERILATOR_THREADS:-4}
+
+    # ── Volume mounts ───────────────────────────────────────────────────────
+    volumes:
+      # ── Tier 3: user target project ──────────────────────────────────────
+      # The entire target project directory is mounted read-write.
+      # generated-src/ lands inside here (see GENERATED_DIR above) so all
+      # build artifacts persist on the host between container runs.
+      - type: bind
+        source: ${HOST_TARGET_DIR}
+        target: /target
+
+      # ── SBT / Ivy artifact cache ──────────────────────────────────────────
+      # Ivy2 stores downloaded JARs and POMs.  Persisting this named volume
+      # means dependencies are not re-fetched after `docker pull` or rebuild.
+      # On first start Docker seeds the volume from the image layer
+      # (/home/firesim-lab/.ivy2) which was pre-warmed during `docker build`.
+      - type: volume
+        source: sbt-ivy-cache
+        target: /home/firesim-lab/.ivy2
+
+      # ── Coursier resolver cache ───────────────────────────────────────────
+      # Coursier is SBT 1.x's default resolver.  Separate from Ivy2 above.
+      - type: volume
+        source: sbt-coursier
+        target: /home/firesim-lab/.cache/coursier
+
+      # ── SBT boot directory ────────────────────────────────────────────────
+      # Stores the SBT launcher and Scala compiler distributions.
+      # Seeded from image; persisted so `sbt` starts instantly.
+      - type: volume
+        source: sbt-boot
+        target: /home/firesim-lab/.sbt/boot
+
+      # ── SBT global plugins and settings ──────────────────────────────────
+      - type: volume
+        source: sbt-global
+        target: /home/firesim-lab/.sbt/1.0
+
+      # ── Verilator build cache (ccache) ────────────────────────────────────
+      # Verilator invokes g++ on hundreds of generated .cpp files.
+      # ccache eliminates redundant recompilation when only a subset changes.
+      # The image should have ccache installed and CCACHE_DIR set.
+      - type: volume
+        source: verilator-ccache
+        target: /home/firesim-lab/.cache/ccache
+
+    # ── Resource limits ─────────────────────────────────────────────────────
+    # Chisel elaboration + Verilator compilation are memory-intensive.
+    # Adjust to fit the host machine.  These are soft limits (reservation)
+    # and hard limits (limit).
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY_LIMIT:-16g}
+        reservations:
+          memory: ${CONTAINER_MEMORY_RESERVE:-8g}
+
+    # ── Working directory ────────────────────────────────────────────────────
+    # Drop into the target project root so `source env.sh && make elaborate`
+    # works immediately without any `cd`.
+    working_dir: /target
+
+# =============================================================================
+#  Named volumes
+#  Docker manages these on the host under /var/lib/docker/volumes/.
+#  They persist until explicitly removed with `docker volume rm`.
+#  Each is seeded on first use from the corresponding image layer path.
+# =============================================================================
+volumes:
+  sbt-ivy-cache:
+    name: firesim-lab-sbt-ivy
+  sbt-coursier:
+    name: firesim-lab-sbt-coursier
+  sbt-boot:
+    name: firesim-lab-sbt-boot
+  sbt-global:
+    name: firesim-lab-sbt-global
+  verilator-ccache:
+    name: firesim-lab-verilator-ccache
