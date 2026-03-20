@@ -9,7 +9,7 @@
 # 4. Prints instructions — then stops (no Docker interaction here)
 #
 # Usage:
-# curl -sSL https://github.com/pentarisc/firesim-lab/main/install.sh | bash
+# curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/install.sh | bash
 #
 # Install specific version (tag/branch):
 # curl -sSL .../install.sh | VERSION=v1.2.0 bash
@@ -32,7 +32,7 @@ else
 VERSION="${VERSION:-main}"
 fi
 
-REPO_BASE="https://github.com/pentarisc/firesim-lab"
+REPO_BASE="https://raw.githubusercontent.com/pentarisc/firesim-lab"
 REPO_RAW="${REPO_BASE}/${VERSION}"
 
 # ── Install location ──────────────────────────────────────────────────────────

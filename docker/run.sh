@@ -44,7 +44,7 @@ if [[ ! -t 0 && $_non_interactive_safe -eq 0 ]]; then
   run.sh uses interactive prompts and must be run from a local file,
   not piped from curl.  The correct entry point is install.sh:
 
-    curl -sSL https://github.com/pentarisc/firesim-lab/main/install.sh | bash
+    curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/install.sh | bash
 
   install.sh downloads run.sh to ~/.firesim-lab/ and tells you what to do next.
 
@@ -54,7 +54,7 @@ fi
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-REPO_RAW="https://github.com/pentarisc/firesim-lab/main"
+REPO_RAW="https://raw.githubusercontent.com/pentarisc/firesim-lab/main"
 
 # URL of the docker-compose.yaml — downloaded if not already local.
 COMPOSE_URL="${REPO_RAW}/docker-compose.yaml"

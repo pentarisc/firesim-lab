@@ -1,9 +1,7 @@
-```markdown
 > [!WARNING]
 > This repository is under active development and is not yet ready for use.
 > Functionality may be incomplete, broken, or subject to breaking changes
 > without notice. Do not use this in production or for any critical work.
-```
 
 # firesim-lab
 
@@ -189,7 +187,7 @@ The entire setup — including the Docker image build — is driven by a single
 bootstrap command:
 
 ```bash
-curl -sSL https://github.com/pentarisc/firesim-lab/main/docker/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash
 ```
 
 This downloads `run.sh`, `docker-compose.yaml`, and the `Dockerfile` into
