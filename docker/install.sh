@@ -42,7 +42,7 @@ INSTALL_DIR="${INSTALL_DIR:-${HOME}/.firesim-lab}"
 # Files to download from the repo
 
 FILES=(
-"run.sh"
+"docker/run.sh"
 "docker/docker-compose.yaml"
 "docker/Dockerfile"
 )
