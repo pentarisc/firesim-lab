@@ -159,6 +159,9 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r /firesim-lab/docker/firesim-requirements.txt && \
     pip3 install --no-cache-dir -r /firesim-lab/scripts/requirements.txt
 
+# Build and install the new-target python tool.
+RUN cd /firesim-lab/scripts && pip install -e .
+
 ENV FIRESIM_LAB_ROOT=/firesim-lab
 RUN chown -R firesim-lab:firesim-lab /firesim /firesim-lab
 

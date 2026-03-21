@@ -39,6 +39,9 @@ python3 /firesim-lab/scripts/new-target.py --name my-test --bridge uart --dry-ru
 Dependencies:  pip install jinja2 pyyaml click
 """
 
+# Change this to appropriate method of specifying versions for python projects.
+__version__ = '0.1'
+
 import sys
 import os
 import re

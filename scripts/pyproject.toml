@@ -1,0 +1,7 @@
+# pyproject.toml
+[project]
+name = "new-target"
+dynamic = ["version"]
+
+[project.scripts]
+init-target = "init_target:main"
