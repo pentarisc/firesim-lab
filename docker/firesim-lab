@@ -437,9 +437,12 @@ _wait_for_container() {
 }
 
 if _container_running; then
-  echo "  $(_green "✓") Container already running — entering shell..."
+  echo "  $(_green "✓") Container already running."
   echo ""
-  docker exec -it "$CONTAINER_NAME" bash
+  echo "  $(_bold "$(_cyan "[ ENTERING CONTAINER SHELL — type 'exit' to return to host ]")")"
+  echo ""
+  docker exec -it -e "PS1=(firesim-lab \[\033[36m\]\W\[\033[0m\]) $ " \
+  "$CONTAINER_NAME" bash --rcfile <(echo 'source ~/.bashrc 2>/dev/null; PS1="(firesim-lab \[\033[36m\]\W\[\033[0m\]) $ "')
   exit 0
 fi
 

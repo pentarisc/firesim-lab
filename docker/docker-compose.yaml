@@ -18,7 +18,7 @@
 #  warm seed; Docker merges image layers with volume contents on first start.
 #
 #  Required .env variables (written by run.sh):
-#    HOST_TARGET_DIR   — absolute path to the user's target project on the host
+#    HOST_WORKSPACE_DIR   — absolute path to the user's target project on the host
 #    FIRESIM_IMAGE     — image name:tag  (e.g. myorg/firesim-lab:latest)
 #    CONTAINER_NAME    — name for the running container
 # =============================================================================
@@ -56,10 +56,6 @@ services:
       # Tier 3 — user target project (mounted from host)
       TARGET_ROOT: /target
 
-      # All elaboration outputs and simulator binaries land here.
-      # This path is inside the mounted volume so it survives restarts.
-      GENERATED_DIR: /target/generated-src
-
       # SBT options — memory limits and disable the interactive supershell
       # (supershell does not render correctly in non-TTY CI environments).
       SBT_OPTS: "-Xmx8g -Xss8m -Dsbt.supershell=false"
@@ -85,7 +81,7 @@ services:
       # generated-src/ lands inside here (see GENERATED_DIR above) so all
       # build artifacts persist on the host between container runs.
       - type: bind
-        source: ${HOST_TARGET_DIR}
+        source: ${HOST_WORKSPACE_DIR}
         target: /target
 
       # ── SBT / Ivy artifact cache ──────────────────────────────────────────
