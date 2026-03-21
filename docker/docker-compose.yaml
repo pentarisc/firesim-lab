@@ -60,16 +60,6 @@ services:
       # (supershell does not render correctly in non-TTY CI environments).
       SBT_OPTS: "-Xmx8g -Xss8m -Dsbt.supershell=false"
 
-      # SBT_COMMAND is used by firesim's Makefile to invoke SBT.
-      # We override it here to point at the target's own build.sbt so that
-      # the full ProjectRef chain (target → firesim-lab → firesim) resolves
-      # from the target's root rather than from firesim/sim/.
-      SBT_COMMAND: >-
-        sbt
-        --rootdir /target
-        -Xmx8g -Xss8m
-        -Dsbt.supershell=false
-
       # Verilator thread count — set to number of physical cores for speed.
       # Override in .env or on the command line.
       VERILATOR_THREADS: ${VERILATOR_THREADS:-4}

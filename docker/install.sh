@@ -10,7 +10,7 @@
 # 5. Prints instructions — then stops (no Docker interaction here)
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash
 #
 # Install specific version (tag/branch):
 #   curl -sSL .../install.sh | VERSION=v1.2.0 bash

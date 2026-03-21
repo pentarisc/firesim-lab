@@ -436,13 +436,45 @@ _wait_for_container() {
   echo " $(_green "ready")"
 }
 
+_enter_shell() {
+  echo "  $(_bold "$(_cyan "[ ENTERING CONTAINER SHELL — type 'exit' to return to host ]")")"
+  echo ""
+  local rc
+  rc=$(mktemp)
+  {
+    echo 'source /etc/bash.bashrc 2>/dev/null'
+    echo 'source ~/.bashrc 2>/dev/null'
+    echo "PS1='(firesim-lab \[\033[36m\]\w\[\033[0m\]) $ '"
+    echo "printf '%b\n' '\033[1m\033[36m'"
+    echo "printf '%b\n' '  ███████╗██╗██████╗ ███████╗███████╗██╗███╗   ███╗      ██╗      █████╗ ██████╗'"
+    echo "printf '%b\n' '  ██╔════╝██║██╔══██╗██╔════╝██╔════╝██║████╗ ████║      ██║     ██╔══██╗██╔══██╗'"
+    echo "printf '%b\n' '  █████╗  ██║██████╔╝█████╗  ███████╗██║██╔████╔██║█████╗██║     ███████║██████╔╝'"
+    echo "printf '%b\n' '  ██╔══╝  ██║██╔══██╗██╔══╝  ╚════██║██║██║╚██╔╝██║╚════╝██║     ██╔══██║██╔══██╗'"
+    echo "printf '%b\n' '  ██║     ██║██║  ██║███████╗███████║██║██║ ╚═╝ ██║      ███████╗██║  ██║██████╔╝'"
+    echo "printf '%b\n' '  ╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝╚═╝     ╚═╝      ╚══════╝╚═╝  ╚═╝╚═════╝'"
+    echo "printf '%b\n' '\033[0m'"
+    echo "printf '%b\n' '  \033[1mWorkspace\033[0m : /target  \033[2m(host: ${WORKSPACE_DIR})\033[0m'"
+    echo "printf '%b\n' '  \033[1mProject\033[0m   : ${PROJECT_NAME:-(none detected)}'"
+    echo "printf '%b\n' '  \033[1mImage\033[0m     : ${FIRESIM_IMAGE}'"
+    echo "printf '%b\n' ''"
+    echo "printf '%b\n' '  \033[1mQuick reference:\033[0m'"
+    echo "printf '%b\n' '    cd /target/<project> && source env.sh'"
+    echo "printf '%b\n' '    make elaborate    — generate Verilog'"
+    echo "printf '%b\n' '    make verilator    — compile simulation'"
+    echo "printf '%b\n' '    make run          — run simulation'"
+    echo "printf '%b\n' '    python3 \$FIRESIM_LAB_ROOT/scripts/new-target.py --list'"
+    echo "printf '%b\n' ''"
+    echo "printf '%b\n' '  \033[2mType exit to return to host shell.\033[0m'"
+    echo "printf '%b\n' ''"
+  } > "$rc"
+  docker cp "$rc" "$CONTAINER_NAME:/tmp/.firesim-lab-rc" > /dev/null 2>&1 && rm "$rc"
+  docker exec -it "$CONTAINER_NAME" bash --rcfile /tmp/.firesim-lab-rc
+}
+
 if _container_running; then
   echo "  $(_green "✓") Container already running."
   echo ""
-  echo "  $(_bold "$(_cyan "[ ENTERING CONTAINER SHELL — type 'exit' to return to host ]")")"
-  echo ""
-  docker exec -it -e "PS1=(firesim-lab \[\033[36m\]\W\[\033[0m\]) $ " \
-  "$CONTAINER_NAME" bash --rcfile <(echo 'source ~/.bashrc 2>/dev/null; PS1="(firesim-lab \[\033[36m\]\W\[\033[0m\]) $ "')
+  _enter_shell
   exit 0
 fi
 
@@ -506,4 +538,4 @@ echo "  $(_bold "Opening shell — 'exit' leaves the shell but keeps the contain
 echo "  $(_bold "To stop the container:") firesim-lab --down"
 echo ""
 
-docker exec -it "$CONTAINER_NAME" bash
+_enter_shell
