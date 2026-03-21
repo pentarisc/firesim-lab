@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-new-target.py — FireSim-lab target project generator
+init_target.py — FireSim-lab target project generator
 =====================================================
 
 Creates a self-contained FireSim target project OUTSIDE the firesim-lab tree.
@@ -13,34 +13,29 @@ Dependency chain:
 Usage examples
 --------------
 # List available bridges and features
-python3 /firesim-lab/scripts/new-target.py --list
+init-target --list
 
 # Minimal — creates ./my-baremetal/
-python3 /firesim-lab/scripts/new-target.py --name my-baremetal --bridge uart,fased
+init-target --name my-baremetal --bridge uart,fased
 
 # Explicit output location, all options
-python3 /firesim-lab/scripts/new-target.py \\
-    --name my-soc \\
-    --output-dir ~/projects \\
-    --bridge uart,fased,blockdev \\
-    --platform verilator,vcs \\
-    --feature verilog-blackbox \\
-    --axi-addr-width 40 --axi-data-width 128 --axi-id-width 6
+init-target --name my-soc \\
+            --output-dir ~/projects \\
+            --bridge uart,fased,blockdev \\
+            --platform verilator,vcs \\
+            --feature verilog-blackbox \\
+            --axi-addr-width 40 --axi-data-width 128 --axi-id-width 6
 
 # Non-Docker paths
-python3 /firesim-lab/scripts/new-target.py \\
-    --name my-baremetal \\
-    --lab-root /opt/firesim-lab \\
-    --firesim-root /opt/firesim
+init-target --name my-baremetal \\
+            --lab-root /opt/firesim-lab \\
+            --firesim-root /opt/firesim
 
 # Dry run
-python3 /firesim-lab/scripts/new-target.py --name my-test --bridge uart --dry-run
+init-target --name my-test --bridge uart --dry-run
 
 Dependencies:  pip install jinja2 pyyaml click
 """
-
-# Change this to appropriate method of specifying versions for python projects.
-__version__ = '0.1'
 
 import sys
 import os
@@ -57,7 +52,7 @@ for pkg in ("jinja2", "yaml", "click"):
     except ImportError:
         missing.append(pkg if pkg != "yaml" else "pyyaml")
 if missing:
-    print(f"[new-target] Missing: {', '.join(missing)}. Run: pip install {' '.join(missing)}")
+    print(f"[init-target] Missing: {', '.join(missing)}. Run: pip install {' '.join(missing)}")
     sys.exit(1)
 
 import click
@@ -65,7 +60,7 @@ import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 SCRIPT_DIR   = Path(__file__).resolve().parent
-LAB_ROOT     = SCRIPT_DIR.parent
+LAB_ROOT     = SCRIPT_DIR.parent.parent
 TEMPLATE_DIR = SCRIPT_DIR / "templates"
 REGISTRY     = LAB_ROOT / "targets" / "common" / "registry.yaml"
 
@@ -177,12 +172,11 @@ def main(name, output_dir, lab_root, firesim_root, sbt_version,
 
     \b
     Quick start:
-      python3 /firesim-lab/scripts/new-target.py \\
-          --name my-baremetal --bridge uart,fased --feature verilog-blackbox
+      init-target --name my-baremetal --bridge uart,fased --feature verilog-blackbox
 
     \b
     Discover available bridges/features:
-      python3 /firesim-lab/scripts/new-target.py --list
+      init-target --list
     """
     reg    = load_registry()
     bmap   = bridge_map(reg)
@@ -271,7 +265,7 @@ def main(name, output_dir, lab_root, firesim_root, sbt_version,
 
     # ── Summary ───────────────────────────────────────────────────────────────
     click.echo()
-    click.echo("┌─ new-target.py ─────────────────────────────────────────────")
+    click.echo("┌─ init-target ───────────────────────────────────────────────")
     click.echo(f"│  Target name    : {name}")
     click.echo(f"│  Output dir     : {project_dir}")
     click.echo(f"│  Scala package  : {scala_package}")

@@ -2,7 +2,7 @@
 #  firesim-lab/targets/common/registry.yaml
 #
 #  Central registry of available bridges and platform features.
-#  new-target.py reads this to discover options, validate CLI input, and
+#  init-target reads this to discover options, validate CLI input, and
 #  drive code generation.
 #
 #  To add a new bridge: append a block following the same schema.

@@ -2,27 +2,27 @@
 pip install -r scripts/requirements.txt
 
 # Discover what's available
-python3 scripts/new-target.py --list
+init-target --list
 
 # Typical invocations
-python3 scripts/new-target.py --name my-dsp --bridge uart,fased \
+init-target --name my-dsp --bridge uart,fased \
     --feature verilog-blackbox --blackbox-name MyDSP
 
 # Repeated flags style (equivalent)
-python3 scripts/new-target.py --name my-dsp \
-    --bridge uart --bridge fased \
-    --feature verilog-blackbox
+init-target --name my-dsp \
+            --bridge uart --bridge fased \
+            --feature verilog-blackbox
 
 # Multi-platform, custom AXI widths, custom package/design names
-python3 scripts/new-target.py --name my-soc \
-    --package mysoc --design MySoCTop \
-    --bridge uart,fased,blockdev \
-    --platform verilator,vcs \
-    --feature verilog-blackbox \
-    --axi-addr-width 40 --axi-data-width 128 --axi-id-width 6
+init-target --name my-soc \
+            --package mysoc --design MySoCTop \
+            --bridge uart,fased,blockdev \
+            --platform verilator,vcs \
+            --feature verilog-blackbox \
+            --axi-addr-width 40 --axi-data-width 128 --axi-id-width 6
 
 # Always dry-run first
-python3 scripts/new-target.py --name my-soc --bridge uart --dry-run
+init-target --name my-soc --bridge uart --dry-run
 
 # Overwrite an existing target
-python3 scripts/new-target.py --name my-soc --bridge uart,fased --force
+init-target --name my-soc --bridge uart,fased --force

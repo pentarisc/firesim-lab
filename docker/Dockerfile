@@ -63,7 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates gnupg \
     # Java runtime (needed by SBT and Scala)
     openjdk-${JAVA_VERSION}-jdk-headless \
-    # Python (needed by firesim build scripts and new-target.py)
+    # Python (needed by firesim build scripts and init-target)
     python3 python3-pip python3-venv python3-dev \
     # Verilator simulator
     verilator \
@@ -151,7 +151,7 @@ RUN git clone https://github.com/pentarisc/firesim-lab.git /firesim-lab \
     && git checkout ${FIRESIM_LAB_COMMIT}
 
 # Instsall firesim requirements (as per /firesim/conda-reqs/firesim.yaml)
-# as well as new-target.py dependencies (click, jinja2, pyyaml)
+# as well as init-target dependencies (click, jinja2, pyyaml)
 ENV PATH="/opt/firesim-venv/bin:${PATH}"
 RUN python3 -m venv /opt/firesim-venv
 
@@ -159,7 +159,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r /firesim-lab/docker/firesim-requirements.txt && \
     pip3 install --no-cache-dir -r /firesim-lab/scripts/requirements.txt
 
-# Build and install the new-target python tool.
+# Build and install the init-target python tool.
 RUN cd /firesim-lab/scripts && pip install -e .
 
 ENV FIRESIM_LAB_ROOT=/firesim-lab
