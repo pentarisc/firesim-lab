@@ -78,16 +78,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --- FireSim environment (from firesim.yaml) ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core build + toolchain libs
-    gmp-dev libmpfr-dev libmpc-dev zlib1g-dev \
+    libgmp-dev libmpfr-dev libmpc-dev zlib1g-dev \
     libelf-dev libdwarf-dev libusb-1.0-0-dev libffi-dev \
     libexpat1-dev libncurses-dev \
     # Compilers & tools
     gcc g++ binutils make cmake autoconf bison flex \
     # System utilities
-    rsync bc ctags unzip patch jq screen parallel \
+    rsync bc universal-ctags unzip patch jq screen parallel \
     graphviz expect mosh \
     # File + shell utils
-    file wget which sed diffutils findutils \
+    file wget sed diffutils findutils \
     gzip bzip2 lzop tar perl bash-completion \
     # QEMU (approximation)
     qemu-system-x86 qemu-utils \
@@ -126,11 +126,15 @@ ARG FIRESIM_COMMIT=main
 
 RUN git clone https://github.com/firesim/firesim.git /firesim \
     && cd /firesim \
-    && git checkout ${FIRESIM_COMMIT}
+    && git checkout ${FIRESIM_COMMIT} \
+    && cd /firesim \
+    && git config submodule.platforms/f1/aws-fpga.update none \
+    && git submodule update --init --recursive
 
-# build-setup.sh initialises submodules, installs Python deps, and
-# runs the RISC-V toolchain setup (--skip-validate skips the slow toolchain check)
-RUN cd /firesim && ./build-setup.sh --skip-validate
+# By doing this, we are essentially skipping running the build-setup.sh
+# For aws-fpga, you will still need to run the hdk_setup.sh and sdk_setup.sh separately.
+RUN echo 'export FIRESIM_ENV_SOURCED=1' >> /firesim/env.sh && \
+    echo 'export FS_DIR=/firesim' >> /firesim/env.sh
 
 ENV FIRESIM_ROOT=/firesim
 
@@ -142,7 +146,7 @@ FROM firesim-stage AS firesim-lab-stage
 
 ARG FIRESIM_LAB_COMMIT=main
 
-RUN git clone https://github.com/pentarisc/firesim-lab.git /firesim-lab
+RUN git clone https://github.com/pentarisc/firesim-lab.git /firesim-lab \
     && cd /firesim-lab \
     && git checkout ${FIRESIM_LAB_COMMIT}
 
@@ -152,9 +156,8 @@ ENV PATH="/opt/firesim-venv/bin:${PATH}"
 RUN python3 -m venv /opt/firesim-venv
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r /firesim-lab/docker/firesim-requirements.txt &&
-RUN pip3 install --no-cache-dir \
-    -r /firesim-lab/scripts/requirements.txt
+    pip install --no-cache-dir -r /firesim-lab/docker/firesim-requirements.txt && \
+    pip3 install --no-cache-dir -r /firesim-lab/scripts/requirements.txt
 
 ENV FIRESIM_LAB_ROOT=/firesim-lab
 RUN chown -R firesim-lab:firesim-lab /firesim /firesim-lab
