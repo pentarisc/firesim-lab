@@ -292,7 +292,7 @@ Once inside the container shell (firesim-lab prompt is shown):
 ```bash
 cd /target/my-design
 source env.sh
-make elaborate    # generate Verilog
+make compile    # generate Verilog
 make verilator    # compile simulation binary
 make run          # run simulation
 ```
@@ -326,7 +326,7 @@ isolated and can run simultaneously.
 |---|---|---|
 | `/firesim/` | Immutable image | Never written to during builds |
 | `/firesim-lab/` | Immutable image | Never written to during builds |
-| GoldenGate symlinks in `/firesim/sim/firesim-lib/` | Re-created each `make elaborate` | Cheap; auto-recreated by `firesim_target_symlink_hook` |
+| GoldenGate symlinks in `/firesim/sim/firesim-lib/` | Re-created each `make compile` | Cheap; auto-recreated by `firesim_target_symlink_hook` |
 | `/target` | **Persistent** (mounted volume) | Firesim target project created here |
 | SBT Ivy/Coursier cache | Baked into image | Pre-warmed in Dockerfile |
 
@@ -484,7 +484,7 @@ cd ~/projects/my-baremetal
 
 # 5. Build and run (inside Docker with env.sh sourced)
 source env.sh
-make elaborate        # Chisel → FIRRTL → Golden Gate Verilog
+make compile        # Chisel → FIRRTL → Golden Gate Verilog
 make verilator        # compile the Verilator simulator binary
 make run              # run the simulation
 
@@ -543,7 +543,7 @@ my-baremetal/
 │   ├── config.mk                ← paths, bridge opt-ins, SBT/generator vars
 │   ├── build.mk                 ← elaboration rule + firesim_target_symlink_hook
 │   ├── driver.mk                ← C++ source list + include paths
-│   └── metasim.mk               ← run-verilator, run-vcs, run-*-debug targets
+│   └── metasim.mk               ← verilator, run-vcs, run-*-debug targets
 │
 └── src/main/
     ├── scala/
@@ -573,7 +573,7 @@ All commands are run from inside the generated project directory with
 cd /my-target
 source env.sh
 
-make elaborate        # Run Chisel elaboration and Golden Gate compilation
+make compile        # Run Chisel elaboration and Golden Gate compilation
 make verilator        # Compile the Verilator software simulator binary
 make vcs              # Compile with VCS (if installed)
 

@@ -459,7 +459,7 @@ _enter_shell() {
     echo "printf '%b\n' ''"
     echo "printf '%b\n' '  \033[1mQuick reference:\033[0m'"
     echo "printf '%b\n' '    cd /target/<project> && source env.sh'"
-    echo "printf '%b\n' '    make elaborate    — generate Verilog'"
+    echo "printf '%b\n' '    make compile      — generate Verilog'"
     echo "printf '%b\n' '    make verilator    — compile simulation'"
     echo "printf '%b\n' '    make run          — run simulation'"
     echo "printf '%b\n' '    init-target --list'"
@@ -528,7 +528,7 @@ else
   echo "  $(_bold "Build and run your target:")"
   echo "    cd /target/$PROJECT_NAME"
   echo "    source env.sh"
-  echo "    make elaborate && make verilator && make run"
+  echo "    make compile && make verilator && make run"
 fi
 
 echo ""

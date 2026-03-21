@@ -21,7 +21,7 @@
 #  When docker-compose starts a container with empty named volumes, Docker
 #  copies these paths from the image layer into the volumes on first start.
 #  Subsequent container restarts use the volumes as-is (they grow
-#  incrementally with each new target elaborated by the user).
+#  incrementally with each new target compiled by the user).
 #
 #  Build arguments
 #  ───────────────
@@ -211,7 +211,7 @@ RUN cd /firesim-lab && \
 #
 #  This stage:
 #    • Runs firesim-lab/examples/build-examples.sh
-#    • Calls `make elaborate` + `make verilator` for each example
+#    • Calls `make compile` + `make verilator` for each example
 #    • Each `make verilator` compiles ~200 C++ files through ccache
 #    • Subsequent user compilations of different targets hit the ccache
 #      for common infrastructure files (harness, bridge drivers, FASED model)
@@ -244,7 +244,7 @@ ENV CCACHE_DIR=/home/firesim-lab/.cache/ccache
 ENV SBT_OPTS="-Xmx8g -Xss8m -Dsbt.supershell=false"
 
 # Default working directory — docker-compose bind-mounts the user's target
-# project here, so `source env.sh && make elaborate` works immediately.
+# project here, so `source env.sh && make compile` works immediately.
 USER firesim-lab
 
 CMD ["/bin/bash"]

@@ -3,7 +3,7 @@
 #  build-examples.sh — firesim-lab example builder
 #
 #  Called during `docker build` to:
-#    1. Elaborate each example (Chisel → FIRRTL → GoldenGate Verilog)
+#    1. Compile each example (Chisel → FIRRTL → GoldenGate Verilog)
 #    2. Compile each example with Verilator (warms ccache)
 #
 #  Must be run with FIRESIM_ROOT and FIRESIM_LAB_ROOT set.
@@ -65,13 +65,13 @@ build_example() {
 
   export SBT_COMMAND="sbt --rootdir ${dir} ${SBT_OPTS_BUILD}"
 
-  # ── Step 1: elaborate ─────────────────────────────────────────────────────
+  # ── Step 1: compile ─────────────────────────────────────────────────────
   echo "  $(_cyan "→ elaborating ${name}...")"
-  if $make_cmd elaborate; then
-    echo "  $(_green "✓ elaborate OK")"
+  if $make_cmd compile; then
+    echo "  $(_green "✓ compile OK")"
   else
-    echo "  $(_red "✗ elaborate FAILED for ${name} — skipping verilator step")"
-    FAIL+=("${name}:elaborate")
+    echo "  $(_red "✗ compile FAILED for ${name} — skipping verilator step")"
+    FAIL+=("${name}:compile")
     return
   fi
 

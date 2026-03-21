@@ -328,6 +328,7 @@ def main(name, output_dir, lab_root, firesim_root, sbt_version,
     # Root project files
     write_file(pd / "build.sbt",                    render(jenv, "build.sbt.j2",          ctx), dry_run)
     write_file(pd / "project" / "build.properties", render(jenv, "build.properties.j2",   ctx), dry_run)
+    write_file(pd / "project" / "plugins.sbt",      render(jenv, "plugins.sbt.j2",        ctx), dry_run)
     write_file(pd / "env.sh",                       render(jenv, "env.sh.j2",             ctx), dry_run, executable=True)
     write_file(pd / "Makefile",                     render(jenv, "Makefile.j2",           ctx), dry_run)
     write_file(pd / ".gitignore",
@@ -374,7 +375,7 @@ def main(name, output_dir, lab_root, firesim_root, sbt_version,
         click.echo(f"  {step}. # Implement src/main/resources/vsrc/{blackbox_name}.v"); step += 1
     else:
         click.echo(f"  {step}. # Fill in src/main/scala/{design}.scala"); step += 1
-    click.echo(f"  {step}. make elaborate"); step += 1
+    click.echo(f"  {step}. make compile"); step += 1
     click.echo(f"  {step}. make verilator"); step += 1
     click.echo(f"  {step}. make run                         # or: make run ARGS='+uart-out=/tmp/uart.log'")
 

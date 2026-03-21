@@ -7,7 +7,7 @@
 #
 #  Usage:
 #    source env.sh          # set FIRESIM_ROOT, FIRESIM_LAB_ROOT, etc.
-#    make elaborate         # Chisel → FIRRTL → GoldenGate Verilog
+#    make compile         # Chisel → FIRRTL → GoldenGate Verilog
 #    make verilator         # compile the Verilator simulator binary
 #    make run               # run with Verilator
 #    make run-debug         # run with waveform dump
@@ -56,11 +56,11 @@ FIRESIM_MAKE := $(MAKE) -C $(FIRESIM_SIM) \
   GENERATED_DIR=$(GENERATED_DIR)
 
 # ── Targets ───────────────────────────────────────────────────────────────────
-.PHONY: elaborate verilator vcs run run-debug run-vcs run-vcs-debug clean help
+.PHONY: compile verilator vcs run run-debug run-vcs run-vcs-debug clean help
 
-## elaborate: Run Chisel elaboration → FIRRTL + GoldenGate Verilog
-elaborate:
-	$(FIRESIM_MAKE) elaborate
+## compile: Run Chisel elaboration → FIRRTL + GoldenGate Verilog
+compile:
+	$(FIRESIM_MAKE) compile
 
 ## verilator: Compile the Verilator software simulator binary
 verilator:
@@ -72,11 +72,11 @@ vcs:
 
 ## run: Run Verilator simulation (set ARGS= for extra plusargs)
 run:
-	$(FIRESIM_MAKE) run-verilator ARGS="$(ARGS)"
+	$(FIRESIM_MAKE) verilator ARGS="$(ARGS)"
 
 ## run-debug: Run Verilator simulation with waveform dump
 run-debug:
-	$(FIRESIM_MAKE) run-verilator-debug ARGS="$(ARGS)"
+	$(FIRESIM_MAKE) verilator-debug ARGS="$(ARGS)"
 
 ## run-vcs: Run VCS simulation
 run-vcs:

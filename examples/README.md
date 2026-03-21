@@ -26,7 +26,7 @@ A minimal bare-metal design written entirely in Chisel that:
 ```bash
 cd examples/chisel-baremetal
 source env.sh
-make elaborate
+make compile
 make verilator
 
 # Loopback mode (no output file needed)
@@ -80,7 +80,7 @@ written in Verilog or SystemVerilog.
 ```bash
 cd examples/verilog-blackbox
 source env.sh
-make elaborate
+make compile
 make verilator
 make run ARGS="+uart-out=/tmp/verilog-blackbox.log"
 cat /tmp/verilog-blackbox.log
@@ -100,14 +100,14 @@ cat /tmp/verilog-blackbox.log
 ## How the examples warm the Verilator ccache
 
 During `docker build`, `examples/build-examples.sh` is called. It runs
-`make elaborate` and `make verilator` on both examples inside the image.
+`make compile` and `make verilator` on both examples inside the image.
 
 ```
 docker build
   └── RUN build-examples.sh
-        ├── make elaborate  (chisel-baremetal)  → GoldenGate Verilog
+        ├── make compile  (chisel-baremetal)  → GoldenGate Verilog
         ├── make verilator  (chisel-baremetal)  → g++ via ccache → binary
-        ├── make elaborate  (verilog-blackbox)  → GoldenGate Verilog
+        ├── make compile  (verilog-blackbox)  → GoldenGate Verilog
         └── make verilator  (verilog-blackbox)  → g++ via ccache → binary
                                                    ↓
                                         ~/.cache/ccache/ now warm
@@ -137,7 +137,7 @@ init-target --name my-design \
 
 cd ~/projects/my-design
 source env.sh
-make elaborate
+make compile
 make verilator
 make run
 ```

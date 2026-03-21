@@ -5,7 +5,7 @@
 #    make TARGET=my-baremetal verilator
 #    make TARGET=my-baremetal run
 #    make TARGET=my-baremetal run-debug
-#    make TARGET=my-baremetal elaborate
+#    make TARGET=my-baremetal compile
 #    make TARGET=my-baremetal clean
 #
 #  Add new targets by adding a block in the "Target registry" section below.
@@ -75,10 +75,10 @@ FIRESIM_MAKE := $(MAKE) -C $(FIRESIM_SIM) \
   GENERATOR_PACKAGE=$(GENERATOR_PACKAGE) \
   GENERATED_DIR=$(GENERATED_DIR)
 
-.PHONY: elaborate verilator vcs run run-debug run-vcs run-vcs-debug clean help
+.PHONY: compile verilator vcs run run-debug run-vcs run-vcs-debug clean help
 
-elaborate:
-	$(FIRESIM_MAKE) elaborate
+compile:
+	$(FIRESIM_MAKE) compile
 
 verilator:
 	$(FIRESIM_MAKE) verilator
@@ -87,10 +87,10 @@ vcs:
 	$(FIRESIM_MAKE) vcs
 
 run:
-	$(FIRESIM_MAKE) run-verilator
+	$(FIRESIM_MAKE) verilator
 
 run-debug:
-	$(FIRESIM_MAKE) run-verilator-debug
+	$(FIRESIM_MAKE) verilator-debug
 
 run-vcs:
 	$(FIRESIM_MAKE) run-vcs
@@ -108,4 +108,4 @@ help:
 	@echo "Registered targets:"
 	@echo "  my-baremetal"
 	@echo ""
-	@echo "Goals: elaborate | verilator | vcs | run | run-debug | run-vcs | clean"
+	@echo "Goals: compile | verilator | vcs | run | run-debug | run-vcs | clean"

@@ -28,13 +28,13 @@ TARGET_PLUSARGS ?= \
   +timeout=$(TIMEOUT_CYCLES)
 
 # ── Verilator ─────────────────────────────────────────────────────────────────
-run-verilator: $(VERILATOR_BINARY)
+verilator: $(VERILATOR_BINARY)
 	cd $(GENERATED_DIR) && \
 	$(VERILATOR_BINARY) \
 	  $(TARGET_PLUSARGS) \
 	  $(ARGS)
 
-run-verilator-debug: $(VERILATOR_DEBUG_BINARY)
+verilator-debug: $(VERILATOR_DEBUG_BINARY)
 	cd $(GENERATED_DIR) && \
 	$(VERILATOR_DEBUG_BINARY) \
 	  $(TARGET_PLUSARGS) \
@@ -53,4 +53,4 @@ run-vcs-debug: $(VCS_DEBUG_BINARY)
 	  +vcdplusfile=$(GENERATED_DIR)/{{ design }}.vpd \
 	  $(ARGS)
 
-.PHONY: run-verilator run-verilator-debug run-vcs run-vcs-debug
+.PHONY: verilator verilator-debug run-vcs run-vcs-debug

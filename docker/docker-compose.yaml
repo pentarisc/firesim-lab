@@ -121,7 +121,7 @@ services:
           memory: ${CONTAINER_MEMORY_RESERVE:-8g}
 
     # ── Working directory ────────────────────────────────────────────────────
-    # Drop into the target project root so `source env.sh && make elaborate`
+    # Drop into the target project root so `source env.sh && make compile`
     # works immediately without any `cd`.
     working_dir: /target
 
