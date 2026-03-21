@@ -119,7 +119,7 @@ firesim-lab/
 │   ├── Dockerfile
 │   ├── firesim-requirements.txt    ← Firesim python dependencies
 │   ├── install.sh                  ← First time installer
-│   ├── run.sh                      ← For project creation/launching
+│   ├── firesim-lab                 ← For project creation/launching
 │
 ├── examples/
 │   ├── ...                    ← Example target designs created using new-target.py
@@ -183,16 +183,16 @@ requires nothing from your host system.
 ## Docker Workflow
 
 ### Installation
-The entire setup — including the Docker image build — is driven by a single
-bootstrap command:
+
+The entire setup is driven by a single bootstrap command:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash
 ```
 
-This downloads `run.sh`, `docker-compose.yaml`, and the `Dockerfile` into
-`~/.firesim-lab/` and prints the next step. No Docker interaction happens
-at this stage.
+This downloads `firesim-lab`, `docker-compose.yaml`, and the `Dockerfile` into
+`~/.firesim-lab/docker/`, symlinks `firesim-lab` into your PATH (via `~/.local/bin`),
+and prints the next step. No Docker interaction happens at this stage.
 
 To install a specific version (tag or branch):
 
@@ -207,40 +207,114 @@ curl -sSL .../install.sh | bash -s -- v1.2.0
 curl -sSL .../install.sh | INSTALL_DIR=/opt/firesim-lab bash
 ```
 
+---
+
 ### Starting the environment
-`run.sh` handles everything from here — it builds the image if needed
-(via the `build:` section in `docker-compose.yaml`), writes the `.env`
-file, and starts the container. There is no separate docker build step.
 
-**Interactive mode** — prompts for all inputs:
+`firesim-lab` is run from any **workspace directory** — a folder that contains
+(or will contain) your FireSim project(s). Settings are saved per-workspace in
+a `.firesim-lab.env` file so you never have to re-enter them.
+
+On first run, `firesim-lab` will:
+- Scan the workspace for an existing firesim-lab project (identified by
+  `build.sbt` containing `FIRESIM_LAB_ROOT`) and ask for confirmation
+- Prompt for Docker image name and Verilator thread count
+- Write `.firesim-lab.env` into the workspace directory
+- Start the container and drop you directly into a shell
 
 ```bash
-cd ~/.firesim-lab
-./run.sh
+cd ~/my-workspace
+firesim-lab
 ```
 
-**Non-interactive mode** — for CI, team scripts, or when you already know your paths:
+On subsequent runs it reads `.firesim-lab.env` silently, starts the container
+if needed, and enters the shell immediately.
+
+**Non-interactive mode** — for CI or scripted use:
+
 ```bash
-HOST_TARGET_DIR=/home/alice/my-baremetal \
-FIRESIM_IMAGE=firesim-lab:latest \
-CONTAINER_NAME=firesim-alice \
-VERILATOR_THREADS=8 \
-~/.firesim-lab/run.sh
+cd ~/my-workspace
+FIRESIM_IMAGE=firesim-lab:latest VERILATOR_THREADS=8 firesim-lab
 ```
 
-**After the container starts**
+---
+
+### Workspace layout
+
+```
+~/my-workspace/                   ← run firesim-lab from here
+├── .firesim-lab.env              ← generated settings (workspace-specific)
+└── my-design/                    ← your firesim-lab project
+    ├── build.sbt
+    ├── env.sh
+    ├── Makefile
+    └── generated-src/            ← build outputs (persisted automatically)
+```
+
+The workspace is mounted as `/target` inside the container. All subdirectories
+are persisted automatically — no separate Docker volumes are needed for build
+outputs.
+
+---
+
+### Creating a new project
+
+If no project is detected in the workspace, `firesim-lab` will start the
+container and show scaffolding instructions. Once inside the container shell:
 
 ```bash
-# Open a shell inside the running container
-docker exec -it firesim-lab bash
+python3 $FIRESIM_LAB_ROOT/scripts/new-target.py \
+    --name my-design \
+    --output-dir /target \
+    --bridge uart,fased \
+    --feature verilog-blackbox
+```
 
-# Once inside, source the project environment and build
-cd /target
+To see all available bridges and features:
+
+```bash
+python3 $FIRESIM_LAB_ROOT/scripts/new-target.py --list
+```
+
+After scaffolding, exit the shell and re-run `firesim-lab` from the workspace —
+the new project will be auto-detected on the next launch.
+
+---
+
+### Building and running
+
+Once inside the container shell (firesim-lab prompt is shown):
+
+```bash
+cd /target/my-design
 source env.sh
-make elaborate
-make verilator
-make run
+make elaborate    # generate Verilog
+make verilator    # compile simulation binary
+make run          # run simulation
 ```
+
+Exiting the shell with `exit` returns you to the host but leaves the container
+running. Re-running `firesim-lab` from the same workspace re-enters it instantly.
+
+---
+
+### Available commands
+
+| Command | Description |
+|---|---|
+| `firesim-lab` | Start container (or enter if already running) |
+| `firesim-lab --down` | Stop and remove the container |
+| `firesim-lab --pull` | Pull the latest image and restart |
+| `firesim-lab --reconfigure` | Re-prompt all workspace settings |
+| `firesim-lab --status` | Show container status for this workspace |
+| `firesim-lab --clean-cache` | Remove SBT and ccache volumes (forces re-download) |
+| `firesim-lab --help` | Show usage information |
+
+Multiple workspaces are fully supported — each gets its own container named
+`firesim-lab-<workspace>` and its own `.firesim-lab.env`. Containers are
+isolated and can run simultaneously.
+
+---
 
 **What is ephemeral vs. persistent:**
 
