@@ -33,34 +33,17 @@ lazy val common = (project in file("targets/common"))
   .settings(commonSettings)
   .settings(
     name := "common",
+    Compile / unmanagedSourceDirectories ++= Seq(
+      baseDirectory.value / "bridgeinterfaces" / "src" / "main" / "scala",
+      baseDirectory.value / "bridgestubs" / "src" / "main" / "scala",
+    ),
   )
-
-// =============================================================================
-//  TARGET: my-baremetal
-//  Opts into: uart, fased (blockdev not needed here)
-// =============================================================================
-lazy val myBaremetal = (project in file("targets/my-baremetal"))
-  .dependsOn(common, firesimLib, midas, targetutils)  // ← depends on common
-  .settings(commonSettings)
-  .settings(
-    name := "my-baremetal",
-  )
-
-// =============================================================================
-//  TARGET: my-second-target (example: uart + blockdev)
-// =============================================================================
-// lazy val mySecondTarget = (project in file("targets/my-second-target"))
-//   .dependsOn(common, firesimLib, midas, targetutils)
-//   .settings(commonSettings)
-//   .settings(
-//     name := "my-second-target",
-//   )
 
 // =============================================================================
 //  Root aggregate
 // =============================================================================
 lazy val root = (project in file("."))
-  .aggregate(common, myBaremetal)    // add mySecondTarget here when ready
+  .aggregate(common)
   .settings(
     name           := "firesim-lab",
     publish / skip := true,

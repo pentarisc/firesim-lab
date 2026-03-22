@@ -24,7 +24,7 @@ bridges:
     driver_class: uart_t
     # Available substitutions: {idx}, {struct}, {args}
     constructor_template: "new uart_t(*this, {struct}, {idx}, {args})"
-    scala_bridge_package: firesimlab.bridges
+    scala_bridge_package: firechip.bridgestubs
     runtime_plusargs:
       - flag: "+uart-loopback"
         description: "Echo TX bytes back to RX (no host file needed)"
@@ -69,7 +69,7 @@ bridges:
     max_instances: 2
     driver_class: blockdev_t
     constructor_template: "new blockdev_t(*this, {struct}, {idx}, {args})"
-    scala_bridge_package: firesimlab.bridges
+    scala_bridge_package: firechip.bridgestubs
     runtime_plusargs:
       - flag: "+blkdev-in-mem=1"
         description: "Back the block device with an in-memory buffer (for testing)"
@@ -90,7 +90,7 @@ bridges:
     max_instances: 1
     driver_class: iceblk_t
     constructor_template: "new iceblk_t(*this, {struct}, {idx}, {args})"
-    scala_bridge_package: firesimlab.bridges
+    scala_bridge_package: firechip.bridgestubs
     runtime_plusargs:
       - flag: "+iceblk-img=<path>"
         description: "Path to a raw disk image file"
@@ -109,7 +109,7 @@ bridges:
     max_instances: 1
     driver_class: simplenic_t
     constructor_template: "new simplenic_t(*this, {struct}, {idx}, {args})"
-    scala_bridge_package: firesimlab.bridges
+    scala_bridge_package: firechip.bridgestubs
     runtime_plusargs:
       - flag: "+niclog=<path>"
         description: "Log NIC token traffic to file"

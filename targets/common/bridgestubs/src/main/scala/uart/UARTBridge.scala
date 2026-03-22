@@ -41,8 +41,8 @@ class UARTBridge(initBaudRate: BigInt, freqMHz: Int)(implicit p: Parameters) ext
 
 // DOC include start: UART Bridge Companion Object
 object UARTBridge {
-  def apply(clock: Clock, uart: sifive.blocks.devices.uart.UARTPortIO, reset: Bool, freqMHz: Int)(implicit p: Parameters): UARTBridge = {
-    val ep = Module(new UARTBridge(uart.c.initBaudRate, freqMHz))
+  def apply(clock: Clock, uart: UARTPortIO, reset: Bool, freqMHz: Int, initBaudRate: BigInt)(implicit p: Parameters): UARTBridge = {
+    val ep = Module(new UARTBridge(initBaudRate, freqMHz))
     ep.io.uart.txd := uart.txd
     uart.rxd := ep.io.uart.rxd
     ep.io.clock := clock

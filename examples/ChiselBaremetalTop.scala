@@ -23,8 +23,8 @@ import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
 import midas.models.{FASEDTargetKey, AXI4EdgeSummary}
 import firesim.bridges.{FASEDBridge, CompleteConfig}
-import firesimlab.bridges.{UARTBridge, UARTBridgeParams}
-import freechips.rocketchip.devices.tilelink.UARTPortIO
+import firechip.bridgestubs.UARTBridge
+import firechip.bridgeinterfaces.UARTPortIO
 
 // ---------------------------------------------------------------------------
 // UART 8N1 transmitter (pure Chisel)

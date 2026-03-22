@@ -15,11 +15,11 @@ import midas.models.{FASEDTargetKey, AXI4EdgeSummary}
 import firesim.bridges.{FASEDBridge, CompleteConfig}
 {% endif %}
 {% if 'uart' in enabled_bridge_ids %}
-import firesimlab.bridges.{UARTBridge, UARTBridgeParams}
-import freechips.rocketchip.devices.tilelink.UARTPortIO
+import firechip.bridgestubs.UARTBridge
+import firechip.bridgeinterfaces.UARTPortIO
 {% endif %}
 {% if 'blockdev' in enabled_bridge_ids %}
-import firesimlab.bridges.BlockDevBridge
+import firechip.bridgestubs.BlockDevBridge
 {% endif %}
 
 class {{ design }}(implicit p: Parameters) extends Module {
@@ -75,7 +75,7 @@ class {{ design }}(implicit p: Parameters) extends Module {
   uart.txd := false.B   // TODO: connect to your DUT
   // dut.io.uart_rxd := uart.rxd
 {% endif %}
-  UARTBridge(clock, uart, reset.asBool, UARTBridgeParams())
+  UARTBridge(clock, uart, reset.asBool, 100, 115200)(p) // change frequency and baud rate.
 
 {% endif %}
 {% if 'blockdev' in enabled_bridge_ids %}

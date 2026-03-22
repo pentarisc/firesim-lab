@@ -337,7 +337,7 @@ isolated and can run simultaneously.
 `targets/common/` is the shared bridge library. It contains:
 
 - **Scala bridge stubs** — the target-side Chisel `Bridge` annotations
-  (copied from firechip; package-renamed to `firesimlab.bridges`)
+  (copied from firechip; package-renamed to `firechip.bridgestubs`)
 - **GoldenGate BridgeModule Scala** — the host-side compiler passes,
   symlinked into `firesim-lib` at elaboration time
 - **C++ bridge drivers** — compiled into the simulator binary
@@ -623,7 +623,7 @@ bridges:
     max_instances: 1
     driver_class: mybridge_t
     constructor_template: "new mybridge_t(*this, {struct}, {idx}, {args})"
-    scala_bridge_package: firesimlab.bridges
+    scala_bridge_package: chirechip.bridgestubs
     runtime_plusargs:
       - flag: "+mybridge-opt=<val>"
         description: "Description of this plusarg"

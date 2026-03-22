@@ -12,13 +12,17 @@
 // =============================================================================
 
 // ── Resolve dependency roots from environment ─────────────────────────────────
-val firesimRoot = file(
-  sys.env.getOrElse("FIRESIM_ROOT", "../firesim")
-) / "sim"
+val firesimRoot = {
+  val path = file(sys.env.getOrElse("FIRESIM_ROOT", "/firesim"))/"sim"
+  require(path.exists, s"FIRESIM_ROOT not found at ${path.getAbsolutePath}")
+  path
+}
 
-val firesimLabRoot = file(
-  sys.env.getOrElse("FIRESIM_LAB_ROOT", "../firesim-lab")
-)
+val firesimLabRoot = {
+  val path = file(sys.env.getOrElse("FIRESIM_LAB_ROOT", "/firesim-lab"))
+  require(path.exists, s"FIRESIM_LAB_ROOT not found at ${path.getAbsolutePath}")
+  path
+}
 
 // ── ProjectRef bindings ───────────────────────────────────────────────────────
 // Bind to firesim's own lazy vals (defined in firesim/sim/build.sbt)
@@ -30,7 +34,11 @@ lazy val targetutils = ProjectRef(firesimRoot, "targetutils")
 // ("common" must match the lazy val name in firesim-lab/build.sbt)
 lazy val common = ProjectRef(firesimLabRoot, "common")
 
+lazy val {{ sbt_project }} = (project in file("."))
+  .dependsOn(common, firesimLib, midas, targetutils)
+
 // ── This target ───────────────────────────────────────────────────────────────
+ThisBuild / scalafixScalaBinaryVersion := scalaBinaryVersion.value
 lazy val {{ sbt_project }} = (project in file("."))
   .dependsOn(common, firesimLib, midas, targetutils)
   .settings(
