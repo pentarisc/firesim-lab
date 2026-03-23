@@ -29,7 +29,6 @@ DESIGN           := {{ design }}
 TARGET_CONFIG    := {{ scala_package }}.{{ target_config_class }}
 PLATFORM_CONFIG  := {{ scala_package }}.{{ platform_config_class }}
 SBT_PROJECT      := {{ sbt_project }}
-GENERATOR_PACKAGE := {{ scala_package }}
 MAKEFRAG_DIR     := $(TARGET_ROOT)/makefrag
 
 # ── Generated output directory ────────────────────────────────────────────────
@@ -52,7 +51,6 @@ FIRESIM_MAKE := $(MAKE) -C $(FIRESIM_SIM) \
   TARGET_CONFIG=$(TARGET_CONFIG) \
   PLATFORM_CONFIG=$(PLATFORM_CONFIG) \
   SBT_PROJECT=$(SBT_PROJECT) \
-  GENERATOR_PACKAGE=$(GENERATOR_PACKAGE) \
   GENERATED_DIR=$(GENERATED_DIR)
 
 # ── Targets ───────────────────────────────────────────────────────────────────

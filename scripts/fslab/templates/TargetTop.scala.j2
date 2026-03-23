@@ -7,12 +7,12 @@ package {{ scala_package }}
 
 import chisel3._
 import chisel3.util._
-import freechips.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 {% if 'fased' in enabled_bridge_ids %}
 import freechips.rocketchip.amba.axi4._
 import freechips.rocketchip.diplomacy._
-import midas.models.{FASEDTargetKey, AXI4EdgeSummary}
-import firesim.bridges.{FASEDBridge, CompleteConfig}
+import firesim.lib.nasti.{NastiIO, NastiParameters}
+import firesim.lib.bridges.{FASEDBridge, CompleteConfig}
 {% endif %}
 {% if 'uart' in enabled_bridge_ids %}
 import firechip.bridgestubs.UARTBridge
@@ -34,33 +34,22 @@ class {{ design }}(implicit p: Parameters) extends Module {
 {% if 'fased' in enabled_bridge_ids %}
   // ── FASEDBridge ─────────────────────────────────────────────────────────────
   // Wire dut.io.m_axi_* → mem bundle, then pass to FASEDBridge.
-  val axi4Params = AXI4BundleParameters(
-    addrBits = {{ axi_addr_w }},
-    dataBits = {{ axi_data_w }},
-    idBits   = {{ axi_id_w }}
+  val nastiKey = NastiParameters(
+    addrBits = 32,
+    dataBits = 64,
+    idBits   = 4
   )
-  val mem = Wire(new AXI4Bundle(axi4Params))
-  // TODO: connect dut AXI4 master ports to mem channels
-  mem := DontCare
+  
+  val nasti    = Wire(new NastiIO(nastiKey))
 
-  FASEDBridge(clock, mem, reset.asBool,
+  // TODO: connect dut AXI4 master ports to mem channels
+  
+
+  FASEDBridge(clock, nasti, reset.asBool,
     CompleteConfig(
-      p(FASEDTargetKey),
-      Some(AXI4EdgeSummary(
-        AXI4MasterParameters(
-          name      = "{{ design }}-mem",
-          id        = IdRange(0, 1 << {{ axi_id_w }}),
-          aligned   = true,
-          maxFlight = Some(1)
-        ),
-        AXI4SlaveParameters(
-          address       = Seq(AddressSet(0x00000000L, 0xFFFFFFFFL)),
-          regionType    = RegionType.UNCACHED,
-          executable    = true,
-          supportsRead  = TransferSizes(1, {{ axi_data_w / 8 | int }}),
-          supportsWrite = TransferSizes(1, {{ axi_data_w / 8 | int }})
-        )
-      ))
+      nastiKey,
+      None,
+      Some("DefaultMemoryRegion"),
     )
   )
 
