@@ -6,6 +6,8 @@ val firesimRoot = file(
   sys.env.getOrElse("FIRESIM_ROOT", "../firesim")
 ) / "sim"
 
+val chiselVersion = "3.6.1"
+
 // ── FireSim ProjectRef bindings ───────────────────────────────────────────────
 lazy val firesimLib  = ProjectRef(firesimRoot, "firesim")
 lazy val midas       = ProjectRef(firesimRoot, "midas")
@@ -15,7 +17,9 @@ lazy val targetutils = ProjectRef(firesimRoot, "targetutils")
 lazy val commonSettings = Seq(
   organization  := "firesim-lab",
   scalaVersion  := "2.13.10",           // must match firesim exactly
-  scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked"),
+  scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked", "-warn-unused"),
+  addCompilerPlugin("edu.berkeley.cs" % "chisel3-plugin" % chiselVersion cross CrossVersion.full),
+  libraryDependencies += "edu.berkeley.cs" %% "chisel3" % chiselVersion,
   Compile / unmanagedResourceDirectories +=
     (Compile / baseDirectory).value / "src" / "main" / "resources",
 )
