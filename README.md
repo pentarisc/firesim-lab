@@ -57,7 +57,7 @@ exactly how Chipyard depends on FireSim, but without requiring Chipyard.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Tier 1 — FireSim                            /firesim               │
+│  Tier 1 — FireSim                            /opt/firesim               │
 │                                                                     │
 │  The FireSim simulation framework. Baked into the Docker image      │
 │  at a pinned commit. Never modified. Provides: Golden Gate          │
@@ -67,7 +67,7 @@ exactly how Chipyard depends on FireSim, but without requiring Chipyard.
                              │ ProjectRef (SBT)
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Tier 2 — firesim-lab                        /firesim-lab           │
+│  Tier 2 — firesim-lab                        /opt/firesim-lab           │
 │                                                                     │
 │  This repository. Baked into the Docker image.                      │
 │  Provides:                                                          │
@@ -324,9 +324,9 @@ isolated and can run simultaneously.
 
 | Location | Ephemeral? | Notes |
 |---|---|---|
-| `/firesim/` | Immutable image | Never written to during builds |
-| `/firesim-lab/` | Immutable image | Never written to during builds |
-| GoldenGate symlinks in `/firesim/sim/firesim-lib/` | Re-created each `make compile` | Cheap; auto-recreated by `firesim_target_symlink_hook` |
+| `/opt/firesim/` | Immutable image | Never written to during builds |
+| `/opt/firesim-lab/` | Immutable image | Never written to during builds |
+| GoldenGate symlinks in `/opt/firesim/sim/firesim-lib/` | Re-created each `make compile` | Cheap; auto-recreated by `firesim_target_symlink_hook` |
 | `/target` | **Persistent** (mounted volume) | Firesim target project created here |
 | SBT Ivy/Coursier cache | Baked into image | Pre-warmed in Dockerfile |
 
@@ -372,11 +372,11 @@ Options:
 
   --lab-root PATH                 Path to firesim-lab repo. Written into
                                   env.sh and build.sbt.
-                                  [default: /firesim-lab]
+                                  [default: /opt/firesim-lab]
 
   --firesim-root PATH             Path to firesim checkout. Written into
                                   env.sh and build.sbt.
-                                  [default: /firesim]
+                                  [default: /opt/firesim]
 
   --sbt-version VER               SBT version for project/build.properties.
                                   Must match firesim's version exactly.
@@ -657,8 +657,8 @@ automatically.
 
 | Variable | Set by | Description |
 |---|---|---|
-| `FIRESIM_ROOT` | `env.sh` / Docker | Path to the FireSim checkout. Default: `/firesim` |
-| `FIRESIM_LAB_ROOT` | `env.sh` / Docker | Path to this repo. Default: `/firesim-lab` |
+| `FIRESIM_ROOT` | `env.sh` / Docker | Path to the FireSim checkout. Default: `/opt/firesim` |
+| `FIRESIM_LAB_ROOT` | `env.sh` / Docker | Path to this repo. Default: `/opt/firesim-lab` |
 | `TARGET_ROOT` | `env.sh` | Absolute path to the target project root |
 | `GENERATED_DIR` | `env.sh` | Output directory for elaboration artifacts and simulator binary. Default: `$TARGET_ROOT/generated-src` |
 | `SBT_COMMAND` | `env.sh` | Overrides FireSim's internal SBT invocation to use the target's `build.sbt`. Set automatically — do not override manually. |

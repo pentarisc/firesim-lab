@@ -124,19 +124,18 @@ FROM base AS firesim-stage
 
 ARG FIRESIM_COMMIT=main
 
-RUN git clone https://github.com/firesim/firesim.git /firesim \
-    && cd /firesim \
+RUN git clone https://github.com/firesim/firesim.git /opt/firesim \
+    && cd /opt/firesim \
     && git checkout ${FIRESIM_COMMIT} \
-    && cd /firesim \
     && git config submodule.platforms/f1/aws-fpga.update none \
     && git submodule update --init --recursive
 
 # By doing this, we are essentially skipping running the build-setup.sh
 # For aws-fpga, you will still need to run the hdk_setup.sh and sdk_setup.sh separately.
-RUN echo 'export FIRESIM_ENV_SOURCED=1' >> /firesim/env.sh && \
-    echo 'export FS_DIR=/firesim' >> /firesim/env.sh
+RUN echo 'export FIRESIM_ENV_SOURCED=1' >> /opt/firesim/env.sh && \
+    echo 'export FS_DIR=/opt/firesim' >> /opt/firesim/env.sh
 
-ENV FIRESIM_ROOT=/firesim
+ENV FIRESIM_ROOT=/opt/firesim
 
 # =============================================================================
 #  Stage 3 — firesim-lab
@@ -146,24 +145,27 @@ FROM firesim-stage AS firesim-lab-stage
 
 ARG FIRESIM_LAB_COMMIT=main
 
-RUN git clone https://github.com/pentarisc/firesim-lab.git /firesim-lab \
-    && cd /firesim-lab \
+RUN git clone https://github.com/pentarisc/firesim-lab.git /opt/firesim-lab \
+    && cd /opt/firesim-lab \
     && git checkout ${FIRESIM_LAB_COMMIT}
 
-# Instsall firesim requirements (as per /firesim/conda-reqs/firesim.yaml)
+# Instsall firesim requirements (as per /opt/firesim/conda-reqs/firesim.yaml)
 # as well as init-target dependencies (click, jinja2, pyyaml)
 ENV PATH="/opt/firesim-venv/bin:${PATH}"
 RUN python3 -m venv /opt/firesim-venv
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r /firesim-lab/docker/firesim-requirements.txt && \
-    pip3 install --no-cache-dir -r /firesim-lab/scripts/requirements.txt
+    pip install --no-cache-dir -r /opt/firesim-lab/docker/firesim-requirements.txt && \
+    pip3 install --no-cache-dir -r /opt/firesim-lab/scripts/requirements.txt
+
+# pre-build the firesim-lab and firesim and generate fat jar for later use.
+RUN cd /opt/firesim-lab && sbt assembly
 
 # Build and install the init-target python tool.
-RUN cd /firesim-lab/scripts && pip install -e .
+RUN cd /opt/firesim-lab/scripts && pip install -e .
 
-ENV FIRESIM_LAB_ROOT=/firesim-lab
-RUN chown -R firesim-lab:firesim-lab /firesim /firesim-lab
+ENV FIRESIM_LAB_ROOT=/opt/firesim-lab
+RUN chown -R firesim-lab:firesim-lab /opt/firesim /opt/firesim-lab
 
 # =============================================================================
 #  Stage 4 — cache-warm
@@ -181,7 +183,7 @@ USER firesim-lab
 ENV SBT_OPTS="-Xmx6g -Xss8m -Dsbt.supershell=false"
 
 # ── Resolve + download all firesim dependencies ───────────────────────────────
-RUN cd /firesim/sim && \
+RUN cd /opt/firesim/sim && \
     sbt ${SBT_OPTS} \
       "project firesim"    update \
       "project midas"      update \
@@ -190,16 +192,16 @@ RUN cd /firesim/sim && \
 
 # ── Compile firesim framework projects ───────────────────────────────────────
 # Compiling (not just resolving) warms SBT's incremental analysis cache
-# under /firesim/sim/target/ so subsequent compilations are much faster.
-RUN cd /firesim/sim && \
+# under /opt/firesim/sim/target/ so subsequent compilations are much faster.
+RUN cd /opt/firesim/sim && \
     sbt ${SBT_OPTS} \
       "project targetutils" compile \
       "project midas"       compile \
     || true
 
 # ── Resolve + compile firesim-lab common bridge library ───────────────────────
-RUN cd /firesim-lab && \
-    FIRESIM_ROOT=/firesim \
+RUN cd /opt/firesim-lab && \
+    FIRESIM_ROOT=/opt/firesim \
     sbt ${SBT_OPTS} \
       "project common" update \
       "project common" compile \
@@ -223,9 +225,9 @@ RUN cd /firesim-lab && \
 FROM cache-warm AS final
 
 # Run example builds.  Failures print a warning but do not abort the build.
-RUN FIRESIM_ROOT=/firesim \
-    FIRESIM_LAB_ROOT=/firesim-lab \
-    /firesim-lab/examples/build-examples.sh
+RUN FIRESIM_ROOT=/opt/firesim \
+    FIRESIM_LAB_ROOT=/opt/firesim-lab \
+    /opt/firesim-lab/examples/build-examples.sh
 
 # ── Print final cache statistics ──────────────────────────────────────────────
 RUN echo "" && \
@@ -238,9 +240,9 @@ RUN echo "" && \
     echo ""
 
 # ── Runtime environment ───────────────────────────────────────────────────────
-ENV FIRESIM_ROOT=/firesim
-ENV FIRESIM_LAB_ROOT=/firesim-lab
-ENV CCACHE_DIR=/home/firesim-lab/.cache/ccache
+ENV FIRESIM_ROOT=/opt/firesim
+ENV FIRESIM_LAB_ROOT=/opt/firesim-lab
+ENV CCACHE_DIR=/home/opt/firesim-lab/.cache/ccache
 ENV SBT_OPTS="-Xmx8g -Xss8m -Dsbt.supershell=false"
 
 # Default working directory — docker-compose bind-mounts the user's target

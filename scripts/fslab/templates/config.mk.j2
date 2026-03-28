@@ -11,7 +11,7 @@ target_base_dir  := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 # Reference common bridge fragments from firesim-lab via environment variable.
 # This is the key difference from an in-tree target: we don't use a relative
 # path so this project can live anywhere on the filesystem.
-FIRESIM_LAB_ROOT ?= /firesim-lab
+FIRESIM_LAB_ROOT ?= /opt/firesim-lab
 COMMON_MAKEFRAG  := $(FIRESIM_LAB_ROOT)/targets/common/makefrag
 
 # ── Pull in common base paths ─────────────────────────────────────────────────

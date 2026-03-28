@@ -6,7 +6,7 @@
 $(FIRRTL_FILE) $(ANNO_FILE): \
     $(shell find $(target_base_dir)/src/main/scala -name "*.scala" 2>/dev/null)
 	mkdir -p $(GENERATED_DIR)
-	cd $(target_base_dir) && $(SBT_COMMAND) compile \
+	cd $(target_base_dir) && $(SBT_COMMAND) \
 	  "project $(SBT_PROJECT)" \
 	  "runMain midas.chiselstage.Generator \
 	    --target-dir $(GENERATED_DIR) \

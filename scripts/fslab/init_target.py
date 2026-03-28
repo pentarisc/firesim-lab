@@ -64,8 +64,8 @@ LAB_ROOT     = SCRIPT_DIR.parent.parent
 TEMPLATE_DIR = SCRIPT_DIR / "templates"
 REGISTRY     = LAB_ROOT / "targets" / "common" / "registry.yaml"
 
-DEFAULT_FIRESIM_ROOT = "/firesim"
-DEFAULT_LAB_ROOT     = "/firesim-lab"
+DEFAULT_FIRESIM_ROOT = "/opt/firesim"
+DEFAULT_LAB_ROOT     = "/opt/firesim-lab"
 DEFAULT_SBT_VERSION  = "1.10.1"
 
 

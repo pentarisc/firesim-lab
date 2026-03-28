@@ -1,5 +1,11 @@
 # =============================================================================
-#  docker-compose.yaml — firesim-lab simulation environment
+#  docker-compose-dev.yaml — firesim-lab simulation environment, overrides
+#  /opt/firesim-lab folder by binding local volume to facilitate local development. 
+#
+#  To launch: cd ~/pentarisc/projects/firesim-lab/docker && \
+#             docker compose -f docker-compose-dev.yaml up -d
+#
+#  To get a shell: docker exec -it firesim-lab-dev bash
 #
 #  Tier layout (all three tiers present at runtime):
 #    /opt/firesim          — baked into image (immutable, Tier 1)
@@ -35,9 +41,9 @@ services:
         JAVA_VERSION: ${JAVA_VERSION:-17}
         
     image: ${FIRESIM_IMAGE:-firesim-lab:latest}
-    container_name: ${CONTAINER_NAME:-firesim-lab}
+    container_name: ${CONTAINER_NAME:-firesim-lab-dev}
 
-    user: "${HOST_UID}:${HOST_GID}"
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
 
     # Keep stdin open so `docker exec` and interactive sessions work.
     # The default command drops into bash; override on the CLI if needed.
@@ -66,12 +72,19 @@ services:
 
     # ── Volume mounts ───────────────────────────────────────────────────────
     volumes:
+
+      # ── Tier 3: override /opt/firesim-lab with your own  ──────────────────────
+      # (change ~/pentarisc/projects/firesim-lab to wherever you have cloned firesim-lab)
+      - type: bind
+        source: ${HOME}/pentarisc/projects/firesim-lab
+        target: /opt/firesim-lab
+
       # ── Tier 3: user target project ──────────────────────────────────────
       # The entire target project directory is mounted read-write.
       # generated-src/ lands inside here (see GENERATED_DIR above) so all
       # build artifacts persist on the host between container runs.
       - type: bind
-        source: ${HOST_WORKSPACE_DIR}
+        source: ${HOST_WORKSPACE_DIR:-${HOME}/pentarisc/projects/firesim-lab/examples}
         target: /target
 
       # ── SBT / Ivy artifact cache ──────────────────────────────────────────

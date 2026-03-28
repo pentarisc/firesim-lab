@@ -3,7 +3,7 @@
 // =============================================================================
 
 val firesimRoot = file(
-  sys.env.getOrElse("FIRESIM_ROOT", "../firesim")
+  sys.env.getOrElse("FIRESIM_ROOT", "/opt/firesim")
 ) / "sim"
 
 val chiselVersion = "3.6.1"
@@ -17,7 +17,7 @@ lazy val targetutils = ProjectRef(firesimRoot, "targetutils")
 lazy val commonSettings = Seq(
   organization  := "firesim-lab",
   scalaVersion  := "2.13.10",           // must match firesim exactly
-  scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked", "-warn-unused"),
+  scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked", "-Ywarn-unused"),
   addCompilerPlugin("edu.berkeley.cs" % "chisel3-plugin" % chiselVersion cross CrossVersion.full),
   libraryDependencies += "edu.berkeley.cs" %% "chisel3" % chiselVersion,
   Compile / unmanagedResourceDirectories +=
@@ -25,30 +25,36 @@ lazy val commonSettings = Seq(
 )
 
 // =============================================================================
-//  COMMON — shared bridge library
+//  bridges — shared bridge library
 //  Contains: bridge Scala stubs, GoldenGate Scala (compiled separately via
 //  makefrag symlink hook), and C++ drivers (referenced by target driver.mk).
 //
 //  This project is a pure library — it has no Generator, no top, no config.
-//  Individual targets .dependsOn(common) to get access to bridge Scala.
+//  Individual targets .dependsOn(firesimLab) to get access to bridge Scala.
 // =============================================================================
-lazy val common = (project in file("targets/common"))
+lazy val fslabBridges = (project in file("lib/bridges"))
   .dependsOn(firesimLib, midas, targetutils)
   .settings(commonSettings)
   .settings(
-    name := "common",
-    Compile / unmanagedSourceDirectories ++= Seq(
-      baseDirectory.value / "bridgeinterfaces" / "src" / "main" / "scala",
-      baseDirectory.value / "bridgestubs" / "src" / "main" / "scala",
-    ),
+    name := "fslabBridges",
   )
 
-// =============================================================================
-//  Root aggregate
-// =============================================================================
+ThisBuild / assemblyMergeStrategy := {
+  case "module-info.class" => MergeStrategy.discard
+  case x =>
+    val oldStrategy = (assembly / assemblyMergeStrategy).value
+    oldStrategy(x)
+}
+
+//=============================================================================
+//  Root aggregate, includes firesim
+//=============================================================================
 lazy val root = (project in file("."))
-  .aggregate(common)
+  .aggregate(firesimLib, midas, targetutils, fslabBridges)
+  .dependsOn(fslabBridges)
   .settings(
-    name           := "firesim-lab",
+    name          := "firesim-lab",
+    scalaVersion  := "2.13.10",           // must match firesim exactly
+    assembly / assemblyJarName := "firesim-lab.jar",
     publish / skip := true,
   )

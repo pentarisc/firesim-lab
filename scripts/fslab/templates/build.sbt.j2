@@ -7,59 +7,52 @@
 //  three build together incrementally with a single `sbt compile`.
 //
 //  Required environment variables (set in env.sh):
-//    FIRESIM_ROOT      — path to the firesim checkout (e.g. /firesim)
-//    FIRESIM_LAB_ROOT  — path to the firesim-lab repo  (e.g. /firesim-lab)
+//    FIRESIM_ROOT      — path to the firesim checkout (e.g. /opt/firesim)
+//    FIRESIM_LAB_ROOT  — path to the firesim-lab repo  (e.g. /opt/firesim-lab)
 // =============================================================================
 
 // ── Resolve dependency roots from environment ─────────────────────────────────
-val firesimRoot = {
-  val path = file(sys.env.getOrElse("FIRESIM_ROOT", "/firesim"))/"sim"
-  require(path.exists, s"FIRESIM_ROOT not found at ${path.getAbsolutePath}")
-  path
-}
-
 val firesimLabRoot = {
-  val path = file(sys.env.getOrElse("FIRESIM_LAB_ROOT", "/firesim-lab"))
+  val path = file(sys.env.getOrElse("FIRESIM_LAB_ROOT", "/opt/firesim-lab"))
   require(path.exists, s"FIRESIM_LAB_ROOT not found at ${path.getAbsolutePath}")
   path
 }
 
-chiselVersion = "3.6.1"
-
-// ── ProjectRef bindings ───────────────────────────────────────────────────────
-// Bind to firesim's own lazy vals (defined in firesim/sim/build.sbt)
-lazy val firesimLib  = ProjectRef(firesimRoot, "firesim")
-lazy val midas       = ProjectRef(firesimRoot, "midas")
-lazy val targetutils = ProjectRef(firesimRoot, "targetutils")
+val chiselVersion = "3.6.1"
 
 lazy val commonSettings = Seq(
   organization  := "{{ scala_package }}",
   scalaVersion  := "2.13.10",           // must match firesim exactly
-  scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked", "-warn-unused"),
+  scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked", "-Ywarn-unused"),
   addCompilerPlugin("edu.berkeley.cs" % "chisel3-plugin" % chiselVersion cross CrossVersion.full),
   libraryDependencies += "edu.berkeley.cs" %% "chisel3" % chiselVersion,
   Compile / unmanagedResourceDirectories +=
     (Compile / baseDirectory).value / "src" / "main" / "resources",
 )
 
-// Bind to firesim-lab's common bridge library
-// ("common" must match the lazy val name in firesim-lab/build.sbt)
-lazy val common = ProjectRef(firesimLabRoot, "common")
+// Anchor external build so SBT loads them as composite roots
+lazy val firesimLabBuild = RootProject(firesimLabRoot)
 
-lazy val {{ sbt_project }} = (project in file("."))
-  .dependsOn(common, firesimLib, midas, targetutils)
+// Bind to firesim-lab's common bridge library
+// (must match the lazy val name in firesim-lab/build.sbt)
+lazy val fslabLib = ProjectRef(firesimLabRoot, "fslabBridges")
 
 // ── This target ───────────────────────────────────────────────────────────────
 ThisBuild / scalafixScalaBinaryVersion := scalaBinaryVersion.value
 lazy val {{ sbt_project }} = (project in file("."))
-  .dependsOn(common, firesimLib, midas, targetutils)
-  .settings(commonSettings)
+  .dependsOn(fslabLib)
   .settings(
     name          := "{{ target_name }}",
     organization  := "{{ scala_package }}",
+    scalaVersion  := "2.13.10",     // must match firesim's scalaVersion exactly
+    scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked", "-Ywarn-unused"),
+    addCompilerPlugin("edu.berkeley.cs" % "chisel3-plugin" % chiselVersion cross CrossVersion.full),
+    libraryDependencies += "edu.berkeley.cs" %% "chisel3" % chiselVersion,
+
     Compile / unmanagedResourceDirectories +=
       baseDirectory.value / "src" / "main" / "resources",
+    
+    Compile / packageBin / artifactName := { (scalaVer, module, artifact) =>
+      s"${module.name}.jar"
+    }
   )
-
-// Root alias so plain `sbt compile` works without specifying a project
-lazy val root = {{ sbt_project }}

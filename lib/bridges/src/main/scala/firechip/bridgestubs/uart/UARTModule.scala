@@ -1,6 +1,6 @@
 // See LICENSE for license details.
 
-package firechip.bridgestubs
+package firechip.bridgestubs.uart
 
 import chisel3._
 
