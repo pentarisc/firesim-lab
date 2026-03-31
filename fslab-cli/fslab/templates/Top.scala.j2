@@ -1,0 +1,75 @@
+{#
+  Top.scala.j2
+  ============
+  Generates the Chisel RawModule that instantiates the DUT BlackBox and wires
+  each bridge to the corresponding DUT IO ports.
+
+  Context variables used
+  ----------------------
+  project_name    str                    config.project.name
+  package_name    str                    config.project.package_name
+  config_class    str                    config.project.config_class
+  clock_port      str | None             blackbox_ports key with value "in clock"
+  reset_port      str | None             blackbox_ports key with value "in reset"
+
+  unique_bridges  dict[str, BridgeInstance]
+    Keyed by bridge type id.  Used for Top-level import statements.
+    bridge_def.scala_templates.top_imports  — path to import snippet template
+                                              (optional; skipped when None)
+
+  instances       list[BridgeInstance]
+    One entry per bridge instance in declaration order.  Used to include the
+    per-bridge wiring snippet that connects bridge IO to dut.io ports.
+    instance.scala_templates.wiring         — path to wiring snippet template
+    instance.name                           — bridge instance name
+    instance.port_map                       — {bridge_port: bb_port}
+
+  NOTE: all scala_templates paths must be resolvable by the Jinja2
+  Environment loader (relative to the template root directory).
+#}
+// =============================================================================
+//  {{ project_name }}Top.scala
+// @GENERATED_BY_FSLAB — do not edit by hand.
+// =============================================================================
+package {{ package_name }}
+
+import chisel3._
+import chisel3.util._
+import org.chipsalliance.cde.config.Parameters
+
+// ── Bridge Top-Level Imports ───────────────────────────────────────────────────
+{% for b_type, bridge_def in unique_bridges.items() %}
+{% if bridge_def.scala_templates.top_imports %}
+{% include bridge_def.scala_templates.top_imports %}
+{% endif %}
+{% endfor %}
+
+// ── Top Module ─────────────────────────────────────────────────────────────────
+class {{ project_name }}Top(implicit p: Parameters) extends RawModule {
+  val clock = Wire(Clock())
+  val reset = Wire(Bool())
+
+  clock := RationalClockBridge().io.clocks.head
+  val resetBridge = Module(new ResetPulseBridge(ResetPulseBridgeParameters()))
+  resetBridge.io.clock := clock
+  reset                := resetBridge.io.reset
+  GlobalResetCondition(resetBridge.io.reset)
+
+  withClockAndReset(clock, reset) {
+    val dut = Module(new {{ project_name }}DUT)
+{% if clock_port %}
+    dut.io.{{ clock_port }} := clock
+{% endif %}
+{% if reset_port %}
+    dut.io.{{ reset_port }} := reset.asBool
+{% endif %}
+
+    // ── Per-Bridge Wiring (one snippet per bridge instance) ────────────────
+{% for instance in instances %}
+    // {{ instance.label }} — instance: {{ instance.name }}
+{% if instance.scala_templates.wiring %}
+{% include instance.scala_templates.wiring %}
+{% endif %}
+{% endfor %}
+  }
+}

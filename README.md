@@ -71,10 +71,10 @@ exactly how Chipyard depends on FireSim, but without requiring Chipyard.
 │                                                                     │
 │  This repository. Baked into the Docker image.                      │
 │  Provides:                                                          │
-│    • targets/common/     — shared bridge Scala stubs, Golden Gate   │
+│    • lib/                — shared bridge Scala stubs, Golden Gate   │
 │                            BridgeModule implementations, and C++    │
 │                            simulation drivers (UART, BlockDev, etc.)│
-│    • targets/common/registry.yaml — single source of truth for all  │
+│    • lib/registry.yaml   — single source of truth for all           │
 │                            available bridges and features           │
 │    • scripts/fslab/int_target.py — target project generator         │
 │    • scripts/fslab/templates/ — Jinja2 templates for generated files│

@@ -1,0 +1,62 @@
+# pyproject.toml
+# [CLI-01] Typer, [CLI-02] Rich, [CLI-03] Jinja2 declared as hard dependencies.
+# The `fslab` console_script entry point maps `fslab` → `fslab.cli:app`.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fslab"
+version = "0.1.0"
+description = "A CLI orchestrator for the MIDASII/GoldenGate hardware compiler"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+
+dependencies = [
+    # [CLI-01] CLI framework
+    "typer>=0.12.3",
+    # [CLI-02] Terminal UI — Rich is bundled as a typer extra but pinned explicitly
+    "rich>=13.7.1",
+    # [CLI-03] Jinja2 templating for code generation
+    "jinja2>=3.1.4",
+    # Pydantic v2 for the Two-Pass config system (schemas layer)
+    "pydantic>=2.7.1",
+    # YAML parsing for fslab.yaml / registry.yaml
+    "pyyaml>=6.0.1",
+    # shellingham lets Typer detect the active shell for better --help formatting
+    "shellingham>=1.5.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.4.7",
+    "mypy>=1.10.0",
+]
+
+# ---------------------------------------------------------------------------
+# [CLI-01] Console script entry point → `fslab` command in the PATH
+# ---------------------------------------------------------------------------
+[project.scripts]
+fslab = "fslab.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["fslab"]
+
+# ---------------------------------------------------------------------------
+# Ruff linter config (optional – keeps the codebase consistent)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true

@@ -1,0 +1,93 @@
+{#
+  driver.cc.j2
+  ============
+  Generates the top-level simulation driver class.
+
+  Context variables used
+  ----------------------
+  driver_name     str                    config.host.driver_name
+  used_bridges    list[BridgeInstance]   unique bridge types in project order
+    .id             str                  registry bridge id
+    .cpp_type       str                  C++ class name  (e.g. uart_t)
+    .cpp_headers    list[str]            header paths relative to FIRESIM_LAB_ROOT
+    .cpp_template   str                  path to per-bridge driver snippet template
+                                         (included once per unique bridge type
+                                          inside the simulation_run() while-loop;
+                                          the `bridge` loop variable is in scope)
+
+  NOTE: bridge.cpp_template paths must be resolvable by the same Jinja2
+  Environment loader used to load this file (i.e. relative to the template
+  root directory).
+#}
+// =============================================================================
+//  {{ driver_name }}.cc
+// @GENERATED_BY_FSLAB — do not edit by hand.
+// =============================================================================
+#include "core/simulation.h"
+#include "core/systematic_scheduler.h"
+#include "bridges/peek_poke.h"
+{% for bridge in used_bridges %}
+{% for header in bridge.cpp_headers %}
+#include "{{ header }}"
+{% endfor %}
+{% endfor %}
+#include <memory>
+#include <vector>
+#include <string>
+
+class {{ driver_name }} : public systematic_scheduler_t, public simulation_t {
+public:
+  {{ driver_name }}(simif_t &simif, widget_registry_t &registry,
+                    const std::vector<std::string> &args)
+      : systematic_scheduler_t(args),
+        simulation_t(registry, args),
+        simif(simif),
+        peek_poke(registry.get_widget<peek_poke_t>())
+  {
+{% for bridge in used_bridges %}
+      {{ bridge.id }}_bridges = registry.get_bridges<{{ bridge.cpp_type }}>();
+{% endfor %}
+  }
+
+  int simulation_run() override {
+    peek_poke.poke("enable", 1, false);
+
+    // Give the hardware 50 million cycles to boot in the background.
+    // peek_poke.step(50000000, false);
+
+    while (!peek_poke.is_done() && !terminated) {
+
+      // 1. Tick all standard bridges.
+      for (auto *bridge : registry.get_all_bridges()) {
+        bridge->tick();
+      }
+
+      // 2. Per-bridge-type custom tick logic (generated from registry cpp_template).
+{% for bridge in used_bridges %}
+      // ── {{ bridge.label }} ────────────────────────────────────────────────
+      {% include bridge.cpp_template %}
+{% endfor %}
+    }
+    return 0;
+  }
+
+  bool simulation_timed_out() override { return false; }
+
+private:
+  simif_t          &simif;
+  bool              terminated = false;
+  peek_poke_t      &peek_poke;
+
+{% for bridge in used_bridges %}
+  std::vector<{{ bridge.cpp_type }} *> {{ bridge.id }}_bridges;
+{% endfor %}
+};
+
+// ---------------------------------------------------------------------------
+// Factory function required by the FireSim entry-point infrastructure.
+// ---------------------------------------------------------------------------
+std::unique_ptr<simulation_t>
+create_simulation(simif_t &simif, widget_registry_t &registry,
+                  const std::vector<std::string> &args) {
+  return std::make_unique<{{ driver_name }}>(simif, registry, args);
+}

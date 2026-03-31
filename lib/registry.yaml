@@ -1,0 +1,79 @@
+# =============================================================================
+#  firesim-lab/targets/common/registry.yaml
+#
+#  Central registry of available bridges and platform features.
+#  init-target reads this to discover options, validate CLI input, and
+#  drive code generation.
+#
+#  To add a new bridge: append a block following the same schema.
+# =============================================================================
+
+bridges:
+
+  - id: uart
+    label: UART Bridge
+    description: >
+      Connects the target's UART TX/RX pins to the host via a token channel.
+      Host driver writes received bytes to a file or stdout.
+    input_ports: ["rx"]
+    output_ports: ["tx"]
+    cpp_type: "uart_t"
+    cpp_headers: ["uart/uart.h"]
+    cpp_sources: ["uart/uart.cc"]
+    module_macro_prefix: UARTBRIDGEMODULE
+    runtime_plusargs:
+      - flag: "+uart-loopback"
+        description: "Echo TX bytes back to RX"
+        required_params: [addrBits, dataBits, idBits]
+    cpp_template: "templates/bridges/uart/sim_loop.cc.j2"
+    scala_templates:
+      dut_imports: "templates/bridges/uart/dut_imports.scala.j2"
+      top_imports: "templates/bridges/uart/top_imports.scala.j2"
+      ports:       "templates/bridges/uart/ports.scala.j2"
+      wiring:      "templates/bridges/uart/wiring.scala.j2"
+
+# ---------------------------------------------------------------------------
+# Features — non-bridge build-time scaffolding options
+# ---------------------------------------------------------------------------
+features:
+
+  - id: verilog-blackbox
+    label: Verilog BlackBox DUT
+    description: >
+      Generate a Chisel BlackBox wrapper and a stub Verilog module sized to
+      match the selected bridges (AXI4 for FASED, UART pins, etc.)
+    requires_bridge: []
+
+  - id: multi-clock
+    label: Multi-clock target
+    description: >
+      Adds a RationalClockBridge and generates a multi-clock TargetTop
+      scaffold exposing separate clock domains to the DUT.
+    requires_bridge: []
+
+  - id: printf-synthesis
+    label: Printf synthesis
+    description: >
+      Enables GoldenGate printf synthesis pass so target Chisel printf()
+      calls are bridged to the host at simulation time.
+    requires_bridge: []
+
+# ---------------------------------------------------------------------------
+# Platforms — choices for --platform
+# ---------------------------------------------------------------------------
+platforms:
+
+  - id: verilator
+    label: "Verilator (software metasimulation)"
+    config_package: "firesim.midasexamples"
+    config_class: "F1Config"
+
+  - id: vcs
+    label: "VCS (software metasimulation)"
+    config_package: "firesim.midasexamples"
+    config_class: "F1Config"
+
+  - id: f2
+    label: "AWS F2 FPGA"
+    config_package: "firesim.midasexamples"
+    config_class: "DefaultF2Config"

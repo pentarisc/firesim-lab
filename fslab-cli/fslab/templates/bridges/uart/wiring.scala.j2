@@ -1,0 +1,6 @@
+// ── {{ instance.type }} ({{ instance.name }}) ─────────────────────────────
+val {{ instance.name }}_wire = Wire(new UARTPortIO)
+{{ instance.name }}_wire.txd        := dut.io.{{ instance.port_map.txd }}
+dut.io.{{ instance.port_map.rxd }}  := {{ instance.name }}_wire.rxd
+
+UARTBridge(clock, {{ instance.name }}_wire, reset.asBool, {{ instance.params.clock_freq }}, {{ instance.params.baud_rate }})(p)

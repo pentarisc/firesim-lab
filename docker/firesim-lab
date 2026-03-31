@@ -499,7 +499,7 @@ _project="${PROJECT_NAME:-<my-project>}"
 if [[ -z "$PROJECT_NAME" ]]; then
   # New workspace — no project scaffolded yet
   echo "  $(_yellow "ℹ  No firesim-lab project found in this workspace.")"
-  echo "  $(_bold "Scaffold a new project inside the container:")"
+  echo "  $(_bold "Start a new project inside the container:")"
   echo ""
   echo "    $(_cyan "init-target --name $_project \\")  "
   echo "    $(_cyan "            --output-dir /target \\")  "

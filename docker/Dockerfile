@@ -154,15 +154,14 @@ RUN git clone https://github.com/pentarisc/firesim-lab.git /opt/firesim-lab \
 ENV PATH="/opt/firesim-venv/bin:${PATH}"
 RUN python3 -m venv /opt/firesim-venv
 
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r /opt/firesim-lab/docker/firesim-requirements.txt && \
-    pip3 install --no-cache-dir -r /opt/firesim-lab/scripts/requirements.txt
-
-# pre-build the firesim-lab and firesim and generate fat jar for later use.
-RUN cd /opt/firesim-lab && sbt assembly
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip3 install --no-cache-dir -r /opt/firesim-lab/docker/firesim-requirements.txt && \
+    pip3 install --no-cache-dir -r /opt/firesim-lab/fslab-cli/requirements.txt
 
 # Build and install the init-target python tool.
-RUN cd /opt/firesim-lab/scripts && pip install -e .
+#RUN cd /opt/firesim-lab/scripts && pip install -e .
+# Build and install the fslab-cli python tool.
+RUN cd /opt/firesim-lab/fslab-cli && pip3 install -e .
 
 ENV FIRESIM_LAB_ROOT=/opt/firesim-lab
 RUN chown -R firesim-lab:firesim-lab /opt/firesim /opt/firesim-lab
@@ -181,6 +180,9 @@ FROM firesim-lab-stage AS cache-warm
 USER firesim-lab
 
 ENV SBT_OPTS="-Xmx6g -Xss8m -Dsbt.supershell=false"
+
+# pre-build the firesim-lab and firesim and generate fat jar for later use.
+RUN cd /opt/firesim-lab && sbt assembly
 
 # ── Resolve + download all firesim dependencies ───────────────────────────────
 RUN cd /opt/firesim/sim && \
