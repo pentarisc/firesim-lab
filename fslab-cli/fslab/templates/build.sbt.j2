@@ -16,7 +16,7 @@ val firesimLabRoot = {
 val chiselVersion = "3.6.1"
 
 lazy val commonSettings = Seq(
-  organization  := "{{ scala_package }}",
+  organization  := "{{ package_name }}",
   scalaVersion  := "2.13.10",           // must match firesim exactly
   scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked", "-Ywarn-unused"),
   addCompilerPlugin("edu.berkeley.cs" % "chisel3-plugin" % chiselVersion cross CrossVersion.full),
@@ -34,11 +34,11 @@ lazy val fslabLib = ProjectRef(firesimLabRoot, "fslabBridges")
 
 // ── This target ───────────────────────────────────────────────────────────────
 ThisBuild / scalafixScalaBinaryVersion := scalaBinaryVersion.value
-lazy val {{ sbt_project }} = (project in file("."))
+lazy val {{ top_module }} = (project in file("."))
   .dependsOn(fslabLib)
   .settings(
-    name          := "{{ target_name }}",
-    organization  := "{{ scala_package }}",
+    name          := "{{ project_name }}",
+    organization  := "{{ package_name }}",
     scalaVersion  := "2.13.10",     // must match firesim's scalaVersion exactly
     scalacOptions ++= Seq("-deprecation", "-feature", "-unchecked", "-Ywarn-unused"),
     addCompilerPlugin("edu.berkeley.cs" % "chisel3-plugin" % chiselVersion cross CrossVersion.full),

@@ -21,8 +21,8 @@ clock_period        str        config.target.clock_period
 driver_name         str        config.host.driver_name
 gen_dir             str        config.advanced.gen_dir
 gen_file_basename   str        config.advanced.gen_file_basename
-firesim_root        str        config.advanced.firesim_root  (or "")
-firesim_lab_root    str        config.advanced.firesim_lab_root  (or "")
+firesim_root        str        config.advanced.firesim_root  (or "/opt/firesim")
+firesim_lab_root    str        config.advanced.firesim_lab_root  (or "/opt/firesim-lab")
 
 Derived from design.blackbox_ports
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -176,8 +176,8 @@ def _build_template_context(
     driver_name       = config.host.driver_name
     gen_dir           = config.advanced.gen_dir
     gen_file_basename = config.advanced.gen_file_basename
-    firesim_root      = config.advanced.firesim_root     or ""
-    firesim_lab_root  = config.advanced.firesim_lab_root or ""
+    firesim_root      = config.advanced.firesim_root     or "/opt/firesim"
+    firesim_lab_root  = config.advanced.firesim_lab_root or "/opt/firesim-lab"
 
     # ── Derived from design.blackbox_ports ────────────────────────────────
     # Scan for the key whose port definition is "in clock" or "in reset".

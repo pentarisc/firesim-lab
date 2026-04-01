@@ -78,8 +78,6 @@ def cmd_generate(
         _FSLAB_YAML,
         "--config",
         "-c",
-        exists=True,
-        readable=True,
         help="Path to the project YAML (default: [italic]fslab.yaml[/] in CWD).",
     ),
 ) -> None:
@@ -122,6 +120,7 @@ def _run_generate(
     if not yaml_path.exists():
         error(
             f"Project config not found: [path]{yaml_path}[/]\n"
+            "Are you inside the project directory?\n"
             "Run [bold]fslab init[/] to create a new project."
         )
         raise typer.Exit(code=1)
@@ -497,7 +496,7 @@ def _render_templates(*, config: object, registry: object, project_root: Path) -
       • CMakeLists.txt.j2  → CMakeLists.txt  (or build/CMakeLists.txt)
     """
     from jinja2 import Environment, PackageLoader, select_autoescape  # type: ignore
-    from context import _build_template_context
+    from fslab.commands.context import _build_template_context
 
     info("Rendering Jinja2 templates…")
 
@@ -522,10 +521,12 @@ def _render_templates(*, config: object, registry: object, project_root: Path) -
     # Map template names → output paths
     render_plan = {
         "build.sbt.j2" : project_root / "build.sbt",
+        "plugins.sbt.j2":   project_root / "project" / "plugins.sbt",
         "CMakeLists.txt.j2":  project_root / "CMakeLists.txt",
         "Top.scala.j2":   project_root / "src" / "main" / "scala" / f"{top_module}.scala",
         "DUT.scala.j2":   project_root / "src" / "main" / "scala" / f"{top_module}BlackBox.scala",
         "driver.cc.j2":   project_root / "src" / "main" / "cc" / f"{driver_name}.cc"
+        
     }
 
     for template_name, output_path in render_plan.items():

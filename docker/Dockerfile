@@ -158,8 +158,6 @@ RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && \
     pip3 install --no-cache-dir -r /opt/firesim-lab/docker/firesim-requirements.txt && \
     pip3 install --no-cache-dir -r /opt/firesim-lab/fslab-cli/requirements.txt
 
-# Build and install the init-target python tool.
-#RUN cd /opt/firesim-lab/scripts && pip install -e .
 # Build and install the fslab-cli python tool.
 RUN cd /opt/firesim-lab/fslab-cli && pip3 install -e .
 
@@ -174,7 +172,7 @@ RUN chown -R firesim-lab:firesim-lab /opt/firesim /opt/firesim-lab
 #  `|| true` tolerates build failures caused by the absence of a user
 #  target project — we only care that dependency JARs are downloaded.
 # =============================================================================
-FROM firesim-lab-stage AS cache-warm
+FROM firesim-lab-stage AS final
 
 # Caches should be created in user's home directory. So run this layer as user.
 USER firesim-lab
@@ -183,53 +181,6 @@ ENV SBT_OPTS="-Xmx6g -Xss8m -Dsbt.supershell=false"
 
 # pre-build the firesim-lab and firesim and generate fat jar for later use.
 RUN cd /opt/firesim-lab && sbt assembly
-
-# ── Resolve + download all firesim dependencies ───────────────────────────────
-RUN cd /opt/firesim/sim && \
-    sbt ${SBT_OPTS} \
-      "project firesim"    update \
-      "project midas"      update \
-      "project targetutils" update \
-    || true
-
-# ── Compile firesim framework projects ───────────────────────────────────────
-# Compiling (not just resolving) warms SBT's incremental analysis cache
-# under /opt/firesim/sim/target/ so subsequent compilations are much faster.
-RUN cd /opt/firesim/sim && \
-    sbt ${SBT_OPTS} \
-      "project targetutils" compile \
-      "project midas"       compile \
-    || true
-
-# ── Resolve + compile firesim-lab common bridge library ───────────────────────
-RUN cd /opt/firesim-lab && \
-    FIRESIM_ROOT=/opt/firesim \
-    sbt ${SBT_OPTS} \
-      "project common" update \
-      "project common" compile \
-    || true
-
-# =============================================================================
-#  Stage 5 — final  (default build target)
-#  Build both example projects with Verilator to warm ~/.cache/ccache/
-#
-#  This stage:
-#    • Runs firesim-lab/examples/build-examples.sh
-#    • Calls `make compile` + `make verilator` for each example
-#    • Each `make verilator` compiles ~200 C++ files through ccache
-#    • Subsequent user compilations of different targets hit the ccache
-#      for common infrastructure files (harness, bridge drivers, FASED model)
-#      and only recompile target-specific generated C++
-#
-#  To skip this stage (faster image build, cold ccache at runtime):
-#    docker build --target cache-warm -t firesim-lab:no-examples .
-# =============================================================================
-FROM cache-warm AS final
-
-# Run example builds.  Failures print a warning but do not abort the build.
-RUN FIRESIM_ROOT=/opt/firesim \
-    FIRESIM_LAB_ROOT=/opt/firesim-lab \
-    /opt/firesim-lab/examples/build-examples.sh
 
 # ── Print final cache statistics ──────────────────────────────────────────────
 RUN echo "" && \
@@ -246,9 +197,5 @@ ENV FIRESIM_ROOT=/opt/firesim
 ENV FIRESIM_LAB_ROOT=/opt/firesim-lab
 ENV CCACHE_DIR=/home/opt/firesim-lab/.cache/ccache
 ENV SBT_OPTS="-Xmx8g -Xss8m -Dsbt.supershell=false"
-
-# Default working directory — docker-compose bind-mounts the user's target
-# project here, so `source env.sh && make compile` works immediately.
-USER firesim-lab
 
 CMD ["/bin/bash"]

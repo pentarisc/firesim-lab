@@ -39,7 +39,7 @@ _VERILOG_PORT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_$]*$")
 # Helper
 # ---------------------------------------------------------------------------
 
-def _validate_alpha_num(key: str, value: str, entity: str) -> str:
+def _validate_alpha_num(value: str, key: str, entity: str) -> str:
     """[REG-01] Validate that a value matches the allowed character set."""
     if not _ID_RE.match(value):
         raise ValueError(
@@ -60,7 +60,7 @@ class ScalaTemplates(BaseModel):
     [REG-03] top_imports is optional; all other template paths are required.
     """
 
-    dut_imports: str
+    dut_imports: Optional[str] = None
     top_imports: Optional[str] = None  # [REG-03] explicitly optional
     ports: str
     wiring: str

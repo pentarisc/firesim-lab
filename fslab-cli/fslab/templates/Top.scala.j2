@@ -28,7 +28,7 @@
   Environment loader (relative to the template root directory).
 #}
 // =============================================================================
-//  {{ project_name }}Top.scala
+//  {{ top_module }}Top.scala
 // @GENERATED_BY_FSLAB — do not edit by hand.
 // =============================================================================
 package {{ package_name }}
@@ -36,16 +36,18 @@ package {{ package_name }}
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
+import firesim.lib.bridges.{FASEDBridge, CompleteConfig, PeekPokeBridge, RationalClockBridge, ResetPulseBridge, ResetPulseBridgeParameters}
+import midas.targetutils.GlobalResetCondition
 
 // ── Bridge Top-Level Imports ───────────────────────────────────────────────────
-{% for b_type, bridge_def in unique_bridges.items() %}
-{% if bridge_def.scala_templates.top_imports %}
+{%- for b_type, bridge_def in unique_bridges.items() %}
+{%- if bridge_def.scala_templates.top_imports %}
 {% include bridge_def.scala_templates.top_imports %}
-{% endif %}
+{% endif -%}
 {% endfor %}
 
 // ── Top Module ─────────────────────────────────────────────────────────────────
-class {{ project_name }}Top(implicit p: Parameters) extends RawModule {
+class {{ top_module }}Top(implicit p: Parameters) extends RawModule {
   val clock = Wire(Clock())
   val reset = Wire(Bool())
 
@@ -56,7 +58,7 @@ class {{ project_name }}Top(implicit p: Parameters) extends RawModule {
   GlobalResetCondition(resetBridge.io.reset)
 
   withClockAndReset(clock, reset) {
-    val dut = Module(new {{ project_name }}DUT)
+    val dut = Module(new {{ top_module }}DUT)
 {% if clock_port %}
     dut.io.{{ clock_port }} := clock
 {% endif %}
@@ -68,8 +70,11 @@ class {{ project_name }}Top(implicit p: Parameters) extends RawModule {
 {% for instance in instances %}
     // {{ instance.label }} — instance: {{ instance.name }}
 {% if instance.scala_templates.wiring %}
+{%- set content %}
 {% include instance.scala_templates.wiring %}
-{% endif %}
+{%- endset -%}
+{{ content | indent(4, true) }}
+{% endif -%}
 {% endfor %}
   }
 }

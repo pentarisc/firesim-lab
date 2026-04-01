@@ -33,6 +33,8 @@ from pydantic import ValidationError
 from .registry import MasterRegistry, RegistryFile
 from .project import AdvancedConfig, FSLabConfig
 
+# Default registry path:
+_DEFAULT_REGISTRY = Path("/opt/firesim-lab/lib/registry.yaml")
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -127,9 +129,12 @@ def load_and_validate(
     # 1a. Default registry (lowest priority)
     if advanced.default_registry:
         default_path = Path(advanced.default_registry)
-        registry_files.append(
-            _load_registry_file(default_path)
-        )
+    else:
+        default_path = _DEFAULT_REGISTRY
+
+    registry_files.append(
+        _load_registry_file(default_path)
+    )
 
     # 1b. Custom registries (higher priority; loaded in list order — REG-07)
     for custom_str in advanced.custom_registries:

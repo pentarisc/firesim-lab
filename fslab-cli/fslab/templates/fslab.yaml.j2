@@ -61,10 +61,10 @@
 
 # ------------------------------------------------------------------------------
 # project:  Top-level project metadata
-#   name          [PROJ-01] ^[a-zA-Z0-9_-]+$
-#   package_name  [PROJ-02] ^[a-zA-Z_][a-zA-Z0-9_.]*$  (dots OK for packages)
-#   top_module    [PROJ-02] as above
-#   config_class  [PROJ-02] as above
+#   name          ^[a-zA-Z0-9_-]+$
+#   package_name  ^[a-zA-Z_][a-zA-Z0-9_.]*$  (dots OK for packages)
+#   top_module    as above
+#   config_class  as above
 # ------------------------------------------------------------------------------
 project:
   name:         "{{ name }}"
@@ -74,4 +74,81 @@ project:
 
 target:
   platform:     "{{ platform }}"
-  clock_period: 1.0
+  clock_period: "1.0"
+
+## Add your target's design details here. for non-chisel projects, you need to
+## specify type as "blackbox" and populate sources and blackbox_ports section.
+## The values in the blackbox_ports must match with the port names in your
+## top module.
+## MANDATORY: This section is mandatory.
+
+#design:
+#  type: "blackbox"   # Options: "chisel", "blackbox"
+#  parameters:
+#    AXI_ADDR_WIDTH: 32
+#    DATA_WIDTH: 64
+#    MODE: '"AXI4_LITE"'
+#  sources:
+#    - "src/main/verilog/my_top.sv"
+#  blackbox_ports:
+#    clk: "in clock"      
+#    rst: "in reset"      
+#    uart_tx: "out 1"
+#    uart_rx: "in 1"
+#    mem_addr: "out AXI_ADDR_WIDTH"  
+
+## Host side driver that controls the simulation. This is firesim related.
+## Specifying an emulator as "verilator" or "vcs", "xceleium" will allow you to
+## run meta simulations.
+## MANDATORY: This section is mandatory.
+
+#host:
+#  emulator: "verilator"   # Options: "vcs", "xcelium"
+#  driver_name: "MyDesign02Driver"
+#  cxx_standard: 20
+#  cxx_flags: "-O3 -Wall"
+#  sources:
+#    - "src/main/cc/main.cc"
+#  includes:
+#    - "src/main/cc/include"
+#  libs:
+#    - "pthread"
+
+## You can add one or more bridges. Bridges are a way to communicate with the
+## Host side from your target hardware design. For example, you can use UART bridge
+## and interact with your design by running 'screen tty/xxx 115200' on the host
+## where the simulation is running. You will need a working UART hardware
+## implementation of UART in your design, and then you can connect
+## the UART ports of your design to the UART bridge here.
+## Other bridges support RAM access, Virtual BlockDevice access etc.
+## Use the port_map section to map the port key name from the design section above
+## as values in this section. The port key names must be as specified in the bridge.
+## Check specific bridge documentation for details on port key names to use.
+## OPTIONAL: You can leave/delete this section if your designs dont require bridnges.
+
+#bridges:
+#  - type: "uart"
+#    name: "serial_0"
+#    port_map:
+#      tx: "uart_tx"
+#      rx: "uart_rx"
+#    params:
+#      baud_rate: 115200
+
+
+## Advanced options that let you extend firesim-lab and fined grained control.
+## OPTIONAL: You can leave this section commented.
+
+#advanced:
+#  # Registry paths (Last-definition wins if IDs conflict)
+#  default_registry: "/opt/firesim-lab/lib/registry.yaml"
+#  custom_registries:
+#    - "lib/custom_ip/registry.yaml"
+#  
+#  # Toolchain Paths
+#  firesim_root: "/opt/firesim"
+#  firesim_lab_root: "/opt/firesim-lab"
+#  
+#  # Generation parameters
+#  gen_dir: "generated-src"
+#  gen_file_basename: "FPGATop"

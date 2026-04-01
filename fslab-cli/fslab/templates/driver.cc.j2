@@ -65,7 +65,10 @@ public:
       // 2. Per-bridge-type custom tick logic (generated from registry cpp_template).
 {% for bridge in used_bridges %}
       // ── {{ bridge.label }} ────────────────────────────────────────────────
-      {% include bridge.cpp_template %}
+{%- set content %}
+{% include bridge.cpp_template %}
+{%- endset -%}
+{{ content | indent(6, true) }}
 {% endfor %}
     }
     return 0;

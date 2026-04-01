@@ -15,8 +15,8 @@ bridges:
     description: >
       Connects the target's UART TX/RX pins to the host via a token channel.
       Host driver writes received bytes to a file or stdout.
-    input_ports: ["rx"]
-    output_ports: ["tx"]
+    input_ports: ["rxd"]
+    output_ports: ["txd"]
     cpp_type: "uart_t"
     cpp_headers: ["uart/uart.h"]
     cpp_sources: ["uart/uart.cc"]
@@ -25,12 +25,12 @@ bridges:
       - flag: "+uart-loopback"
         description: "Echo TX bytes back to RX"
         required_params: [addrBits, dataBits, idBits]
-    cpp_template: "templates/bridges/uart/sim_loop.cc.j2"
+    cpp_template: "bridges/uart/sim_loop.cc.j2"
     scala_templates:
-      dut_imports: "templates/bridges/uart/dut_imports.scala.j2"
-      top_imports: "templates/bridges/uart/top_imports.scala.j2"
-      ports:       "templates/bridges/uart/ports.scala.j2"
-      wiring:      "templates/bridges/uart/wiring.scala.j2"
+      #dut_imports: "bridges/uart/dut_imports.scala.j2"
+      top_imports: "bridges/uart/top_imports.scala.j2"
+      ports:       "bridges/uart/ports.scala.j2"
+      wiring:      "bridges/uart/wiring.scala.j2"
 
 # ---------------------------------------------------------------------------
 # Features — non-bridge build-time scaffolding options

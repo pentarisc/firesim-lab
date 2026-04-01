@@ -1,2 +1,2 @@
-val uart_txd = Output(Bool())
-val uart_rxd = Input(Bool())
+val {{ instance.port_map.txd }} = Output(Bool())
+val {{ instance.port_map.rxd }} = Input(Bool())
