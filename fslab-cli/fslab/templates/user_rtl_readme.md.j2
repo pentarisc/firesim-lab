@@ -1,0 +1,8 @@
+## Add the following source RTL in this folder or add symlink. These are configured in fslab.yaml
+## If you dont see any file in this folder but you have configured this path in fslab.yaml, then
+## Check the config carefully if you want to use this folder.
+{% if verilog_file_names %}
+{% for verilog_file in verilog_file_names %}
+    {{ verilog_file }}
+{% endfor %}
+{% endif %}

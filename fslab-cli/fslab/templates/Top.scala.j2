@@ -28,7 +28,7 @@
   Environment loader (relative to the template root directory).
 #}
 // =============================================================================
-//  {{ top_module }}Top.scala
+//  {{ fslab_top }}Top.scala
 // @GENERATED_BY_FSLAB — do not edit by hand.
 // =============================================================================
 package {{ package_name }}
@@ -47,7 +47,7 @@ import midas.targetutils.GlobalResetCondition
 {% endfor %}
 
 // ── Top Module ─────────────────────────────────────────────────────────────────
-class {{ top_module }}Top(implicit p: Parameters) extends RawModule {
+class {{ fslab_top }}(implicit p: Parameters) extends RawModule {
   val clock = Wire(Clock())
   val reset = Wire(Bool())
 
@@ -58,7 +58,7 @@ class {{ top_module }}Top(implicit p: Parameters) extends RawModule {
   GlobalResetCondition(resetBridge.io.reset)
 
   withClockAndReset(clock, reset) {
-    val dut = Module(new {{ top_module }}DUT)
+    val dut = Module(new {{ top_module }})
 {% if clock_port %}
     dut.io.{{ clock_port }} := clock
 {% endif %}

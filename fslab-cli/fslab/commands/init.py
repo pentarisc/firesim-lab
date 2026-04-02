@@ -34,6 +34,7 @@ _SCAFFOLD_DIRS = [
     "src/main/cc",
     "src/main/verilog",
     "generated-src",
+    "user_rtl",
 ]
 
 _DEFAULT_GITIGNORE = """\
@@ -128,7 +129,7 @@ def _write_default_yaml(*, project_dir: Path, name: str, platform: str) -> None:
             keep_trailing_newline=True,
         )
         tmpl = env.get_template("fslab.yaml.j2")
-        content = tmpl.render(name=name, platform=platform)
+        content = tmpl.render(name=name, platform=platform, project_dir=project_dir)
         out = project_dir / "fslab.yaml"
         out.write_text(content, encoding="utf-8")
         console.print("  [dim]wrote[/] fslab.yaml")

@@ -6,7 +6,7 @@
 
   Context variables used
   ----------------------
-  top_module    str                      config.project.top_module
+  top_module      str                    config.design.top_module
   package_name    str                    config.project.package_name
   clock_port      str | None             blackbox_ports key with value "in clock"
   reset_port      str | None             blackbox_ports key with value "in reset"
@@ -27,7 +27,7 @@
   Environment loader (relative to the template root directory).
 #}
 // =============================================================================
-//  {{ top_module }}DUT.scala
+//  {{ top_module }}.scala
 // @GENERATED_BY_FSLAB — do not edit by hand.
 // =============================================================================
 package {{ package_name }}
@@ -43,11 +43,11 @@ import chisel3.util._
 {% endfor %}
 
 // ── DUT IO Bundle ─────────────────────────────────────────────────────────────
-class {{ top_module }}DUTIO extends Bundle {
+class {{ top_module }}IO extends Bundle {
 {% if clock_port %}
   val {{ clock_port }} = Input(Clock())
-{% endif %}
-{% if reset_port %}
+{%- endif -%}
+{%- if reset_port %}
   val {{ reset_port }} = Input(Bool())
 {% endif %}
 
@@ -56,14 +56,16 @@ class {{ top_module }}DUTIO extends Bundle {
   // {{ instance.label }} — instance: {{ instance.name }}
 {% if instance.scala_templates.ports %}
 {% include instance.scala_templates.ports %}
-{% endif %}
-{% endfor %}
+{% endif -%}
+{% endfor -%}
 }
 
 // ── BlackBox Wrapper ───────────────────────────────────────────────────────────
-class {{ top_module }}DUT extends BlackBox with HasBlackBoxResource {
-  val io = IO(new {{ top_module }}DUTIO)
-{% if verilog_file %}
-  addResource("/vsrc/{{ verilog_file }}")
+class {{ top_module }} extends BlackBox with HasBlackBoxPath {
+  val io = IO(new {{ top_module }}IO)
+{% if verilog_files %}
+{% for verilog_file in verilog_files %}
+  addPath("{{ verilog_file }}")
+{% endfor %}
 {% endif %}
 }

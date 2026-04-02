@@ -18,10 +18,11 @@ Assumed external API (from Prompt 1 / schemas layer)
     config, registry = load_and_validate("fslab.yaml")
 
     config attributes used here (illustrative names – match your Pydantic models):
-        config.name                           → str   e.g. "my-design-02"
-        config.target_dir                     → Path  e.g. /target/my-design-02
-        config.top_module                     → str   e.g. "MyDesign02Top"
-        config.config_class                   → str   e.g. "MyDesign02TargetConfig"
+        config.project.name                   → str   e.g. "my-design-02" (auto populated)
+        config.project.package_name           → str   e.g. "my.org"
+        config.project.fslab_top              → str   e.g. "MyDesign02Top" (auto generated from name)
+        config.project.config_class           → str   e.g. "MyDesign02TargetConfig"
+        config.project.project_dir            → str   e.g. "/target/my-design02" (auto populated)
         registry.platforms[""].config_package → str   e.g. "firesim.midasexamples"
         registry.platforms[""].config_class   → str   e.g. "DefaultF2Config"
         config.gen_file_basename              → str   e.g. "FSLabTargetTop"
@@ -319,19 +320,19 @@ def _build_classpath(config: object, registry: object) -> str:
     registry) and the project-specific JAR (computed from config).
 
     Expected config/registry attributes (names match Pydantic models):
-        registry.firesim_jar   → Path or str
-        config.target_dir      → Path or str  (e.g. /target/my-design-02)
-        config.name            → str           (e.g. my-design-02)
+        registry.firesim_jar        → Path or str
+        config.project.project_dir  → Path or str  (e.g. /target/my-design-02)
+        config.project.name         → str          (e.g. my-design-02)
 
     The project JAR path follows the sbt convention:
-        <target_dir>/target/scala-2.13/<name>.jar
+        <project_dir>/target/scala-2.13/<name>.jar
     """
     firesim_jar = Path(str(getattr(registry, "firesim_jar",
-                                   "/opt/firesim-lab/target/scala-2.13/firesim-lab.jar")))
+                            "/opt/firesim-lab/target/scala-2.13/firesim-lab.jar")))
 
-    target_dir = Path(str(getattr(config, "target_dir",
-                                  f"/target/{getattr(config, 'name', 'design')}")))
-    design_name = getattr(config, "name", "design")
+    target_dir = Path(str(getattr(config.project, "project_dir",
+                            f"/target/{getattr(config.project, 'name', 'design')}")))
+    design_name = getattr(config.project, "name", "design")
     design_jar = target_dir / "target" / "scala-2.13" / f"{design_name}.jar"
 
     return f"{firesim_jar}:{design_jar}"
@@ -347,15 +348,16 @@ def _run_chisel_generator(
         java -cp <firesim_jar>:<design_jar> midas.chiselstage.Generator
              --target-dir  <target_dir>/generated-src
              --name        <project_name>
-             --top-module  <package_name.top_module>
+             --top-module  <package_name.fslab_top>
              --configs     <package_name.config_class>
     """
-    target_dir   = Path(str(getattr(config, "target_dir",
-                                    f"/target/{getattr(config, 'name', 'design')}")))
-    project_name   = getattr(config, "name",   "MyDesign")
-    package_name = getattr(config, "package_name",   "com.mydesign")
-    top_module   = getattr(config, "top_module",   "myDesign.MyDesignTop")
-    target_cfg   = getattr(config, "config_class", "myDesign.MyDesignTargetConfig")
+    project = config.project
+    target_dir = Path(str(getattr(project, "project_dir",
+                            f"/target/{getattr(project, 'name', 'design')}")))
+    project_name   = getattr(project, "name",   "MyDesign")
+    package_name = getattr(project, "package_name",   "com.mydesign")
+    fslab_top   = getattr(project, "fslab_top",   "MyDesignTop")
+    target_cfg   = getattr(project, "config_class", "MyDesignTargetConfig")
     generated_src = target_dir / "generated-src"
 
     classpath = _build_classpath(config, registry)
@@ -365,8 +367,8 @@ def _run_chisel_generator(
         "-cp", classpath,
         "midas.chiselstage.Generator",
         "--target-dir",  str(generated_src),
-        "--name",        project_name,
-        "--top-module",  f"{package_name}.{top_module}",
+        "--name",        fslab_top,
+        "--top-module",  f"{package_name}.{fslab_top}",
         "--configs",     f"{package_name}.{target_cfg}",
     ]
 
@@ -384,41 +386,37 @@ def _run_golden_gate_main(
 
     Full command (parameterised):
         java -cp <classpath> midas.stage.GoldenGateMain
-             -i   <generated_src>/<top_module>.fir
+             -i   <generated_src>/<fslab_top>.fir
              -td  <generated_src>
-             -faf <generated_src>/<top_module>.anno.json
+             -faf <generated_src>/<fslab_top>.anno.json
              -ggcp <registry.platforms.config_package>
              -ggcs <registry.platforms.config_class>
              --output-filename-base <gen_file_basename>
              --allow-unrecognized-annotations
              --no-dedup
     """
-    target_dir   = Path(str(getattr(config, "target_dir",
-                                    f"/target/{getattr(config, 'name', 'design')}")))
-    project_name   = getattr(config, "name",   "MyDesign")
-    package_name = getattr(config, "package_name",   "com.mydesign")
-    top_module   = getattr(config, "top_module",   "myDesign.MyDesignTop")
-    target_cfg   = getattr(config, "config_class", "myDesign.MyDesignTargetConfig")
+    project = config.project
+    target_dir   = Path(str(getattr(config, "project_dir",
+                                    f"/target/{getattr(project, 'name', 'design')}")))
+    project_name   = getattr(project, "name",   "MyDesign")
+    package_name = getattr(project, "package_name",   "com.mydesign")
+    fslab_top   = getattr(project, "fslab_top",   "myDesign.MyDesignTop")
+    target_cfg   = getattr(project, "config_class", "myDesign.MyDesignTargetConfig")
     platform     = getattr(config.target, "platform", "f2")
     config_package = None
     config_class = None
 
-    for p in registry.get("platforms", []):
-        if p.get("id") == target_id:
-            config_package = p.get("config_package")
-            config_class = p.get("config_class")
+    for name, pf in registry.platforms.items():
+        if name == platform:
+            config_package = pf.config_package
+            config_class = pf.config_class
             break
 
-    #config_package, config_class = next(
-    ##    (p["config_package"], p["config_class"]
-    #    for p in registry.get("platforms", []) if p.get("id") == platform),
-    #    ("firesim.midasexamples", "DefaultF2Config")
-    #)
     out_base     = getattr(config, "gen_file_basename", "FSLabTargetTop")
 
     generated_src = target_dir / "generated-src"
-    fir_file      = generated_src / f"{top_module}.fir"
-    anno_file     = generated_src / f"{top_module}.anno.json"
+    fir_file      = generated_src / f"{fslab_top}.fir"
+    anno_file     = generated_src / f"{fslab_top}.anno.json"
 
     classpath = _build_classpath(config, registry)
 
@@ -429,11 +427,11 @@ def _run_golden_gate_main(
         "-i",   str(fir_file),
         "-td",  str(generated_src),
         "-faf", str(anno_file),
-        "-ggcp", config_package,
-        "-ggcs", config_class,
+        "-ggcp", str(config_package),
+        "-ggcs", str(config_class),
         "--output-filename-base", out_base,
         "--allow-unrecognized-annotations",
-        "--no-dedup",
+        "--no-dedup"
     ]
 
     log = sm.log_file("golden-gate-main")
@@ -515,7 +513,7 @@ def _render_templates(*, config: object, registry: object, project_root: Path) -
     ctx = _build_template_context(config=config, registry=registry)
 
     # Unpack keys used in output filenames
-    top_module  = ctx["top_module"]   # config.project.top_module
+    fslab_top  = ctx["fslab_top"]   # config.project.fslab_top
     driver_name = ctx["driver_name"]  # config.host.driver_name
 
     # Map template names → output paths
@@ -523,10 +521,11 @@ def _render_templates(*, config: object, registry: object, project_root: Path) -
         "build.sbt.j2" : project_root / "build.sbt",
         "plugins.sbt.j2":   project_root / "project" / "plugins.sbt",
         "CMakeLists.txt.j2":  project_root / "CMakeLists.txt",
-        "Top.scala.j2":   project_root / "src" / "main" / "scala" / f"{top_module}.scala",
-        "DUT.scala.j2":   project_root / "src" / "main" / "scala" / f"{top_module}BlackBox.scala",
-        "driver.cc.j2":   project_root / "src" / "main" / "cc" / f"{driver_name}.cc"
-        
+        "Top.scala.j2":   project_root / "src" / "main" / "scala" / f"{fslab_top}.scala",
+        "DUT.scala.j2":   project_root / "src" / "main" / "scala" / f"{fslab_top}BlackBox.scala",
+        "Config.scala.j2":   project_root / "src" / "main" / "scala" / f"Config.scala",
+        "driver.cc.j2":   project_root / "src" / "main" / "cc" / f"{driver_name}.cc",
+        "user_rtl_readme.md.j2": project_root / "user_rtl" / "README.md"
     }
 
     for template_name, output_path in render_plan.items():

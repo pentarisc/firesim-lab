@@ -109,9 +109,9 @@ set(BRIDGE_H
 
 # -- Platform Specific Files for Host Driver (e.g. F2) --
 set(PLATFORM_CC
-    \$(midas_dir)/simif_${PLATFORM}.cc
-    \$(midas_dir)/main.cc
-    \$(midas_dir)/entry.cc
+    ${MIDAS_DIR}/simif_${PLATFORM}.cc
+    ${MIDAS_DIR}/main.cc
+    ${MIDAS_DIR}/entry.cc
 )
 
 # ------------------------------------------------------------------------------
@@ -127,6 +127,7 @@ add_executable(${DRIVER_TARGET}
 
 target_include_directories(${DRIVER_TARGET} PRIVATE
     ${FIRESIM_ROOT}/src/main/cc
+    ${MIDAS_DIR}
     ${FSLAB_BRIDGES_DIR}/src/main/cc
     ${GEN_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include

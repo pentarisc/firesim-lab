@@ -16,9 +16,10 @@ master = MasterRegistry.from_registry_files([RegistryFile.model_validate(raw_reg
 
 base_proj = {
     "project": {"name": "my_design_02", "package_name": "com.example",
-                "top_module": "MyMonolithicTop", "config_class": "MyConfig"},
-    "design": {"type": "blackbox", "parameters": {"AXI_ADDR_WIDTH": 32},
-               "sources": ["src/main/verilog/my_top.sv"],
+                "fslab_top": "MyMonolithicTop", "config_class": "MyConfig"},
+    "design": {"type": "blackbox", "top_module": "my_counter",
+               "parameters": {"AXI_ADDR_WIDTH": 32},
+               "sources": ["user_rtl/my_top.v"],
                "blackbox_ports": {"clk": "in clock", "rst": "in reset",
                                   "uart_tx": "out 1", "uart_rx": "in 1",
                                   "mem_addr": "out AXI_ADDR_WIDTH"}},

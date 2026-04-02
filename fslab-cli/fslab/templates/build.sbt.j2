@@ -34,7 +34,7 @@ lazy val fslabLib = ProjectRef(firesimLabRoot, "fslabBridges")
 
 // ── This target ───────────────────────────────────────────────────────────────
 ThisBuild / scalafixScalaBinaryVersion := scalaBinaryVersion.value
-lazy val {{ top_module }} = (project in file("."))
+lazy val {{ fslab_top }} = (project in file("."))
   .dependsOn(fslabLib)
   .settings(
     name          := "{{ project_name }}",

@@ -8,7 +8,7 @@ dict supplied by the caller.
 
 Validation requirements satisfied here:
   PROJ-01   project.name format
-  PROJ-02   top_module / package_name / config_class format
+  PROJ-02   fslab_top / package_name / config_class format
   PROJ-03   design.type allowed values
   PROJ-04   host.emulator allowed values
   PROJ-05   blackbox_ports value format
@@ -21,14 +21,18 @@ Validation requirements satisfied here:
   PROJ-12   bridge.type must exist in MasterRegistry
   PROJ-13   port_map values must exist in blackbox_ports; port_map keys must
             appear in the correct direction list of the registry bridge
+  PROJ-14   design.sources must be present and contain
+            at least one source file when design.type is 'blackbox'.
+  PROJ-15   design.top_module must be a valid system/verilog module name.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any, Optional
+from pathlib import Path
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, computed_field
 
 # ---------------------------------------------------------------------------
 # Compiled regex patterns
@@ -53,6 +57,8 @@ _BRIDGE_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 _DESIGN_TYPES = {"chisel", "blackbox"}
 _EMULATOR_TYPES = {"verilator", "vcs", "xcelium"}
 
+# [PROJ-15]
+VERILOG_MODULE_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_$]*$')
 
 # ---------------------------------------------------------------------------
 # project: block
@@ -63,8 +69,15 @@ class ProjectConfig(BaseModel):
 
     name: str
     package_name: str
-    top_module: str
     config_class: str
+    project_dir: str
+
+    @computed_field
+    @property
+    def fslab_top(self) -> str:
+        parts = re.split(r'[-_]+', self.name)
+        camel = ''.join(part.capitalize() for part in parts if part)
+        return camel + "Top"
 
     @field_validator("name", mode="before")
     @classmethod
@@ -77,17 +90,16 @@ class ProjectConfig(BaseModel):
             )
         return v
 
-    @field_validator("package_name", "top_module", "config_class", mode="before")
+    @field_validator("package_name", "config_class", mode="before")
     @classmethod
     def validate_module_identifiers(cls, v: str, info: Any) -> str:
-        """[PROJ-02] package_name, top_module, config_class must be valid identifiers."""
+        """[PROJ-02] package_name, config_class must be valid identifiers."""
         if not _MODULE_RE.match(v):
             raise ValueError(
                 f"[PROJ-02] project.{info.field_name} '{v}' is invalid. "
                 r"Must match ^[a-zA-Z_][a-zA-Z0-9_.]*$"
             )
         return v
-
 
 # ---------------------------------------------------------------------------
 # design: block
@@ -97,6 +109,7 @@ class DesignConfig(BaseModel):
     """Describes the user's RTL design."""
 
     type: str
+    top_module: str
     parameters: dict[str, Any] = Field(default_factory=dict)
     sources: list[str] = Field(default_factory=list)
     blackbox_ports: Optional[dict[str, str]] = None  # only present for blackbox
@@ -131,6 +144,17 @@ class DesignConfig(BaseModel):
                 )
         return v
 
+    @field_validator("top_module", mode="before")
+    @classmethod
+    def validate_top_module_name(cls, v: str, info: Any) -> str:
+        """[PROJ-15] top_module be valid identifier."""
+        if not VERILOG_MODULE_RE.match(v):
+            raise ValueError(
+                f"[PROJ-15] design.{info.field_name} '{v}' is invalid. "
+                r"Must match ^[a-zA-Z_][a-zA-Z0-9_$]*$"
+            )
+        return v
+
     @model_validator(mode="after")
     def validate_blackbox_rules(self) -> "DesignConfig":
         """
@@ -146,6 +170,7 @@ class DesignConfig(BaseModel):
                     "[PROJ-07] design.blackbox_ports must be present and contain "
                     "at least one entry when design.type is 'blackbox'."
                 )
+
             # [PROJ-09]
             for port_name, port_def in self.blackbox_ports.items():
                 # port_def is already validated by [PROJ-05], so split is safe
@@ -370,4 +395,32 @@ class FSLabConfig(BaseModel):
                                 f"{reg_bridge.output_ports}."
                             )
 
+        return self
+
+    # ------------------------------------------------------------------
+    # Design source validation as the Design class does not have access to project_dir
+    # ------------------------------------------------------------------
+    @model_validator(mode="after")
+    def validate_design_sources(self) -> "ProjectConfig":
+        """ [PROJ-14] design.sources must be present and contain
+            at least one source file when design.type is 'blackbox'.
+        """
+        # 1. Check if sources exist
+        if self.design and self.design.sources:
+            proj_dir = getattr(self.project, "project_dir", None)
+            proj_name = getattr(self.project, "name", "design")
+            target_dir = Path(str(proj_dir or f"/target/{proj_name}"))
+            
+            # 3. Validate and update in place
+            for i, f in enumerate(self.design.sources):
+                full_path = target_dir / f
+                
+                if not full_path.is_file():
+                    raise ValueError(f"Source file '{full_path}' not found.")
+                
+                self.design.sources[i] = str(full_path)
+        else :
+            if self.design.type == "blackbox":
+                raise ValueError("Source files must be provided when design type is 'blackbox'.")
+                
         return self

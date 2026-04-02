@@ -14,11 +14,12 @@ Scalar / path keys (CMakeLists.txt.j2, fslab.yaml.j2)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 project_name        str        config.project.name
 package_name        str        config.project.package_name
-top_module          str        config.project.top_module
+fslab_top           str        config.project.fslab_top
 config_class        str        config.project.config_class
 platform            str        config.target.platform
 clock_period        str        config.target.clock_period
 driver_name         str        config.host.driver_name
+top_module          str        config.design.top_module
 gen_dir             str        config.advanced.gen_dir
 gen_file_basename   str        config.advanced.gen_file_basename
 firesim_root        str        config.advanced.firesim_root  (or "/opt/firesim")
@@ -28,7 +29,7 @@ Derived from design.blackbox_ports
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 clock_port          str | None  key whose value == "in clock"
 reset_port          str | None  key whose value == "in reset"
-verilog_file        str | None  basename of design.sources[0] (blackbox only)
+verilog_files       list[str] design.sources (blackbox only)
 
 C++ build settings (CMakeLists.txt.j2, driver.cc.j2)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -91,6 +92,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
+import os
 
 if TYPE_CHECKING:
     from fslab.schemas.project import FSLabConfig
@@ -169,7 +171,7 @@ def _build_template_context(
     # ── Scalar / path fields ───────────────────────────────────────────────
     project_name      = config.project.name
     package_name      = config.project.package_name
-    top_module        = config.project.top_module
+    fslab_top         = config.project.fslab_top
     config_class      = config.project.config_class
     platform          = config.target.platform
     clock_period      = config.target.clock_period
@@ -178,12 +180,14 @@ def _build_template_context(
     gen_file_basename = config.advanced.gen_file_basename
     firesim_root      = config.advanced.firesim_root     or "/opt/firesim"
     firesim_lab_root  = config.advanced.firesim_lab_root or "/opt/firesim-lab"
+    top_module        = config.design.top_module
 
     # ── Derived from design.blackbox_ports ────────────────────────────────
     # Scan for the key whose port definition is "in clock" or "in reset".
     clock_port:   str | None = None
     reset_port:   str | None = None
-    verilog_file: str | None = None
+    verilog_files: list[str] | None = None
+    verilog_file_names: list[str] | None = None
 
     if config.design.blackbox_ports:
         for port_name, port_def in config.design.blackbox_ports.items():
@@ -193,7 +197,8 @@ def _build_template_context(
                 reset_port = port_name
 
     if config.design.sources:
-        verilog_file = Path(config.design.sources[0]).name
+        verilog_files = list(config.design.sources)
+        verilog_file_names = [os.path.basename(p) for p in verilog_files]
 
     # ── C++ build settings ─────────────────────────────────────────────────
     cxx_standard: int    = config.host.cxx_standard
@@ -257,7 +262,7 @@ def _build_template_context(
         # paths & identifiers
         "project_name":      project_name,
         "package_name":      package_name,
-        "top_module":        top_module,
+        "fslab_top":        fslab_top,
         "config_class":      config_class,
         "platform":          platform,
         "clock_period":      clock_period,
@@ -269,7 +274,9 @@ def _build_template_context(
         # derived design fields
         "clock_port":        clock_port,
         "reset_port":        reset_port,
-        "verilog_file":      verilog_file,
+        "top_module":        top_module,
+        "verilog_files":     verilog_files,
+        "verilog_file_names": verilog_file_names,
         # C++ build
         "cxx_standard":      cxx_standard,
         "cxx_flags":         cxx_flags,

@@ -41,9 +41,9 @@ class TestInlineYaml:
     def test_camel_case_derivation(self, name: str, expected_camel: str) -> None:
         content = _inline_yaml(name=name, platform="f1")
         parsed = yaml.safe_load(content)
-        top = parsed["project"]["top_module"]
+        top = parsed["project"]["fslab_top"]
         assert expected_camel in top, (
-            f"Expected camelCase '{expected_camel}' inside top_module={top!r}"
+            f"Expected camelCase '{expected_camel}' inside fslab_top={top!r}"
         )
 
     def test_output_is_valid_yaml(self) -> None:

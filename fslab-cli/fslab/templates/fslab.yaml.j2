@@ -17,7 +17,6 @@
   project:
     name            str   – e.g. "my_design_02"           [PROJ-01: ^[a-zA-Z0-9_-]+$]
     package_name    str   – e.g. "com.example"            [PROJ-02]
-    top_module      str   – e.g. "MyMonolithicTop"        [PROJ-02]
     config_class    str   – e.g. "MyConfig"               [PROJ-02]
 
   design:
@@ -63,14 +62,13 @@
 # project:  Top-level project metadata
 #   name          ^[a-zA-Z0-9_-]+$
 #   package_name  ^[a-zA-Z_][a-zA-Z0-9_.]*$  (dots OK for packages)
-#   top_module    as above
 #   config_class  as above
 # ------------------------------------------------------------------------------
 project:
   name:         "{{ name }}"
   package_name: "my.org"
-  top_module:   "MyTopModule"
-  config_class: "MyConfig"
+  config_class: "NoConfig"
+  project_dir: "{{project_dir}}"
 
 target:
   platform:     "{{ platform }}"
@@ -84,12 +82,13 @@ target:
 
 #design:
 #  type: "blackbox"   # Options: "chisel", "blackbox"
+#  top_module: "my_counter" # verilog top module name
 #  parameters:
 #    AXI_ADDR_WIDTH: 32
 #    DATA_WIDTH: 64
 #    MODE: '"AXI4_LITE"'
 #  sources:
-#    - "src/main/verilog/my_top.sv"
+#    - "user_rtl/my_top.sv"
 #  blackbox_ports:
 #    clk: "in clock"      
 #    rst: "in reset"      

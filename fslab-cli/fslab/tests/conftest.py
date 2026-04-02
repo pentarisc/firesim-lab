@@ -35,7 +35,6 @@ def project_root(tmp_path: Path) -> Path:
             project:
               name: test-design
               platform: f1
-              top_module: "testDesign.TestDesignTop"
               target_config: "testDesign.TestDesignTargetConfig"
               gg_package: "firesim.midasexamples"
               gg_config: "DefaultF2Config"
