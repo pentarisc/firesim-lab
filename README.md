@@ -397,7 +397,7 @@ Options:
                                   Use --list to discover available features.
 
   --platform PLATFORM[,...]       Simulation platform(s) to generate configs
-                                  for: verilator, vcs, f1.
+                                  for: verilator, vcs, f2.
                                   Repeat or comma-separate.
                                   [default: verilator]
 

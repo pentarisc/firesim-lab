@@ -132,7 +132,7 @@ class TestComputeConfigHash:
         """Two files with identical content at different paths must yield different hashes."""
         a = project_root / "reg_a.yaml"
         b = project_root / "reg_b.yaml"
-        content = "platforms:\n  f1: {}\n"
+        content = "platforms:\n  f2: {}\n"
         a.write_text(content, encoding="utf-8")
         b.write_text(content, encoding="utf-8")
 

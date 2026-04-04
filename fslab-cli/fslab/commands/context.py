@@ -181,6 +181,7 @@ def _build_template_context(
     firesim_root      = config.advanced.firesim_root     or "/opt/firesim"
     firesim_lab_root  = config.advanced.firesim_lab_root or "/opt/firesim-lab"
     top_module        = config.design.top_module
+    platform_cfg      = registry.platforms.get(platform)
 
     # ── Derived from design.blackbox_ports ────────────────────────────────
     # Scan for the key whose port definition is "in clock" or "in reset".
@@ -291,4 +292,5 @@ def _build_template_context(
         "used_bridges":      used_bridges,         # list[BridgeInstance], unique types
         "instances":         instances,            # list[BridgeInstance], per instance
         "target_config":     config_class,
+        "platform_cfg":      platform_cfg,
     }

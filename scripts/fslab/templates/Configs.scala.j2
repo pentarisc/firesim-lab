@@ -38,10 +38,10 @@ class {{ scala_prefix }}VCSConfig extends Config(
 )
 {% endif %}
 
-{% if 'f1' in enabled_platforms %}
-/** AWS F1 FPGA */
-// class {{ scala_prefix }}F1Config extends Config(
-//   new WithF1 ++
+{% if 'f2' in enabled_platforms %}
+/** AWS F2 FPGA */
+// class {{ scala_prefix }}F2Config extends Config(
+//   new WithF2 ++
 //   new {{ target_config_class }}
 // )
 {% endif %}

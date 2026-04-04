@@ -145,6 +145,8 @@ def _ensure_compiled(
         _run_cmake_make,
     )
 
+    from fslab.schemas.parser import load_and_validate
+
     # --- generate (hash-aware) ---
     _, config_hash, sm = _run_generate(
         yaml_path=yaml_path,

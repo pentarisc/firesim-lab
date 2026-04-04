@@ -18,8 +18,8 @@ bridges:
     input_ports: ["rxd"]
     output_ports: ["txd"]
     cpp_type: "uart_t"
-    cpp_headers: ["uart/uart.h"]
-    cpp_sources: ["uart/uart.cc"]
+    cpp_headers: ["bridges/uart.h"]
+    cpp_sources: ["bridges/uart.cc"]
     module_macro_prefix: UARTBRIDGEMODULE
     runtime_plusargs:
       - flag: "+uart-loopback"
@@ -58,22 +58,255 @@ features:
       calls are bridged to the host at simulation time.
     requires_bridge: []
 
-# ---------------------------------------------------------------------------
-# Platforms — choices for --platform
-# ---------------------------------------------------------------------------
+# ==============================================================================
+# registry.yaml  —  platforms section
+# ==============================================================================
+# Schema reference
+# ----------------
+# Each entry under `platforms:` is keyed by the platform ID (matches the value
+# a user selects with `fslab new --platform <id>`).
+#
+# Structured fields (validated by CLI, resolved before Jinja2 rendering)
+# -----------------------------------------------------------------------
+#   rpath_origin        bool       Emit -Wl,-rpath,$ORIGIN on the driver binary.
+#                                  Set true whenever shared libs are co-located
+#                                  with the driver on the run-host.
+#
+#   required_env_vars   list[str]  Environment variables that MUST be set when
+#                                  `cmake` is run. The CLI emits a FATAL_ERROR
+#                                  guard for each one (Decision 3a — $ENV{} is
+#                                  emitted verbatim; CMake resolves at
+#                                  configure-time, NOT at fslab-generate time).
+#                                  Use this for values that are genuinely
+#                                  runtime (EDA license servers, XRT paths…).
+#
+#   extra_cxx_flags     list[str]  Platform-specific compile flags appended
+#                                  after DRIVER_CXXOPTS.
+#
+#   extra_include_dirs  list[str]  Passed to target_include_directories PRIVATE.
+#                                  Supports both ${CMAKE_VAR} and $ENV{VAR}.
+#
+#   extra_link_dirs     list[str]  Passed to target_link_directories PRIVATE.
+#                                  Supports both ${CMAKE_VAR} and $ENV{VAR}.
+#
+#   extra_libs          list[str]  Passed to target_link_libraries PRIVATE.
+#                                  Names only — no -l prefix.
+#
+#   extra_link_options  list[str]  Passed to target_link_options PRIVATE.
+#                                  Raw linker flags (-Wl,... etc.).
+#
+#   cmake_fragment      str        Verbatim CMake injected at the end of
+#                                  section 4b, AFTER all structured fields.
+#                                  This is the escape hatch: use it for any
+#                                  CMake construct the structured fields cannot
+#                                  express (find_package, execute_process, …).
+#                                  When a pattern from cmake_fragment recurs
+#                                  across 2+ platforms, promote it to a
+#                                  structured field in the next CLI release.
+#                                  Leave empty ("") if not needed.
+#
+# Environment variable convention (Decision 3a)
+# ---------------------------------------------
+# Use $ENV{VAR} syntax inside path strings. The CLI emits them verbatim into
+# the rendered CMakeLists.txt; CMake resolves them at configure-time.
+# This is intentional — it preserves runtime flexibility for values that must
+# not be baked in at generation time (license servers, SDK roots set by
+# setup scripts, etc.).
+#
+# CMake cache variables set in section 1 of the template (${PLATFORMS_DIR},
+# ${MIDAS_DIR}, etc.) can also be referenced directly in path strings.
+# ==============================================================================
+
 platforms:
 
   - id: verilator
     label: "Verilator (software metasimulation)"
     config_package: "firesim.midasexamples"
     config_class: "F1Config"
+    cmake_fragment: ""
 
   - id: vcs
     label: "VCS (software metasimulation)"
     config_package: "firesim.midasexamples"
     config_class: "F1Config"
+    cmake_fragment: ""
 
+  # ----------------------------------------------------------------------------
+  # f2  —  AWS FPGA F2 (FireSim native platform)
+  # Mirrors: $(f2): export CXXFLAGS / LDFLAGS block in driver.mk
+  # ----------------------------------------------------------------------------
   - id: f2
     label: "AWS F2 FPGA"
     config_package: "firesim.midasexamples"
     config_class: "DefaultF2Config"
+    rpath_origin: true
+    required_env_vars: []          # PLATFORMS_DIR is a CMake cache var — no env needed
+    extra_cxx_flags: []
+    extra_include_dirs:
+      - "${PLATFORMS_DIR}/f2/aws-fpga-firesim-f2/sdk/userspace/include"
+    extra_link_dirs:
+      - "${PLATFORMS_DIR}/f2/aws-fpga-firesim-f2/sdk/userspace/lib"
+    extra_libs:
+      - fpga_mgmt
+      - z
+    extra_link_options: []
+    cmake_fragment: ""
+
+  # ----------------------------------------------------------------------------
+  # xilinx_alveo_u250  —  Conda-only build, no extra SDK paths
+  # Mirrors: built_within_conda_only_driver_compilation_rules(xilinx_alveo_u250)
+  #
+  # NOTE: If your Docker image provides an XRT installation for Alveo, add its
+  # paths via extra_include_dirs / extra_link_dirs / extra_libs, or use
+  # cmake_fragment for a find_package(XRT) call. The driver.mk conda-only
+  # rules assume conda supplies XRT implicitly — in a Docker workflow those
+  # paths must be made explicit here.
+  # ----------------------------------------------------------------------------
+  - id: xilinx_alveo_u250
+    label: "Xilinx Alveo U250"
+    config_package: "firesim.midasexamples"
+    config_class: "ChangeThis"
+    rpath_origin: true
+    required_env_vars: []
+    extra_cxx_flags: []
+    extra_include_dirs: []
+    extra_link_dirs: []
+    extra_libs: []
+    extra_link_options: []
+    cmake_fragment: ""
+
+  # ----------------------------------------------------------------------------
+  # xilinx_alveo_u280
+  # Mirrors: built_within_conda_only_driver_compilation_rules(xilinx_alveo_u280)
+  # See note on xilinx_alveo_u250 above.
+  # ----------------------------------------------------------------------------
+  - id: xilinx_alveo_u280
+    label: "Xilinx Alveo U280"
+    config_package: "firesim.midasexamples"
+    config_class: "ChangeThis"
+    rpath_origin: true
+    required_env_vars: []
+    extra_cxx_flags: []
+    extra_include_dirs: []
+    extra_link_dirs: []
+    extra_libs: []
+    extra_link_options: []
+    cmake_fragment: ""
+
+  # ----------------------------------------------------------------------------
+  # xilinx_alveo_u200
+  # Mirrors: built_within_conda_only_driver_compilation_rules(xilinx_alveo_u200)
+  # See note on xilinx_alveo_u250 above.
+  # ----------------------------------------------------------------------------
+  - id: xilinx_alveo_u200
+    label: "Xilinx Alveo U200"
+    config_package: "firesim.midasexamples"
+    config_class: "ChangeThis"
+    rpath_origin: true
+    required_env_vars: []
+    extra_cxx_flags: []
+    extra_include_dirs: []
+    extra_link_dirs: []
+    extra_libs: []
+    extra_link_options: []
+    cmake_fragment: ""
+
+  # ----------------------------------------------------------------------------
+  # xilinx_vcu118
+  # Mirrors: built_within_conda_only_driver_compilation_rules(xilinx_vcu118)
+  # See note on xilinx_alveo_u250 above.
+  # ----------------------------------------------------------------------------
+  - id: xilinx_vcu118
+    label: "Xilinx VCU118"
+    config_package: "firesim.midasexamples"
+    config_class: "ChangeThis"
+    rpath_origin: true
+    required_env_vars: []
+    extra_cxx_flags: []
+    extra_include_dirs: []
+    extra_link_dirs: []
+    extra_libs: []
+    extra_link_options: []
+    cmake_fragment: ""
+
+  # ----------------------------------------------------------------------------
+  # rhsresearch_nitefury_ii
+  # Mirrors: built_within_conda_only_driver_compilation_rules(rhsresearch_nitefury_ii)
+  # See note on xilinx_alveo_u250 above.
+  # ----------------------------------------------------------------------------
+  - id: rhsresearch_nitefury_ii
+    label: "RHS Research Nitefury II"
+    config_package: "firesim.midasexamples"
+    config_class: "ChangeThis"
+    rpath_origin: true
+    required_env_vars: []
+    extra_cxx_flags: []
+    extra_include_dirs: []
+    extra_link_dirs: []
+    extra_libs: []
+    extra_link_options: []
+    cmake_fragment: ""
+
+  # ----------------------------------------------------------------------------
+  # vitis  —  Xilinx Vitis / XRT (experimental, Ubuntu 20.04 / 18.04)
+  # Mirrors: $(vitis): export CXXFLAGS / LDFLAGS block in driver.mk
+  #
+  # Decision 3a rationale: XILINX_XRT is sourced by the XRT setup script
+  # (e.g. /opt/xilinx/xrt/setup.sh) and is legitimately a runtime value —
+  # different Docker images or XRT versions may install to different prefixes.
+  # It is therefore emitted as $ENV{XILINX_XRT} so CMake resolves it at
+  # configure-time rather than baking a path at fslab-generate time.
+  #
+  # CONDA_PREFIX references from the original driver.mk are intentionally
+  # omitted — fslab runs in Docker without conda. If your image installs
+  # additional headers under a non-standard prefix, add them here or in
+  # cmake_fragment.
+  #
+  # -ldl is required on Ubuntu 20.04 (backwards-compatible with 18.04).
+  # ----------------------------------------------------------------------------
+  - id: vitis
+    label: "Vitis"
+    config_package: "firesim.midasexamples"
+    config_class: "ChangeThis"
+    rpath_origin: true
+    required_env_vars:
+      - XILINX_XRT          # sourced by /opt/xilinx/xrt/setup.sh (or equivalent)
+    extra_cxx_flags: []
+    extra_include_dirs:
+      - "$ENV{XILINX_XRT}/include"
+      - "/usr/include"                   # system fallback (-idirafter semantics)
+    extra_link_dirs:
+      - "/usr/lib/x86_64-linux-gnu"
+      - "$ENV{XILINX_XRT}/lib"
+    extra_libs:
+      - uuid
+      - xrt_coreutil
+      - dl                               # required on Ubuntu 20.04
+      - z
+    extra_link_options:
+      # Needed so the linker can resolve indirect deps against system libs
+      # without adding them to the binary's DT_NEEDED.
+      - "-Wl,-rpath-link,/usr/lib/x86_64-linux-gnu"
+    cmake_fragment: ""
+
+  # ----------------------------------------------------------------------------
+  # TEMPLATE: copy this block when registering a new platform.
+  # Replace <platform_id> with your platform name, fill in the fields, and
+  # leave cmake_fragment empty unless structured fields are insufficient.
+  # ----------------------------------------------------------------------------
+  # <platform_id>:
+  #   rpath_origin: false
+  #   required_env_vars: []
+  #   extra_cxx_flags: []
+  #   extra_include_dirs: []
+  #   extra_link_dirs: []
+  #   extra_libs: []
+  #   extra_link_options: []
+  #   cmake_fragment: ""
+  #
+  # cmake_fragment example — using find_package (not expressible as structured fields):
+  #
+  #   cmake_fragment: |
+  #     find_package(SomeSDK REQUIRED COMPONENTS Core)
+  #     target_link_libraries(${DRIVER_TARGET} PRIVATE SomeSDK::Core)
+  #     message(STATUS "[fslab] SomeSDK version: ${SomeSDK_VERSION}")

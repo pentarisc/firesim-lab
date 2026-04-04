@@ -39,7 +39,7 @@ class TestInlineYaml:
         ],
     )
     def test_camel_case_derivation(self, name: str, expected_camel: str) -> None:
-        content = _inline_yaml(name=name, platform="f1")
+        content = _inline_yaml(name=name, platform="f2")
         parsed = yaml.safe_load(content)
         top = parsed["project"]["fslab_top"]
         assert expected_camel in top, (
@@ -47,7 +47,7 @@ class TestInlineYaml:
         )
 
     def test_output_is_valid_yaml(self) -> None:
-        content = _inline_yaml(name="test-proj", platform="f1")
+        content = _inline_yaml(name="test-proj", platform="f2")
         # Should not raise
         parsed = yaml.safe_load(content)
         assert isinstance(parsed, dict)
@@ -62,7 +62,7 @@ class TestInlineYaml:
         assert parsed["project"]["platform"] == "f2"
 
     def test_registries_list_present(self) -> None:
-        content = _inline_yaml(name="proj", platform="f1")
+        content = _inline_yaml(name="proj", platform="f2")
         parsed = yaml.safe_load(content)
         assert "registries" in parsed
         assert isinstance(parsed["registries"], list)
@@ -70,7 +70,7 @@ class TestInlineYaml:
 
     def test_no_unformatted_braces(self) -> None:
         """Guard against the original bug: {name_camel} left un-substituted."""
-        content = _inline_yaml(name="my-design-02", platform="f1")
+        content = _inline_yaml(name="my-design-02", platform="f2")
         assert "{name_camel}" not in content
         assert "{name}" not in content
         assert "{platform}" not in content

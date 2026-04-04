@@ -136,6 +136,9 @@ RUN echo 'export FIRESIM_ENV_SOURCED=1' >> /opt/firesim/env.sh && \
     echo 'export FS_DIR=/opt/firesim' >> /opt/firesim/env.sh
 
 ENV FIRESIM_ROOT=/opt/firesim
+RUN cd ${FIRESIM_ROOT}/platforms/f2/aws-fpga-firesim-f2 \
+    && source ./sdk_setup.sh \
+    && source ./hdk_setup.sh
 
 # =============================================================================
 #  Stage 3 — firesim-lab

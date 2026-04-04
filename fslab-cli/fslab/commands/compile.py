@@ -412,7 +412,7 @@ def _run_golden_gate_main(
             config_class = pf.config_class
             break
 
-    out_base     = getattr(config, "gen_file_basename", "FSLabTargetTop")
+    out_base     = getattr(config, "gen_file_basename", "FireSim-generated")
 
     generated_src = target_dir / "generated-src"
     fir_file      = generated_src / f"{fslab_top}.fir"

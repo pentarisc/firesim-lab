@@ -26,7 +26,7 @@ from fslab.utils.display import console, error, info, section, success, warning
 app = typer.Typer(rich_markup_mode="rich")
 
 # Platform → registry name mapping (extend as platforms are added)
-_KNOWN_PLATFORMS = ["f1", "f2", "vitis_u250"]
+_KNOWN_PLATFORMS = ["f2", "vitis_u250"]
 
 # Sub-directories to scaffold under <name>/
 _SCAFFOLD_DIRS = [
@@ -63,7 +63,7 @@ def cmd_init(
         help="Name of the new fslab project (used as directory name and YAML identifier).",
     ),
     platform: str = typer.Option(
-        "f1",
+        "f2",
         "--platform",
         "-p",
         help=f"Target platform.  Known values: {', '.join(_KNOWN_PLATFORMS)}.",

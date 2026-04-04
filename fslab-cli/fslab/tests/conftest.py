@@ -34,7 +34,7 @@ def project_root(tmp_path: Path) -> Path:
         textwrap.dedent("""\
             project:
               name: test-design
-              platform: f1
+              platform: f2
               target_config: "testDesign.TestDesignTargetConfig"
               gg_package: "firesim.midasexamples"
               gg_config: "DefaultF2Config"
@@ -57,8 +57,6 @@ def project_root(tmp_path: Path) -> Path:
             firesim_jar: /opt/firesim-lab/target/scala-2.13/firesim-lab.jar
 
             platforms:
-              f1:
-                description: "AWS F1 FPGA"
               f2:
                 description: "AWS F2 FPGA"
         """),

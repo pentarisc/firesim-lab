@@ -8,7 +8,7 @@ fslab/cli.py
 
 Usage (after `pip install -e .`):
     fslab --help
-    fslab init --name my-design --platform f1
+    fslab init --name my-design --platform f2
     fslab generate --force
     fslab compile --skip-driver
     fslab sim --emu verilator

@@ -9,7 +9,7 @@ raw_reg = {
         "cpp_headers": ["uart/uart.h"], "cpp_sources": ["uart/uart.cc"],
         "cpp_template": "t.j2",
         "scala_templates": {"dut_imports": "d.j2", "ports": "p.j2", "wiring": "w.j2"}}],
-    "platforms": [{"id": "f1", "label": "AWS F1", "config_package": "midas", "config_class": "F1Config"}],
+    "platforms": [{"id": "f2", "label": "AWS F2", "config_package": "midas", "config_class": "F2Config"}],
     "features": [{"id": "verilog-blackbox", "label": "VBB", "description": "D"}],
 }
 master = MasterRegistry.from_registry_files([RegistryFile.model_validate(raw_reg)])
@@ -23,7 +23,7 @@ base_proj = {
                "blackbox_ports": {"clk": "in clock", "rst": "in reset",
                                   "uart_tx": "out 1", "uart_rx": "in 1",
                                   "mem_addr": "out AXI_ADDR_WIDTH"}},
-    "target": {"platform": "f1", "clock_period": "1.0"},
+    "target": {"platform": "f2", "clock_period": "1.0"},
     "host": {"emulator": "verilator", "driver_name": "Drv"},
     "bridges": [{"type": "uart", "name": "serial_0",
                  "port_map": {"tx": "uart_tx", "rx": "uart_rx"}}],
