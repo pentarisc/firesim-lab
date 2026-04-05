@@ -38,7 +38,7 @@ def project_root(tmp_path: Path) -> Path:
               target_config: "testDesign.TestDesignTargetConfig"
               gg_package: "firesim.midasexamples"
               gg_config: "DefaultF2Config"
-              gen_file_basename: "FSLabTargetTop"
+              gen_file_basename: "FireSim-generated"
               target_dir: /target/test-design
 
             registries:

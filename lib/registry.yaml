@@ -119,18 +119,6 @@ features:
 
 platforms:
 
-  - id: verilator
-    label: "Verilator (software metasimulation)"
-    config_package: "firesim.midasexamples"
-    config_class: "F1Config"
-    cmake_fragment: ""
-
-  - id: vcs
-    label: "VCS (software metasimulation)"
-    config_package: "firesim.midasexamples"
-    config_class: "F1Config"
-    cmake_fragment: ""
-
   # ----------------------------------------------------------------------------
   # f2  —  AWS FPGA F2 (FireSim native platform)
   # Mirrors: $(f2): export CXXFLAGS / LDFLAGS block in driver.mk
@@ -310,3 +298,273 @@ platforms:
   #     find_package(SomeSDK REQUIRED COMPONENTS Core)
   #     target_link_libraries(${DRIVER_TARGET} PRIVATE SomeSDK::Core)
   #     message(STATUS "[fslab] SomeSDK version: ${SomeSDK_VERSION}")
+
+# ==============================================================================
+# registry.yaml  —  metasimulators and fpgasimulators sections
+# ==============================================================================
+#
+# Schema quick-reference
+# ----------------------
+# PATH SYNTAX: extra_include_dirs and extra_link_dirs in metasimulators /
+#              fpgasimulators use MAKEFILE-style references:
+#                $(VAR)   — Make expands from environment at build-time
+#                ${VAR}   — Make brace form (equivalent to $(VAR))
+#                /path    — absolute path
+#              Do NOT use cmake's $ENV{VAR} here — Make does not understand it.
+#
+# RPATH: rpath_origin: true emits -Wl,-rpath='$$$$ORIGIN' in Makefile.sim
+#        (four $ signs survive two rounds of Make expansion to give $ORIGIN).
+#
+# extra_link_options: placed BEFORE the library list in LDFLAGS, so
+#        -Wl,--no-as-needed (VCS/Xcelium) correctly affects all libraries.
+#
+# makefile_fragment: verbatim Makefile content appended to Makefile.<id>.sim.
+#        Use this for Makefrag include directives and target aliases.
+#        Must NOT contain Jinja2 markers ({{ }} {% %} {# #}).
+#
+# cmake_targets: declares which cmake targets to expose.
+#        cmake target name = "metasim-<n>" or "fpgasim-<n>".
+#        make_target = name of the make target inside Makefile.<id>.sim
+#                      (defaults to .name when omitted).
+# ==============================================================================
+
+metasimulators:
+
+  # ----------------------------------------------------------------------------
+  # Verilator  —  MIDAS-level software simulation
+  # Source makefiles: verilator.mk
+  # ----------------------------------------------------------------------------
+  - id: verilator
+    label: "Verilator MIDAS-Level Simulator"
+
+    tool_cxxopts: ["-O2"]              # VERILATOR_CXXOPTS ?= -O2
+    make_flags: ["-j8", "VM_PARALLEL_BUILDS=1"]  # VERILATOR_MAKEFLAGS ?= -j8 VM_PARALLEL_BUILDS=1
+    rtlsim_define: true
+    rpath_origin: true
+
+    required_env_vars: []
+    extra_cxx_flags: []
+    extra_include_dirs: []             # Verilator uses no tool-specific includes
+    extra_link_dirs: []
+    extra_libs: []
+    extra_link_options: []
+
+    cmake_targets:
+      - name: verilator
+        comment: "[fslab] Building Verilator simulation (standard)"
+      - name: verilator-debug
+        comment: "[fslab] Building Verilator simulation (debug)"
+
+    cmake_fragment: ""
+
+    # Makefrag include + target aliases.
+    # sim_harness is set to a no-op rule (": ;") so Make does not try to build
+    # simif_emul_all.cc from scratch — it is already handled by the Makefrag.
+    makefile_fragment: |
+      include $(midas_dir)/rtlsim/Makefrag-verilator
+      $(sim_harness): $(midas_dir)/simif_emul_all.cc
+      verilator: $(OUT_DIR)/V$(DRIVER_NAME)
+      verilator-debug: $(OUT_DIR)/V$(DRIVER_NAME)-debug
+
+  # ----------------------------------------------------------------------------
+  # VCS  —  MIDAS-level software simulation
+  # Source makefile: vcs.mk
+  #
+  # -Wl,--no-as-needed is required because VCS can reorder object files and
+  # libraries at link time in ways that prune valid dependencies when
+  # --as-needed is active. It MUST be placed before the library list in
+  # LDFLAGS, which is why it goes in extra_link_options (prepended by template).
+  #
+  # VCS_HOME is required for the tool include directory.
+  # VCS_HOME must be set in the environment before running cmake.
+  # ----------------------------------------------------------------------------
+  - id: vcs
+    label: "VCS MIDAS-Level Simulator"
+
+    tool_cxxopts: ["-O2"]              # VCS_CXXOPTS ?= -O2
+    make_flags: []
+    rtlsim_define: true
+    rpath_origin: true
+
+    required_env_vars: [VCS_HOME]
+    extra_cxx_flags: []
+    extra_include_dirs:
+      - "$(VCS_HOME)/include"          # -I$(VCS_HOME)/include added to CXXFLAGS
+    extra_link_dirs: []
+    extra_libs: []
+    extra_link_options:
+      - "-Wl,--no-as-needed"           # Must precede all libs — template places first
+
+    cmake_targets:
+      - name: vcs
+        comment: "[fslab] Building VCS simulation (standard)"
+      - name: vcs-debug
+        comment: "[fslab] Building VCS simulation (debug)"
+      - name: vcs-post-synth
+        comment: "[fslab] Building VCS post-synthesis simulation"
+      - name: vcs-post-synth-debug
+        comment: "[fslab] Building VCS post-synthesis simulation (debug)"
+
+    cmake_fragment: ""
+
+    makefile_fragment: |
+      include $(midas_dir)/rtlsim/Makefrag-vcs
+      $(vcs_harness): ;
+      vcs: $(OUT_DIR)/$(DRIVER_NAME)
+      vcs-debug: $(OUT_DIR)/$(DRIVER_NAME)-debug
+      vcs-post-synth: $(OUT_DIR)/$(DRIVER_NAME)-post-synth
+      vcs-post-synth-debug: $(OUT_DIR)/$(DRIVER_NAME)-post-synth-debug
+
+  # ----------------------------------------------------------------------------
+  # Xcelium  —  MIDAS-level software simulation
+  # Source makefile: xcelium.mk
+  #
+  # -Wl,--no-as-needed same concern as VCS — placed in extra_link_options.
+  # XCELIUM_HOME required for tool include directory.
+  # ----------------------------------------------------------------------------
+  - id: xcelium
+    label: "Xcelium MIDAS-Level Simulator"
+
+    tool_cxxopts: ["-O2"]              # XCELIUM_CXXOPTS ?= -O2
+    make_flags: []
+    rtlsim_define: true
+    rpath_origin: true
+
+    required_env_vars: [XCELIUM_HOME]
+    extra_cxx_flags: []
+    extra_include_dirs:
+      - "$(XCELIUM_HOME)/include"      # -I$(XCELIUM_HOME)/include added to CXXFLAGS
+    extra_link_dirs: []
+    extra_libs: []
+    extra_link_options:
+      - "-Wl,--no-as-needed"           # See note above; must precede libs
+
+    cmake_targets:
+      - name: xcelium
+        comment: "[fslab] Building Xcelium simulation"
+
+    cmake_fragment: ""
+
+    makefile_fragment: |
+      include $(midas_dir)/rtlsim/Makefrag-xcelium
+      $(xcelium_harness): ;
+      xcelium: $(xc_sim_name)
+
+  # --- TEMPLATE: copy when registering a new metasim tool -------------------
+  # - id: <tool_id>
+  #   label: "<Human Readable Label>"
+  #   tool_cxxopts: ["-O2"]
+  #   make_flags: []
+  #   rtlsim_define: true
+  #   rpath_origin: true
+  #   required_env_vars: []
+  #   extra_cxx_flags: []
+  #   extra_include_dirs: []
+  #   extra_link_dirs: []
+  #   extra_libs: []
+  #   extra_link_options: []
+  #   cmake_targets:
+  #     - name: <tool_id>
+  #       comment: "[fslab] Building <label>"
+  #   cmake_fragment: ""
+  #   makefile_fragment: |
+  #     include $(midas_dir)/rtlsim/Makefrag-<tool>
+  #     $(<tool>_harness): ;
+  #     <tool_id>: $(<tool_output_var>)
+
+
+fpgasimulators:
+
+  # ----------------------------------------------------------------------------
+  # XSIM  —  Xilinx FPGA-level simulation (uses XSIM for DUT-side execution)
+  # Source makefile: xsim.mk
+  #
+  # XSIM has two distinct phases:
+  #   1. xsim (compile) — compiles the host driver with MAIN=f2_xsim PLATFORM=f2
+  #   2. xsim-dut (run) — invokes the Xilinx XSIM RTL simulation on the FPGA
+  #
+  # The xsim driver is compiled with MAIN=f2_xsim and PLATFORM=f2 regardless
+  # of the broader project platform.  This is expressed through the `main` and
+  # `platform_override` fields, which are written into FPGASIM_MAIN and
+  # FPGASIM_PLATFORM in the generated Makefile.xsim.sim.
+  #
+  # The xsim-dut target depends on `replace-rtl` and `$(fpga_work_dir)/stamp`.
+  # These are FPGA-board-specific targets that depend on Vivado synthesis
+  # completing first.  They are expressed in the makefile_fragment rather than
+  # structured fields because they involve external Makefile dependencies
+  # (verif_dir, fpga_work_dir) that are not yet part of the fslab schema.
+  # These will be promoted to structured fields when `fslab build fpga` is added.
+  #
+  # NOTE: rpath_origin is false for XSIM — the original xsim.mk does not set
+  # -Wl,-rpath=$ORIGIN (the driver runs inside the FPGA simulation harness,
+  # not on a standalone run-host where shared libs need co-location).
+  # ----------------------------------------------------------------------------
+  - id: xsim
+    label: "Xilinx XSIM FPGA-Level Simulator"
+
+    main: "f2_xsim"                    # MAIN= arg for simif_dir sub-make
+    platform_override: "f2"            # PLATFORM= override
+
+    rpath_origin: false
+    required_env_vars: []
+    extra_cxx_flags: []
+    extra_include_dirs: []
+    extra_link_dirs: []
+    extra_libs: []
+    extra_link_options: []
+
+    cmake_targets:
+      - name: xsim
+        comment: "[fslab] Compiling XSIM host driver"
+      - name: xsim-dut
+        comment: "[fslab] Running XSIM DUT on FPGA board"
+
+    cmake_fragment: ""
+
+    # xsim (driver compile) invokes simif_dir sub-make with MAIN=f2_xsim.
+    # xsim-dut runs the Xilinx RTL simulation after FPGA synthesis.
+    #
+    # Variables used here that must be defined in the calling environment
+    # or in a parent Makefile before including this fragment:
+    #   fpga_work_dir  — path to the Vivado project work directory
+    #   verif_dir      — path to the verification scripts directory
+    #   replace-rtl    — phony target that programs the FPGA with fresh RTL
+    #                    (defined by the parent FPGA build Makefile)
+    makefile_fragment: |
+      xsim_drv := $(OUT_DIR)/$(DESIGN)-$(FPGASIM_PLATFORM)
+
+      $(xsim_drv): export LDFLAGS := $(LDFLAGS)
+      $(xsim_drv): $(header) $(DRIVER_CC) $(DRIVER_H) $(midas_cc) $(midas_h)
+      	$(MAKE) -C $(simif_dir) driver \
+      		MAIN=$(FPGASIM_MAIN) \
+      		PLATFORM=$(FPGASIM_PLATFORM) \
+      		DRIVER_NAME=$(DESIGN) \
+      		GEN_FILE_BASENAME=$(BASE_FILE_NAME) \
+      		GEN_DIR=$(GEN_DIR) \
+      		OUT_DIR=$(OUT_DIR) \
+      		DRIVER="$(DRIVER_CC)"
+
+      .PHONY: xsim xsim-dut
+      xsim: $(xsim_drv)
+
+      xsim-dut: replace-rtl $(fpga_work_dir)/stamp
+      	cd $(verif_dir)/scripts && $(MAKE) C_TEST=test_firesim
+
+  # --- TEMPLATE: copy when registering a new fpgasim tool -------------------
+  # - id: <tool_id>
+  #   label: "<Human Readable Label>"
+  #   main: ""            # leave empty to use project PLATFORM
+  #   platform_override: ""
+  #   rpath_origin: false
+  #   required_env_vars: []
+  #   extra_cxx_flags: []
+  #   extra_include_dirs: []
+  #   extra_link_dirs: []
+  #   extra_libs: []
+  #   extra_link_options: []
+  #   cmake_targets:
+  #     - name: <tool_id>
+  #       comment: "[fslab] Building <label>"
+  #   cmake_fragment: ""
+  #   makefile_fragment: |
+  #     # driver compile rule and target aliases go here

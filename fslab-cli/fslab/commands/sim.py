@@ -13,13 +13,18 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
+from typing_extensions import Annotated
 
 import typer
+from functools import wraps
 
 from fslab.utils.display import console, error, info, section, success
 from fslab.utils.shell import run_or_die
+from fslab.commands.build import BuildType
 
 app = typer.Typer(rich_markup_mode="rich")
+sim_app = typer.Typer()
+app.add_typer(sim_app, name="sim")
 
 _KNOWN_EMULATORS = ["verilator", "vcs", "xcelium"]
 
@@ -31,68 +36,65 @@ _EMU_BINARY: dict[str, str] = {
     "xcelium":    "xcelium-sim",
 }
 
+_FSLAB_YAML = Path("fslab.yaml")
 
-@app.callback(invoke_without_command=True)
-def cmd_sim(
-    emu: str = typer.Option(
-        "verilator",
-        "--emu",
-        "-e",
-        help=f"Emulator backend.  One of: {', '.join(_KNOWN_EMULATORS)}.",
-    ),
-    args: Optional[str] = typer.Option(
-        None,
-        "--args",
-        "-a",
-        help=(
-            "Extra arguments forwarded verbatim to the simulation binary.  "
-            "Quote as a single string: [italic]--args '+permissive -c100000'[/]"
-        ),
-    ),
-    force_gen: bool = typer.Option(
-        False,
-        "--force-gen",
-        help="[CLI-07] Force regeneration even if config hash is unchanged.",
-    ),
-    skip_rtl: bool = typer.Option(
-        False,
-        "--skip-rtl",
-        help="Skip sbt / java RTL steps (compile --skip-rtl).",
-    ),
-    skip_driver: bool = typer.Option(
-        False,
-        "--skip-driver",
-        help="Skip C++ driver build (compile --skip-driver).",
-    ),
-    yaml_path: Path = typer.Option(
-        Path("fslab.yaml"),
-        "--config",
-        "-c",
-        help="Path to the project YAML.",
-    ),
+# ------------------------------------------------------------------
+# DEFINE SHARED OPTIONS ONCE USING ANNOTATED
+# ------------------------------------------------------------------
+SimArgsOpt = Annotated[Optional[str], typer.Option(
+    "--args", "-a",
+    help="Extra arguments forwarded verbatim to the simulation binary. Quote as a single string: [italic]--args '+permissive -c100000'[/]"
+)]
+SkipRtlOpt = Annotated[bool, typer.Option("--skip-rtl", help="Skip sbt / java RTL steps (build --skip-rtl).")]
+SkipDriverOpt = Annotated[bool, typer.Option("--skip-driver", help="Skip C++ driver build (build --skip-driver).")]
+ForceGenOpt = Annotated[bool, typer.Option("--force-gen", help="[CLI-07] Force regeneration even if config hash is unchanged.")]
+YamlPathOpt = Annotated[Path, typer.Option("--config", "-c", help="Path to the project YAML.")]
+
+@sim_app.callback(invoke_without_command=True)
+def sim_callback(
+    ctx: typer.Context,
+    sim_args: SimArgsOpt = None,
+    skip_rtl: SkipRtlOpt = False,
+    skip_driver: SkipDriverOpt = False,
+    force_gen: ForceGenOpt = False,
+    yaml_path: YamlPathOpt = _FSLAB_YAML,
+) -> None:
+    if ctx.invoked_subcommand is None:
+        cmd_metasim(sim_args, skip_rtl, skip_driver, force_gen, yaml_path)
+
+
+@sim_app.command("metasim")
+def sim_metasim(
+    sim_args: SimArgsOpt = None,
+    skip_rtl: SkipRtlOpt = False,
+    skip_driver: SkipDriverOpt = False,
+    force_gen: ForceGenOpt = False,
+    yaml_path: YamlPathOpt = _FSLAB_YAML,
+) -> None:
+    cmd_metasim(sim_args, skip_rtl, skip_driver, force_gen, yaml_path)
+
+def cmd_metasim(
+    sim_args: Optional[str],
+    skip_rtl: bool,
+    skip_driver: bool,
+    force_gen: bool,
+    yaml_path: Path,
 ) -> None:
     """
-    [CLI-14] Run a cycle-accurate simulation.
+    [CLI-14] Run a cycle-accurate software simulation.
 
-    Implicitly calls [bold]compile[/] (which calls [bold]generate[/] if the
+    Implicitly calls [bold]build[/] (which calls [bold]generate[/] if the
     config changed).  All skipping and forcing flags are forwarded through.
     """
-    section("fslab sim")
-
-    if emu not in _KNOWN_EMULATORS:
-        error(
-            f"Unknown emulator [bold]{emu}[/]. "
-            f"Valid choices: {', '.join(_KNOWN_EMULATORS)}"
-        )
-        raise typer.Exit(code=1)
+    section("fslab sim metasim")
 
     yaml_path = yaml_path.resolve()
     project_root = yaml_path.parent
 
     # ------------------------------------------------------------------
-    # [CLI-14] Implicit compile (which internally calls generate)
+    # [CLI-14] Implicit build (which internally calls generate)
     # ------------------------------------------------------------------
-    info(f"Ensuring project is compiled for [bold]{emu}[/]…")
+    info(f"Ensuring project is compiled for metasimulation…")
     _ensure_compiled(
         yaml_path=yaml_path,
         force_gen=force_gen,
@@ -103,20 +105,39 @@ def cmd_sim(
     # ------------------------------------------------------------------
     # Locate the simulation binary
     # ------------------------------------------------------------------
-    binary = _locate_sim_binary(emu=emu, project_root=project_root)
+    binary = _locate_sim_binary(emu=str(BuildType.METASIM), project_root=project_root)
     info(f"Simulation binary: [path]{binary.relative_to(project_root)}[/]")
 
     # ------------------------------------------------------------------
     # Build and run the simulation command
     # ------------------------------------------------------------------
-    extra = args.split() if args else []
+    extra = sim_args.split() if sim_args else []
     sim_cmd = [str(binary)] + extra
 
-    section(f"Running simulation ({emu})")
-    run_or_die(sim_cmd, cwd=project_root, label=f"[{emu}]")
+    section(f"Running simulation ({BuildType.METASIM})")
+    run_or_die(sim_cmd, cwd=project_root, label=f"[{BuildType.METASIM}]")
 
     success("Simulation complete.")
 
+@sim_app.command("fpgasim")
+def sim_fpgasim(
+    sim_args: SimArgsOpt = None,
+    skip_rtl: SkipRtlOpt = False,
+    skip_driver: SkipDriverOpt = False,
+    force_gen: ForceGenOpt = False,
+    yaml_path: YamlPathOpt = _FSLAB_YAML,
+) -> None:
+    success("FPGA Simulation not yet implemented.")
+
+@sim_app.command("fpga")
+def sim_fpgasim(
+    sim_args: SimArgsOpt = None,
+    skip_rtl: SkipRtlOpt = False,
+    skip_driver: SkipDriverOpt = False,
+    force_gen: ForceGenOpt = False,
+    yaml_path: YamlPathOpt = _FSLAB_YAML,
+) -> None:
+    success("FPGA hardware simulation not yet implemented.")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -131,13 +152,13 @@ def _ensure_compiled(
     skip_driver: bool,
 ) -> None:
     """
-    [CLI-14] Programmatically invoke the compile logic.
+    [CLI-14] Programmatically invoke the build logic.
 
-    We call the shared ``_run_generate`` and the four compile step helpers
+    We call the shared ``_run_generate`` and the four build step helpers
     directly rather than re-invoking Typer's CLI machinery.  This avoids
     ``sys.exit`` being called inside a nested Typer invocation.
     """
-    from fslab.commands.compile import (
+    from fslab.commands.build import (
         _run_generate,
         _run_sbt_package,
         _run_chisel_generator,
@@ -200,6 +221,6 @@ def _locate_sim_binary(*, emu: str, project_root: Path) -> Path:
         f"Simulation binary for [bold]{emu}[/] not found.\n"
         "Searched:\n"
         + "\n".join(f"  [path]{c.relative_to(project_root)}[/]" for c in candidates)
-        + "\nRun [bold]fslab compile[/] first."
+        + "\nRun [bold]fslab build[/] first."
     )
     raise typer.Exit(code=1)

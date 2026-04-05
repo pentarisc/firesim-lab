@@ -46,15 +46,23 @@
 #  Stage 1 — base
 #  OS packages, Java, SBT launcher, Verilator, ccache
 # =============================================================================
-FROM ubuntu:22.04 AS base
+FROM ubuntu:24.04 AS base
 
 ARG SBT_VERSION=1.10.1
 ARG JAVA_VERSION=17
 ARG HOST_UID=1000
 ARG HOST_GID=1000
 
-RUN groupadd -g ${HOST_GID} firesim-lab && \
-    useradd -m -u ${HOST_UID} -g ${HOST_GID} -s /bin/bash firesim-lab
+# Ubuntu 24.04 by default adds user ubuntu with UID 1000
+RUN if getent passwd $HOST_UID; then \
+        existing_user=$(getent passwd $HOST_UID | cut -d: -f1); \
+        usermod -l firesim-lab $existing_user && \
+        usermod -d /home/firesim-lab -m firesim-lab && \
+        groupmod -n firesim-lab $existing_user; \
+    else \
+        groupadd -g $HOST_GID firesim-lab && \
+        useradd -m -u $HOST_UID -g $HOST_GID firesim-lab; \
+    fi
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -136,9 +144,9 @@ RUN echo 'export FIRESIM_ENV_SOURCED=1' >> /opt/firesim/env.sh && \
     echo 'export FS_DIR=/opt/firesim' >> /opt/firesim/env.sh
 
 ENV FIRESIM_ROOT=/opt/firesim
-RUN cd ${FIRESIM_ROOT}/platforms/f2/aws-fpga-firesim-f2 \
-    && source ./sdk_setup.sh \
-    && source ./hdk_setup.sh
+RUN bash -c "cd ${FIRESIM_ROOT}/platforms/f2/aws-fpga-firesim-f2 && \
+    source ./sdk_setup.sh && \
+    (source ./hdk_setup.sh || echo 'Skipping hdk_setup.sh')"
 
 # =============================================================================
 #  Stage 3 — firesim-lab
@@ -165,7 +173,7 @@ RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && \
 RUN cd /opt/firesim-lab/fslab-cli && pip3 install -e .
 
 ENV FIRESIM_LAB_ROOT=/opt/firesim-lab
-RUN chown -R firesim-lab:firesim-lab /opt/firesim /opt/firesim-lab
+RUN chown -R firesim-lab:firesim-lab /opt/firesim /opt/firesim-lab /home/firesim-lab
 
 # =============================================================================
 #  Stage 4 — cache-warm
@@ -198,7 +206,7 @@ RUN echo "" && \
 # ── Runtime environment ───────────────────────────────────────────────────────
 ENV FIRESIM_ROOT=/opt/firesim
 ENV FIRESIM_LAB_ROOT=/opt/firesim-lab
-ENV CCACHE_DIR=/home/opt/firesim-lab/.cache/ccache
+ENV CCACHE_DIR=/home/firesim-lab/.cache/ccache
 ENV SBT_OPTS="-Xmx8g -Xss8m -Dsbt.supershell=false"
 
 CMD ["/bin/bash"]

@@ -1,13 +1,13 @@
 """
-fslab/commands/compile.py
+fslab/commands/build.py
 =========================
 [CLI-12] ``fslab generate`` – parse YAML → hash check → Jinja2 rendering.
-[CLI-13] ``fslab compile`` – calls generate implicitly, then runs the full
-         build chain:
+[CLI-13] ``fslab build <driver|metasim|fpgasim>`` – calls generate implicitly,
+         then runs the full build chain:
              sbt package
              java midas.chiselstage.Generator
              java midas.stage.GoldenGateMain
-             cmake (configure) + make
+             cmake (configure) + make (depending on the subcommand)
 
 All Java commands are parameterised from the validated Pydantic config so
 hardcoded paths never appear here – they live in ``fslab.yaml`` / registries.
@@ -25,7 +25,7 @@ Assumed external API (from Prompt 1 / schemas layer)
         config.project.project_dir            → str   e.g. "/target/my-design02" (auto populated)
         registry.platforms[""].config_package → str   e.g. "firesim.midasexamples"
         registry.platforms[""].config_class   → str   e.g. "DefaultF2Config"
-        config.gen_file_basename              → str   e.g. "FSLabTargetTop"
+        config.gen_file_basename              → str   e.g. "FireSim-generated"
 
     registry attributes:
         registry.firesim_jar         → Path  e.g. /opt/firesim-lab/target/scala-2.13/firesim-lab.jar
@@ -36,26 +36,37 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Optional
+from enum import Enum
+from typing_extensions import Annotated
 
 import typer
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from functools import wraps
+import inspect
+
 
 from fslab.utils.display import console, error, info, section, success, warning
 from fslab.utils.shell import run_or_die
 from fslab.utils.state import StateManager, check_and_maybe_skip_generation
 from fslab.schemas.parser import load_and_validate
 
+class BuildType(str, Enum):
+    METASIM = "metasim"
+    FPGASIM = "fpgasim"
+    DRIVER = "driver"
+
 # ---------------------------------------------------------------------------
 # [CLI-04] This router registers BOTH `generate` and `compile` sub-commands.
 #          It is mounted into the main app in cli.py.
 # ---------------------------------------------------------------------------
 app = typer.Typer(rich_markup_mode="rich")
+build_app = typer.Typer()
+app.add_typer(build_app, name="build")
 
 # ---------------------------------------------------------------------------
 # Paths resolved relative to the project root (CWD at invocation time).
 # ---------------------------------------------------------------------------
 _FSLAB_YAML = Path("fslab.yaml")
-
 
 # ===========================================================================
 # [CLI-12]  fslab generate
@@ -182,42 +193,150 @@ def _run_generate(
 
 
 # ===========================================================================
-# [CLI-13]  fslab compile
+# [CLI-13]  fslab build
 # ===========================================================================
+# ------------------------------------------------------------------
+# DEFINE SHARED OPTIONS ONCE USING ANNOTATED
+# ------------------------------------------------------------------
+SimArgsOpt = Annotated[Optional[str], typer.Option(
+    "--args", "-a",
+    help="Extra arguments forwarded verbatim to the simulation binary. Quote as a single string: [italic]--args '+permissive -c100000'[/]"
+)]
+SkipRtlOpt = Annotated[bool, typer.Option("--skip-rtl", help="Skip sbt / java RTL steps (build --skip-rtl).")]
+SkipDriverOpt = Annotated[bool, typer.Option("--skip-driver", help="Skip C++ driver build (build --skip-driver).")]
+ForceGenOpt = Annotated[bool, typer.Option("--force-gen", help="[CLI-07] Force regeneration even if config hash is unchanged.")]
+YamlPathOpt = Annotated[Path, typer.Option("--config", "-c", help="Path to the project YAML.")]
+JobsOpt = Annotated[int, typer.Option("--jobs", "-j", min=1, help="Parallel make jobs for the C++ driver build.")]
 
+def build_options(func):
+    @wraps(func)
+    def wrapper(
+        *args,
+        skip_rtl: bool = typer.Option(
+            False,
+            "--skip-rtl",
+            help="Skip the RTL generation steps (sbt + java).",
+        ),
+        skip_driver: bool = typer.Option(
+            False,
+            "--skip-driver",
+            help="Skip the C++ driver build (cmake / make).",
+        ),
+        force_gen: bool = typer.Option(
+            False,
+            "--force-gen",
+            help="Force regeneration even if config hash is unchanged.",
+        ),
+        yaml_path: Path = typer.Option(
+            _FSLAB_YAML,
+            "--config",
+            "-c",
+            exists=True,
+            readable=True,
+            help="Path to the project YAML.",
+        ),
+        jobs: int = typer.Option(
+            4,
+            "--jobs",
+            "-j",
+            min=1,
+            help="Parallel make jobs for the C++ driver build.",
+        ),
+        **kwargs,
+    ):
+        return func(
+            *args,
+            skip_rtl=skip_rtl,
+            skip_driver=skip_driver,
+            force_gen=force_gen,
+            yaml_path=yaml_path,
+            jobs=jobs,
+            **kwargs,
+        )
 
-@app.command("compile")
+    wrapper.__signature__ = inspect.signature(wrapper) 
+    return wrapper
+
+@build_app.callback(invoke_without_command=True)
+def build_callback(
+    ctx: typer.Context,
+    skip_rtl: SkipRtlOpt = False,
+    skip_driver: SkipDriverOpt = False,
+    force_gen: ForceGenOpt = False,
+    yaml_path: YamlPathOpt = _FSLAB_YAML,
+    jobs: JobsOpt = 4,
+) -> None:
+    if ctx.invoked_subcommand is None:
+        cmd_compile(
+            skip_rtl=skip_rtl,
+            skip_driver=skip_driver,
+            force_gen=force_gen,
+            yaml_path=yaml_path,
+            jobs=jobs,
+            build_type=BuildType.METASIM,
+        )
+
+@build_app.command("metasim")
+def build_metasim(
+    skip_rtl: SkipRtlOpt = False,
+    skip_driver: SkipDriverOpt = False,
+    force_gen: ForceGenOpt = False,
+    yaml_path: YamlPathOpt = _FSLAB_YAML,
+    jobs: JobsOpt = 4,
+) -> None:
+    """Build the project with C++ MetaSim simulation target (software simulator)."""
+    cmd_compile(
+        skip_rtl=skip_rtl,
+        skip_driver=skip_driver,
+        force_gen=force_gen,
+        yaml_path=yaml_path,
+        jobs=jobs,
+        build_type=BuildType.METASIM,
+    )
+
+@build_app.command("driver")
+def build_driver(
+    skip_rtl: SkipRtlOpt = False,
+    skip_driver: SkipDriverOpt = False,
+    force_gen: ForceGenOpt = False,
+    yaml_path: YamlPathOpt = _FSLAB_YAML,
+    jobs: JobsOpt = 4,
+) -> None:
+    """Build the project with C++ driver for the target platform."""
+    cmd_compile(
+        skip_rtl=skip_rtl,
+        skip_driver=skip_driver,
+        force_gen=force_gen,
+        yaml_path=yaml_path,
+        jobs=jobs,
+        build_type=BuildType.DRIVER,
+    )
+
+@build_app.command("fpgasim")
+def build_fpgasim(
+    skip_rtl: SkipRtlOpt = False,
+    skip_driver: SkipDriverOpt = False,
+    force_gen: ForceGenOpt = False,
+    yaml_path: YamlPathOpt = _FSLAB_YAML,
+    jobs: JobsOpt = 4,
+) -> None:
+    """Build the project with C++ FPGA simulation target (hardware-accelerated)."""
+    cmd_compile(
+        skip_rtl=skip_rtl,
+        skip_driver=skip_driver,
+        force_gen=force_gen,
+        yaml_path=yaml_path,
+        jobs=jobs,
+        build_type=BuildType.FPGASIM,
+    )
+
 def cmd_compile(
-    skip_rtl: bool = typer.Option(
-        False,
-        "--skip-rtl",
-        help="Skip the RTL generation steps (sbt + java).",
-    ),
-    skip_driver: bool = typer.Option(
-        False,
-        "--skip-driver",
-        help="Skip the C++ driver build (cmake / make).",
-    ),
-    force_gen: bool = typer.Option(
-        False,
-        "--force-gen",
-        help="[CLI-07] Force regeneration even if config hash is unchanged.",
-    ),
-    yaml_path: Path = typer.Option(
-        _FSLAB_YAML,
-        "--config",
-        "-c",
-        exists=True,
-        readable=True,
-        help="Path to the project YAML.",
-    ),
-    jobs: int = typer.Option(
-        4,
-        "--jobs",
-        "-j",
-        min=1,
-        help="Parallel make jobs for the C++ driver build.",
-    ),
+    skip_rtl: bool,
+    skip_driver: bool,
+    force_gen: bool,
+    yaml_path: Path,
+    jobs: int,
+    build_type: BuildType = BuildType.METASIM
 ) -> None:
     """
     Full compile pipeline.
@@ -275,7 +394,7 @@ def cmd_compile(
     # ------------------------------------------------------------------
     if not skip_driver:
         section("Step 4 – cmake / make (C++ driver)")
-        _run_cmake_make(config=config, project_root=project_root, jobs=jobs, sm=sm)
+        _run_cmake_make(config=config, project_root=project_root, jobs=jobs, sm=sm, build_type=build_type)
 
     # ------------------------------------------------------------------
     # Persist updated state (mark last successful compile)
@@ -441,7 +560,7 @@ def _run_golden_gate_main(
 
 
 def _run_cmake_make(
-    *, config: object, project_root: Path, jobs: int, sm: StateManager
+    *, config: object, project_root: Path, jobs: int, sm: StateManager, build_type: BuildType
 ) -> None:
     """
     [CLI-13] Configure and build the C++ simulation driver.
@@ -466,7 +585,7 @@ def _run_cmake_make(
 
     # make
     run_or_die(
-        ["make", "-C", str(build_dir), f"-j{jobs}"],
+        ["make", "-C", str(build_dir), f"-j{jobs}", build_type.value],
         cwd=project_root,
         label=f"[make -j{jobs}]",
         log_file=log,

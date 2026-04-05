@@ -30,7 +30,7 @@ _KNOWN_BACKENDS = ["vivado", "vitis"]
 # ===========================================================================
 
 
-@app.command("build")
+@app.command("buildold")
 def cmd_build(
     backend: str = typer.Option(
         "vivado",

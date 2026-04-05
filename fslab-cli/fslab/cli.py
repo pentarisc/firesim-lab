@@ -10,7 +10,7 @@ Usage (after `pip install -e .`):
     fslab --help
     fslab init --name my-design --platform f2
     fslab generate --force
-    fslab compile --skip-driver
+    fslab build --skip-driver
     fslab sim --emu verilator
     fslab build --backend vivado
     fslab archive --tag milestone-v1
@@ -64,14 +64,14 @@ from fslab.commands.init import app as init_app  # noqa: E402
 app.add_typer(init_app, name="init", help="Start a new fslab project.")
 
 # Generate & compile (share one router – both deal with code-gen / build)
-from fslab.commands.compile import app as compile_app  # noqa: E402
+from fslab.commands.build import app as build_top_app  # noqa: E402
 
-app.add_typer(compile_app)  # commands register themselves with their own names
+app.add_typer(build_top_app)  # commands register themselves with their own names
 
 # Simulation
-from fslab.commands.sim import app as sim_app  # noqa: E402
+from fslab.commands.sim import app as sim_top_app  # noqa: E402
 
-app.add_typer(sim_app, name="sim", help="Run a cycle-accurate simulation.")
+app.add_typer(sim_top_app) # commands register themselves with their own names
 
 # FPGA build & deploy
 from fslab.commands.fpga import app as fpga_app  # noqa: E402

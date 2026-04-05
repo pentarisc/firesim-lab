@@ -76,5 +76,10 @@ class {{ fslab_top }}(implicit p: Parameters) extends RawModule {
 {{ content | indent(4, true) }}
 {% endif -%}
 {% endfor %}
+
+    PeekPokeBridge(
+      clock, 
+      reset
+    )
   }
 }

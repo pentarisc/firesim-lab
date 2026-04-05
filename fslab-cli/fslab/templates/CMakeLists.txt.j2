@@ -6,68 +6,107 @@
 
   Design principles
   -----------------
-  - This template is PLATFORM-AGNOSTIC. It contains zero platform names, zero
-    platform-specific paths, and zero platform-specific logic. All platform
-    knowledge lives exclusively in registry.yaml under platforms.<name>.
-  - Adding a new FPGA platform requires only a new registry.yaml entry —
-    this file never changes.
-  - Environment variable references use CMake $ENV{VAR} syntax (Decision 3a).
-    They are emitted verbatim; CMake resolves them at configure-time. This is
-    intentional: runtime env vars (EDA license servers, XRT paths, etc.) must
-    NOT be baked in at generation time.
-  - cmake_fragment is the escape hatch (Decision 1, Option 1): any CMake
-    construct that cannot be expressed through structured fields can be placed
-    there verbatim. When a pattern recurs across platforms, promote it to a
-    structured field in the next CLI release.
+  - PLATFORM-AGNOSTIC / TOOL-AGNOSTIC: zero platform or simulator names are
+    hard-coded here. All knowledge lives in registry.yaml entries.
+  - Three independent build sub-trees, each with its own output directory:
+      build/driver/    - real FPGA host driver  (fslab build driver)
+      build/metasim/   - SW meta-simulators     (fslab build metasim --tool X)
+      build/fpgasim/   - FPGA meta-simulators   (fslab build fpgasim --tool X)
+  - $ENV{VAR} syntax is used for CMake sections (Decision 3a); $(VAR) Makefile
+    syntax is used inside file(WRITE) blocks (expanded by Make at build time).
+  - cmake_fragment / makefile_fragment are escape hatches for constructs the
+    structured schema fields cannot yet express.
 
-  Context variables (all produced by _build_template_context)
-  -----------------------------------------------------------
+  Escaping inside file(WRITE) blocks
+  -----------------------------------
+  - ${CMAKE_VAR}   -> cmake expands at configure time            (intended)
+  - \$(make_var)   -> cmake passes through; Make expands at build time
+  - $$$$ORIGIN     -> cmake writes $$$$ORIGIN; Make assignment sees $$$$->$$;
+                      recipe re-expands $$->$; shell sees -Wl,-rpath='$ORIGIN'
+                      inside single quotes; linker gets $ORIGIN. ✓
+
+  Context variables
+  -----------------
   Core
-    project_name        str        project.name
-    platform            str        target.platform  (display / informational only)
-    driver_name         str        host.driver_name
-    gen_dir             str        advanced.gen_dir
-    gen_file_basename   str        advanced.gen_file_basename
-    clock_period        str        target.clock_period
-    firesim_root        str        advanced.firesim_root
-    firesim_lab_root    str        advanced.firesim_lab_root
-    platforms_dir       str        advanced.platforms_dir
-                                   (default: firesim_root + "/../platforms")
+    project_name        str
+    platform            str        (informational; section 4b uses platform_cfg)
+    driver_name         str
+    gen_dir             str
+    gen_file_basename   str
+    clock_period        str
+    firesim_root        str
+    firesim_lab_root    str
+    platforms_dir       str
 
   Compiler
-    cxx_standard        int        host.cxx_standard
-    cxx_flags           list[str]  host.cxx_flags, split into individual flags
-    driver_cxxopts      list[str]  host.driver_cxxopts (default: ["-O2"])
-                                   Applied uniformly to all platforms.
-    link_libs           list[str]  host.libs merged with required system libs.
-                                   pthread, gmp, rt, stdc++ always appended.
+    cxx_standard        int
+    cxx_flags           list[str]
+    driver_cxxopts      list[str]  (default: ["-O2"])
+    link_libs           list[str]  (common libs; pthread, gmp, rt, stdc++ appended)
 
   Sources
-    user_cc_files       list[str]  host.sources
-    user_h_files        list[str]  host.includes
-    bridge_cc_files     list[str]  cpp_sources from every bridge, de-duplicated
-    bridge_h_files      list[str]  cpp_headers from every bridge, de-duplicated
+    user_cc_files       list[str]
+    user_h_files        list[str]
+    bridge_cc_files     list[str]
+    bridge_h_files      list[str]
 
-  Platform (resolved from registry.yaml by the CLI — template never inspects these)
-    platform_cfg                   Resolved platform config object
-      .rpath_origin     bool       Embed $ORIGIN in rpath (runtime shared lib search)
-      .required_env_vars list[str] Checked at cmake-configure time; FATAL_ERROR if absent
-      .extra_cxx_flags  list[str]  Platform-specific compile flags
-      .extra_include_dirs list[str] Platform-specific include paths.
-                                   Supports CMake vars (${VAR}) and env refs ($ENV{VAR}).
-      .extra_link_dirs  list[str]  Platform-specific linker search paths.
-                                   Supports CMake vars and env refs.
-      .extra_libs       list[str]  Platform-specific libraries (names only, no -l prefix)
-      .extra_link_options list[str] Raw platform-specific linker flags
-      .cmake_fragment   str        Verbatim CMake injected last in section 4b.
-                                   Escape hatch for constructs not covered by structured fields.
-                                   Jinja2 context variables are available inside the fragment.
+  Platform (sections 4 and 4b)
+    platform_cfg                   Resolved PlatformEntry from registry
+      .rpath_origin     bool
+      .required_env_vars list[str]
+      .extra_cxx_flags  list[str]
+      .extra_include_dirs list[str]   CMake-style paths ($ENV{VAR} / ${VAR} / /)
+      .extra_link_dirs  list[str]
+      .extra_libs       list[str]
+      .extra_link_options list[str]
+      .cmake_fragment   str
+
+  Meta-simulators (section 5)
+    metasim_cfg         Resolved MetaSimEntry from registry
+      Each entry:
+      .id               str        e.g. verilator / vcs / xcelium
+      .label            str
+      .tool_cxxopts     list[str]  VERILATOR_CXXOPTS / VCS_CXXOPTS / etc. (default ["-O2"])
+      .make_flags       list[str]  Extra flags for sub-make (e.g. ["-j8","VM_PARALLEL_BUILDS=1"])
+      .rtlsim_define    bool       Add -D RTLSIM to CXXFLAGS (true for all SW metasim)
+      .rpath_origin     bool
+      .required_env_vars list[str]
+      .extra_cxx_flags  list[str]  Makefile-style flags
+      .extra_include_dirs list[str] Makefile-style paths: $(VAR) or /
+      .extra_link_dirs  list[str]
+      .extra_libs       list[str]  Bare names, no -l prefix
+      .extra_link_options list[str] Raw linker flags; placed BEFORE libs (--no-as-needed)
+      .cmake_targets    list[SimTarget]
+          .name         str        Suffix for cmake "metasim-<n>" AND make target name
+          .make_target  str        Override make target if different from .name
+          .comment      str
+      .cmake_fragment   str
+      .makefile_fragment str       Verbatim Makefile content appended to Makefile.<id>.sim
+                                   (Makefrag includes and target aliases go here)
+
+  FPGA meta-simulators (section 6)
+    fpgasim_cfg         Resolved FpgaSimEntry from registry
+      Each entry:
+      .id               str        e.g. xsim
+      .label            str
+      .main             str        MAIN= arg (e.g. "f2_xsim")
+      .platform_override str       PLATFORM= override (e.g. "f2")
+      .rpath_origin     bool
+      .required_env_vars list[str]
+      .extra_cxx_flags  list[str]  Makefile-style
+      .extra_include_dirs list[str] Makefile-style paths
+      .extra_link_dirs  list[str]
+      .extra_libs       list[str]
+      .extra_link_options list[str]
+      .cmake_targets    list[SimTarget]
+      .cmake_fragment   str
+      .makefile_fragment str
 #}
 # ==============================================================================
 # CMakeLists.txt
 # @GENERATED_BY_FSLAB  platform={{ platform }}
-# Warning: This file is auto-generated by the fslab CLI. Manual edits will be
-# overwritten on the next `fslab generate` run.
+# Warning: This file is auto-generated. Manual edits will be overwritten on
+# the next `fslab generate` run.
 # ==============================================================================
 
 cmake_minimum_required(VERSION 3.15)
@@ -83,12 +122,21 @@ set(CLOCK_PERIOD      "{{ clock_period }}"      CACHE STRING "Simulation Clock P
 
 set(FIRESIM_ROOT      "{{ firesim_root }}"      CACHE PATH "Path to FireSim")
 set(FIRESIM_LAB_ROOT  "{{ firesim_lab_root }}"  CACHE PATH "Path to FireSim Lab Bridges")
-set(PLATFORMS_DIR     "${FIRESIM_ROOT}/platforms"     CACHE PATH "Path to FireSim Platforms directory")
-set(GEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/{{ gen_dir }}" CACHE PATH "Directory for generated RTL/Headers")
-set(OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}"               CACHE PATH "Directory for output binaries")
-set(V_DIR   "${CMAKE_CURRENT_SOURCE_DIR}/verilog"       CACHE PATH "Directory for static Verilog files")
-set(MIDAS_DIR         "${FIRESIM_ROOT}/sim/midas/src/main/cc" CACHE PATH "Directory for midas c++ sources")
-set(FSLAB_BRIDGES_DIR "${FIRESIM_LAB_ROOT}/lib/bridges"       CACHE PATH "Directory for firesim-lab c++ bridge sources")
+set(PLATFORMS_DIR     "{{ platforms_dir }}"     CACHE PATH "Path to FireSim Platforms directory")
+set(GEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/{{ gen_dir }}" CACHE PATH "Generated RTL/Headers directory")
+set(V_DIR   "${FIRESIM_ROOT}/sim/midas/src/main/verilog"       CACHE PATH "Static Verilog directory")
+set(MIDAS_DIR         "${FIRESIM_ROOT}/sim/midas/src/main/cc" CACHE PATH "midas c++ sources")
+set(FSLAB_BRIDGES_DIR "${FIRESIM_LAB_ROOT}/lib/bridges"       CACHE PATH "firesim-lab bridge sources")
+
+# Build sub-directories — one per top-level target class.
+# These are created at configure-time so sub-make can write into them immediately.
+set(DRIVER_BUILD_DIR  "${CMAKE_BINARY_DIR}/driver"  CACHE PATH "Driver build output")
+set(METASIM_BUILD_DIR "${CMAKE_BINARY_DIR}/metasim" CACHE PATH "Metasim build output")
+set(FPGASIM_BUILD_DIR "${CMAKE_BINARY_DIR}/fpgasim" CACHE PATH "FPGASim build output")
+
+file(MAKE_DIRECTORY "${DRIVER_BUILD_DIR}")
+file(MAKE_DIRECTORY "${METASIM_BUILD_DIR}")
+file(MAKE_DIRECTORY "${FPGASIM_BUILD_DIR}")
 
 # ------------------------------------------------------------------------------
 # 2. Global C++ Flags
@@ -104,7 +152,7 @@ add_compile_options(
 {% endif %}
 
 # ------------------------------------------------------------------------------
-# 3. Gather Source Files (Injected via Jinja2 from YAML)
+# 3. Gather Source Files
 # ------------------------------------------------------------------------------
 
 # -- User Project Sources --
@@ -144,15 +192,29 @@ set(BRIDGE_H
 {% endfor %}
 )
 
-# -- Platform Interface Sources (simif_<platform>.cc + entry points) --
+{% if verilog_files %}
+set(DESIGN_RTL
+{% for verilog_file in verilog_files %}
+  "{{ verilog_file }}"
+{% endfor %}
+)
+{% endif %}
+
+# -- Platform Interface Sources --
 set(PLATFORM_CC
     ${MIDAS_DIR}/simif_${PLATFORM}.cc
     ${MIDAS_DIR}/main.cc
     ${MIDAS_DIR}/entry.cc
 )
 
+# Space-separated strings for Makefile.sim consumption (sections 5 and 6).
+string(REPLACE ";" " " MAKE_USER_CC   "${USER_CC}")
+string(REPLACE ";" " " MAKE_USER_H    "${USER_H}")
+string(REPLACE ";" " " MAKE_BRIDGE_CC "${BRIDGE_CC}")
+string(REPLACE ";" " " MAKE_BRIDGE_H  "${BRIDGE_H}")
+
 # ------------------------------------------------------------------------------
-# 4. Target: Host Software Driver
+# 4. Target: Host Software Driver  ->  build/driver/
 # ------------------------------------------------------------------------------
 set(DRIVER_TARGET "${DRIVER_NAME}-${PLATFORM}")
 
@@ -162,7 +224,11 @@ add_executable(${DRIVER_TARGET}
     ${PLATFORM_CC}
 )
 
-# Base include paths common to every platform
+# Route the driver binary into its own clean sub-directory.
+set_target_properties(${DRIVER_TARGET} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${DRIVER_BUILD_DIR}"
+)
+
 target_include_directories(${DRIVER_TARGET} PRIVATE
     ${FIRESIM_ROOT}/sim/src/main/cc
     ${MIDAS_DIR}
@@ -171,8 +237,7 @@ target_include_directories(${DRIVER_TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# Base libraries common to every platform
-# (pthread, gmp, rt, stdc++ are appended by context.py _SYSTEM_LIBS)
+# Common libraries (pthread, gmp, rt, stdc++ appended by context.py _SYSTEM_LIBS)
 target_link_libraries(${DRIVER_TARGET} PRIVATE
 {% for lib in link_libs %}
     {{ lib }}
@@ -183,20 +248,18 @@ target_link_directories(${DRIVER_TARGET} PRIVATE
     ${GEN_DIR}
 )
 
-# Convenience alias: `cmake --build . --target driver`
+# Convenience alias: cmake --build build/ --target driver
 add_custom_target(driver DEPENDS ${DRIVER_TARGET})
 
 # ------------------------------------------------------------------------------
 # 4b. Platform-Specific Driver Configuration
 #
-#     ALL values below come exclusively from registry.yaml platforms.{{ platform }}.
-#     This section is a pure structural renderer — it contains no platform names,
-#     no hard-coded paths, and no conditional logic based on platform identity.
-#     To support a new platform, add an entry to registry.yaml only.
+#     All values come exclusively from registry.yaml platforms.{{ platform }}.
+#     This block is a pure structural renderer — no platform names or SDK paths
+#     are hard-coded here. To add a new platform, add a registry.yaml entry only.
 # ------------------------------------------------------------------------------
 
-# -- DRIVER_CXXOPTS: per-driver optimisation flags, uniform across platforms --
-# Mirrors: DRIVER_CXXOPTS ?= -O2 in driver.mk
+# Per-driver optimisation flags  (mirrors DRIVER_CXXOPTS ?= -O2 in driver.mk)
 {% if driver_cxxopts %}
 target_compile_options(${DRIVER_TARGET} PRIVATE
 {% for opt in driver_cxxopts %}
@@ -206,27 +269,24 @@ target_compile_options(${DRIVER_TARGET} PRIVATE
 {% endif %}
 
 {% if platform_cfg.required_env_vars %}
-# -- Validate required environment variables at configure-time --
-# Decision 3a: $ENV{} is emitted verbatim; CMake resolves at configure-time.
-# This is intentional for values that must not be baked in (license servers, etc.).
+# Validate required environment variables at cmake configure-time.
+# $ENV{} emitted verbatim (Decision 3a); CMake resolves at configure-time.
 {% for var in platform_cfg.required_env_vars %}
-if("$ENV{  {{- var -}}  }" STREQUAL "")
+if("$ENV{ {{- var -}} }" STREQUAL "")
     message(FATAL_ERROR
         "[fslab] Platform '${PLATFORM}' requires the {{ var }} environment variable.\n"
-        "       Ensure it is set in your environment before running cmake.")
+        "       Set it before running cmake.")
 endif()
 {% endfor %}
 
 {% endif %}
 {% if platform_cfg.rpath_origin %}
-# -- $ORIGIN rpath: shared libs are co-located with the driver on the run-host --
-# $ORIGIN is an ELF loader token, not a CMake or shell variable — no escaping needed.
-# Mirrors: -Wl,-rpath='$$ORIGIN' used across all FPGA platforms in driver.mk.
+# $ORIGIN rpath — shared libs are co-located with the driver on the run-host.
+# $ORIGIN is an ELF loader token; no cmake/shell escaping is needed here.
 target_link_options(${DRIVER_TARGET} PRIVATE "-Wl,-rpath,$ORIGIN")
 
 {% endif %}
 {% if platform_cfg.extra_cxx_flags %}
-# -- Platform-specific compile flags --
 target_compile_options(${DRIVER_TARGET} PRIVATE
 {% for flag in platform_cfg.extra_cxx_flags %}
     "{{ flag }}"
@@ -235,7 +295,6 @@ target_compile_options(${DRIVER_TARGET} PRIVATE
 
 {% endif %}
 {% if platform_cfg.extra_include_dirs %}
-# -- Platform-specific include directories --
 # Paths may contain ${CMAKE_VAR} or $ENV{VAR} references (Decision 3a).
 target_include_directories(${DRIVER_TARGET} PRIVATE
 {% for d in platform_cfg.extra_include_dirs %}
@@ -245,8 +304,6 @@ target_include_directories(${DRIVER_TARGET} PRIVATE
 
 {% endif %}
 {% if platform_cfg.extra_link_dirs %}
-# -- Platform-specific linker search paths --
-# Paths may contain ${CMAKE_VAR} or $ENV{VAR} references (Decision 3a).
 target_link_directories(${DRIVER_TARGET} PRIVATE
 {% for d in platform_cfg.extra_link_dirs %}
     {{ d }}
@@ -255,7 +312,6 @@ target_link_directories(${DRIVER_TARGET} PRIVATE
 
 {% endif %}
 {% if platform_cfg.extra_libs %}
-# -- Platform-specific libraries --
 target_link_libraries(${DRIVER_TARGET} PRIVATE
 {% for lib in platform_cfg.extra_libs %}
     {{ lib }}
@@ -264,7 +320,6 @@ target_link_libraries(${DRIVER_TARGET} PRIVATE
 
 {% endif %}
 {% if platform_cfg.extra_link_options %}
-# -- Platform-specific raw linker options --
 target_link_options(${DRIVER_TARGET} PRIVATE
 {% for opt in platform_cfg.extra_link_options %}
     "{{ opt }}"
@@ -273,54 +328,93 @@ target_link_options(${DRIVER_TARGET} PRIVATE
 
 {% endif %}
 {% if platform_cfg.cmake_fragment %}
-# -- cmake_fragment: verbatim CMake from registry.yaml (escape hatch) ----------
-# This block is the upgrade path: constructs that cannot yet be expressed
-# through structured fields live here. When a pattern recurs across multiple
-# platforms, promote it to a structured field in the next CLI release.
+# -- cmake_fragment: verbatim CMake from registry.yaml (escape hatch) ---------
 {{ platform_cfg.cmake_fragment }}
-# -- end cmake_fragment --------------------------------------------------------
+# -- end cmake_fragment -------------------------------------------------------
+{% endif %}
+
+# ==============================================================================
+# 5. Targets: Software Meta-Simulators  ->  build/metasim/
+#
+#    Makefile.<id>.sim is written based on the project.software.emulator at cmake
+#    configure-time.  cmake custom targets invoke the appropriate make target
+#    inside that file.
+#
+#    Available cmake target after generation:
+#      metasim-{{ metasim_cfg.cmake_targets | map(attribute='name') | join('  metasim-') }}  ({{ metasim_cfg.label }})
+#
+#    Top-level alias `metasim` -> first tool's first variant (see bottom of section).
+#    To select a specific tool:
+#      cmake --build build/ --target metasim-<tool>
+#      cmake --build build/ --target metasim-<tool>-debug
+# ==============================================================================
+{% if metasim_cfg is defined %}
+{% set sim = metasim_cfg %}
+
+# ----------------------------------------------------------------------------
+# 5. {{ sim.label }}  (id: {{ sim.id }})
+# ----------------------------------------------------------------------------
+{% if sim.required_env_vars %}
+
+# Validate required env vars at cmake configure-time.
+{% for var in sim.required_env_vars %}
+if("$ENV{ {{- var -}} }" STREQUAL "")
+    message(FATAL_ERROR
+        "[fslab] Metasimulator '{{ sim.id }}' requires the {{ var }} environment variable.\n"
+        "       Set it before running cmake.")
+endif()
+{% endfor %}
+{% endif %}
+
+# Write Makefile.{{ sim.id }}.sim — cmake resolves ${} references, Make resolves \$() at build-time.
+file(WRITE "${METASIM_BUILD_DIR}/Makefile.{{ sim.id }}.sim"
+"# =============================================================================
+# Makefile.{{ sim.id }}.sim  --  {{ sim.label }}
+# Auto-generated by CMake. Do not edit by hand.
+# =============================================================================
+
+# -- Paths (resolved by CMake at configure-time) ------------------------------
+midas_dir     := ${MIDAS_DIR}
+fslab_include := ${FSLAB_BRIDGES_DIR}/src/main/cc
+v_dir         := ${V_DIR}
+GEN_DIR       := ${GEN_DIR}
+OUT_DIR       := ${METASIM_BUILD_DIR}
+PLATFORM      := ${PLATFORM}
+DRIVER_NAME   := ${DRIVER_NAME}
+CLOCK_PERIOD  := ${CLOCK_PERIOD}
+
+# FireSim variable-name compatibility aliases
+DESIGN            := \$(DRIVER_NAME)
+GEN_FILE_BASENAME := ${GEN_FILE_BASENAME}
+BASE_FILE_NAME    := \$(GEN_FILE_BASENAME)
+simif_dir         := \$(midas_dir)
+
+# -- Compiler / linker --------------------------------------------------------
+CXX := ${CMAKE_CXX_COMPILER}
+
+# CXXFLAGS: global flags + RTLSIM define + tool_cxxopts + extra_cxx_flags
+#           + midas/gen includes + extra_include_dirs  (Makefile \$(VAR) style)
+CXXFLAGS := -std=c++{{ cxx_standard }}{% for f in cxx_flags %} {{ f }}{% endfor %}{% if sim.rtlsim_define %} -D RTLSIM{% endif %}{% for opt in sim.tool_cxxopts %} {{ opt }}{% endfor %}{% for f in sim.extra_cxx_flags %} {{ f }}{% endfor %} -I\$(midas_dir) -I\$(fslab_include) -I\$(GEN_DIR){% for d in sim.extra_include_dirs %} -I{{ d }}{% endfor %}
+
+# LDFLAGS: extra_link_options FIRST (--no-as-needed must precede libs)
+#          + GEN_DIR path + common libs + rpath + extra link dirs/libs
+LDFLAGS :={% for opt in sim.extra_link_options %} {{ opt }}{% endfor %} -L\$(GEN_DIR){% for lib in link_libs %} -l{{ lib }}{% endfor %}{% if sim.rpath_origin %} -Wl,-rpath='$$$$ORIGIN'{% endif %}{% for d in sim.extra_link_dirs %} -L{{ d }}{% endfor %}{% for lib in sim.extra_libs %} -l{{ lib }}{% endfor %}
+
+{% if sim.make_flags %}
+# Tool-specific sub-make flags
+{{ sim.id | upper }}_MAKEFLAGS :={% for f in sim.make_flags %} {{ f }}{% endfor %}
 
 {% endif %}
-# ------------------------------------------------------------------------------
-# 5. Target: Meta-Simulators (Verilator / VCS / Xcelium via FireSim Makefrags)
-# ------------------------------------------------------------------------------
-
-# Convert CMake lists to space-separated strings for Make consumption
-string(REPLACE ";" " " MAKE_USER_CC   "${USER_CC}")
-string(REPLACE ";" " " MAKE_USER_H    "${USER_H}")
-string(REPLACE ";" " " MAKE_BRIDGE_CC "${BRIDGE_CC}")
-string(REPLACE ";" " " MAKE_BRIDGE_H  "${BRIDGE_H}")
-
-# Write a secondary Makefile that bridges to the FireSim EDA Makefrags.
-# Note: simulation flags intentionally do not inherit platform FPGA SDK flags —
-# the emulation targets link against the midas emul layer, not the FPGA runtime.
-file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/Makefile.sim "
-# ==============================================================================
-# Auto-generated by CMake — bridges to FireSim EDA Makefrags.
-# Do not edit by hand.
-# ==============================================================================
-midas_dir := ${MIDAS_DIR}
-v_dir     := ${V_DIR}
-GEN_DIR   := ${GEN_DIR}
-OUT_DIR   := ${OUT_DIR}
-
-DRIVER_NAME  := ${DRIVER_NAME}
-CLOCK_PERIOD := ${CLOCK_PERIOD}
-
-CXX      := ${CMAKE_CXX_COMPILER}
-CXXFLAGS := -std=c++{{ cxx_standard }}{% for flag in cxx_flags %} {{ flag }}{% endfor %} -I\$(midas_dir) -I\$(GEN_DIR)
-LDFLAGS  := -L\$(GEN_DIR){% for lib in link_libs %} -l{{ lib }}{% endfor %}
-
+# -- RTL / source variables required by FireSim Makefrags --------------------
 DESIGN_V  := \$(GEN_DIR)/${GEN_FILE_BASENAME}.sv
 design_vh := \$(GEN_DIR)/${GEN_FILE_BASENAME}.const.vh
 sim_fpga_resource_models := \$(v_dir)/BUFGCE.v
 
 emul_dir := \$(midas_dir)/emul
 
-# Source file variables required by FireSim Makefrags
 emul_cc := ${MAKE_USER_CC} ${MAKE_BRIDGE_CC} \$(emul_dir)/simif_emul.cc \$(emul_dir)/mmio.cc \$(emul_dir)/mm.cc \$(emul_dir)/dpi.cc \$(midas_dir)/entry.cc \$(emul_dir)/qsfp.cc
 emul_h  := ${MAKE_USER_H}  ${MAKE_BRIDGE_H}  \$(emul_dir)/simif_emul.h  \$(emul_dir)/mmio.h  \$(emul_dir)/mm.h  \$(midas_dir)/entry.h  \$(emul_dir)/qsfp.h
-emul_v  := \$(design_vh) \$(DESIGN_V) \$(sim_fpga_resource_models)
+emul_v  := \$(design_vh) \$(DESIGN_V) \$(sim_fpga_resource_models) ${DESIGN_RTL}
 
 TB            := emul
 SIM_TIMESCALE := 1ps/1ps
@@ -331,55 +425,144 @@ SIM_PREPROC_DEFINES = +define+CLOCK_PERIOD=\$(CLOCK_PERIOD) \\
 \t+define+RANDOMIZE_INVALID_ASSIGN \\
 \t+define+STOP_COND=!\$(TB).reset \\
 \t+define+PRINTF_COND=!\$(TB).reset \\
-\t+define+RANDOM=32'b0
+\t+define+RANDOM=32\\'b0
 
 sim_wrapper_v  := \$(v_dir)/top.sv
-sim_harness    := \$(midas_dir)/simif_emul_all.cc
 verilator_conf := \$(midas_dir)/rtlsim/ml-verilator-conf.vlt
+sim_harness    := \$(midas_dir)/simif_emul_all.cc
 
-# EDA tool Makefrags
-include \$(midas_dir)/rtlsim/Makefrag-verilator
-\$(sim_harness): ;
-verilator: \$(OUT_DIR)/V\$(DRIVER_NAME)
-
-include \$(midas_dir)/rtlsim/Makefrag-vcs
-\$(vcs_harness): ;
-vcs: \$(OUT_DIR)/\$(DRIVER_NAME)
-
-include \$(midas_dir)/rtlsim/Makefrag-xcelium
-\$(xcelium_harness): ;
-xcelium: \$(xc_sim_name)
+# -- Tool-specific Makefrag includes and target aliases -----------------------
+# Source: registry.yaml metasimulators.{{ sim.id }}.makefile_fragment
+{{ sim.makefile_fragment }}
 ")
 
-add_custom_target(verilator
-    COMMAND $(MAKE) -f Makefile.sim verilator
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Building Verilator simulation via FireSim Makefrag..."
+# cmake custom targets — one per variant in cmake_targets.
+# cmake target: metasim-<name>   make target: <make_target or name>
+{% for tgt in sim.cmake_targets %}
+add_custom_target(metasim-{{ tgt.name }}
+    COMMAND ${CMAKE_MAKE_PROGRAM}{% for f in sim.make_flags %} {{ f }}{% endfor %} -f "Makefile.{{ sim.id }}.sim" {{ tgt.make_target if tgt.make_target else tgt.name }}
+    WORKING_DIRECTORY "${METASIM_BUILD_DIR}"
+    COMMENT "{{ tgt.comment if tgt.comment else '[fslab] ' ~ sim.label ~ ': ' ~ tgt.name }}"
+    VERBATIM
+)
+{% endfor %}
+
+{% if sim.cmake_fragment %}
+# -- cmake_fragment for {{ sim.id }} (verbatim from registry.yaml) --
+{{ sim.cmake_fragment }}
+{% endif %}
+
+# Default metasim:
+add_custom_target(metasim
+    DEPENDS "metasim-{{ sim.cmake_targets[0].name }}"
+    COMMENT "[fslab] Default metasim: {{ sim.label }}"
 )
 
-add_custom_target(vcs
-    COMMAND $(MAKE) -f Makefile.sim vcs
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Building VCS simulation via FireSim Makefrag..."
+{% endif %}
+
+# ==============================================================================
+# 6. Targets: FPGA Meta-Simulators  ->  build/fpgasim/
+#
+#    FPGA meta-simulators compile a driver with a different MAIN= target
+#    (e.g. MAIN=f2_xsim PLATFORM=f2 for XSIM) and may also invoke FPGA
+#    board-specific scripts.  One Makefile.<id>.sim per registered tool.
+#
+#    Available cmake targets after generation:
+#      fpgasim-{{ fpgasim_cfg.cmake_targets | map(attribute='name') | join('  fpgasim-') }}  ({{ fpgasim_cfg.label }})
+#
+#    Top-level alias `fpgasim` -> first tool's first variant.
+# ==============================================================================
+{% if fpgasim_cfg is defined %}
+{% set sim = fpgasim_cfg %}
+
+# ----------------------------------------------------------------------------
+# 6. {{ sim.label }}  (id: {{ sim.id }})
+# ----------------------------------------------------------------------------
+{% if sim.required_env_vars %}
+
+{% for var in sim.required_env_vars %}
+if("$ENV{ {{- var -}} }" STREQUAL "")
+    message(FATAL_ERROR
+        "[fslab] FPGASim '{{ sim.id }}' requires the {{ var }} environment variable.\n"
+        "       Set it before running cmake.")
+endif()
+{% endfor %}
+{% endif %}
+
+file(WRITE "${FPGASIM_BUILD_DIR}/Makefile.{{ sim.id }}.sim"
+"# =============================================================================
+# Makefile.{{ sim.id }}.sim  --  {{ sim.label }}
+# Auto-generated by CMake. Do not edit by hand.
+# =============================================================================
+
+# -- Paths (resolved by CMake at configure-time) ------------------------------
+midas_dir    := ${MIDAS_DIR}
+fslab_include := ${FSLAB_BRIDGES_DIR}/src/main/cc
+GEN_DIR      := ${GEN_DIR}
+OUT_DIR      := ${FPGASIM_BUILD_DIR}
+DRIVER_NAME  := ${DRIVER_NAME}
+
+# FireSim variable-name compatibility aliases
+DESIGN            := \$(DRIVER_NAME)
+GENERATED_DIR     := \$(GEN_DIR)
+GEN_FILE_BASENAME := ${GEN_FILE_BASENAME}
+BASE_FILE_NAME    := \$(GEN_FILE_BASENAME)
+simif_dir         := \$(midas_dir)
+
+# MAIN= and PLATFORM= overrides for fpgasim driver compilation.
+# These differ from the real FPGA platform (e.g. MAIN=f2_xsim PLATFORM=f2).
+FPGASIM_MAIN     := {{ sim.main if sim.main else '${PLATFORM}' }}
+FPGASIM_PLATFORM := {{ sim.platform_override if sim.platform_override else '${PLATFORM}' }}
+
+# -- Source lists (header and driver deps for sub-make invocation) ------------
+header    := \$(GEN_DIR)/${GEN_FILE_BASENAME}.const.vh
+DRIVER_CC := ${MAKE_USER_CC} ${MAKE_BRIDGE_CC}
+DRIVER_H  := ${MAKE_USER_H}  ${MAKE_BRIDGE_H}
+midas_cc  := \$(midas_dir)/simif_\$(FPGASIM_PLATFORM).cc \$(midas_dir)/main.cc \$(midas_dir)/entry.cc
+midas_h   := \$(midas_dir)/simif_\$(FPGASIM_PLATFORM).h  \$(midas_dir)/entry.h
+
+# -- Compiler / linker --------------------------------------------------------
+CXX := ${CMAKE_CXX_COMPILER}
+
+CXXFLAGS :={% for f in sim.extra_cxx_flags %} {{ f }}{% endfor %} -std=c++{{ cxx_standard }}{% for f in cxx_flags %} {{ f }}{% endfor %} -I\$(midas_dir) -I\$(fslab_include) -I\$(GEN_DIR){% for d in sim.extra_include_dirs %} -I{{ d }}{% endfor %}
+
+LDFLAGS :={% for opt in sim.extra_link_options %} {{ opt }}{% endfor %} -L\$(GEN_DIR){% for lib in link_libs %} -l{{ lib }}{% endfor %}{% if sim.rpath_origin %} -Wl,-rpath='$$$$ORIGIN'{% endif %}{% for d in sim.extra_link_dirs %} -L{{ d }}{% endfor %}{% for lib in sim.extra_libs %} -l{{ lib }}{% endfor %}
+
+# -- Tool-specific targets (from registry.yaml fpgasimulators.{{ sim.id }}.makefile_fragment)
+{{ sim.makefile_fragment }}
+")
+
+{% for tgt in sim.cmake_targets %}
+add_custom_target(fpgasim-{{ tgt.name }}
+    COMMAND ${CMAKE_MAKE_PROGRAM} -f "Makefile.{{ sim.id }}.sim" {{ tgt.make_target if tgt.make_target else tgt.name }}
+    WORKING_DIRECTORY "${FPGASIM_BUILD_DIR}"
+    COMMENT "{{ tgt.comment if tgt.comment else '[fslab] ' ~ sim.label ~ ': ' ~ tgt.name }}"
+    VERBATIM
 )
+{% endfor %}
 
-add_custom_target(xcelium
-    COMMAND $(MAKE) -f Makefile.sim xcelium
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Building Xcelium simulation via FireSim Makefrag..."
+{% if sim.cmake_fragment %}
+# -- cmake_fragment for {{ sim.id }} (verbatim from registry.yaml) --
+{{ sim.cmake_fragment }}
+{% endif %}
+
+# Default fpgasim
+add_custom_target(fpgasim
+    DEPENDS "fpgasim-{{ sim.cmake_targets[0].name }}"
+    COMMENT "[fslab] Default fpgasim: {{ sim.label }}"
 )
+{% endif %}
 
-# ------------------------------------------------------------------------------
-# 6. Utility Targets
-# ------------------------------------------------------------------------------
+# ==============================================================================
+# 7. Utility Targets
+# ==============================================================================
 
-# tags — regenerate ctags index; mirrors the `tags` target in driver.mk.
 find_program(CTAGS_EXECUTABLE ctags)
 if(CTAGS_EXECUTABLE)
     add_custom_target(tags
         COMMAND ${CTAGS_EXECUTABLE} -R --exclude=@.ctagsignore .
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Regenerating ctags index..."
+        COMMENT "[fslab] Regenerating ctags index..."
         VERBATIM
     )
 else()

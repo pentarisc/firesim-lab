@@ -12,6 +12,8 @@ from .registry import (
     RegistryFile,
     RuntimePlusarg,
     ScalaTemplates,
+    MetaSimEntry,
+    FpgaSimEntry,
 )
 from .project import (
     AdvancedConfig,
@@ -33,6 +35,8 @@ __all__ = [
     "RegistryFile",
     "RuntimePlusarg",
     "ScalaTemplates",
+    "MetaSimEntry",
+    "FpgaSimEntry",
     # project
     "AdvancedConfig",
     "BridgeConfig",

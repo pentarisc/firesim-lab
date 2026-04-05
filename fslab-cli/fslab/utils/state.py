@@ -44,7 +44,7 @@ from fslab.utils.display import console, info, warning
 
 STATE_DIR_NAME = ".fslab"          # [CLI-05] hidden state directory name
 STATE_FILE_NAME = "state.json"     # persisted hash + metadata
-LOG_DIR_NAME = "logs"              # used by fslab build / compile
+LOG_DIR_NAME = "logs"              # used by fslab build
 
 
 class StateManager:

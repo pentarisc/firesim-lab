@@ -182,6 +182,8 @@ def _build_template_context(
     firesim_lab_root  = config.advanced.firesim_lab_root or "/opt/firesim-lab"
     top_module        = config.design.top_module
     platform_cfg      = registry.platforms.get(platform)
+    metasim_cfg       = registry.metasimulators.get(config.host.emulator)
+    fpgasim_cfg       = registry.fpgasimulators.get(config.target.fpga_sim)
 
     # ── Derived from design.blackbox_ports ────────────────────────────────
     # Scan for the key whose port definition is "in clock" or "in reset".
@@ -293,4 +295,7 @@ def _build_template_context(
         "instances":         instances,            # list[BridgeInstance], per instance
         "target_config":     config_class,
         "platform_cfg":      platform_cfg,
+        "metasim_cfg":       metasim_cfg,
+        "fpgasim_cfg":       fpgasim_cfg,
+
     }

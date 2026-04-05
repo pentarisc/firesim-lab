@@ -205,6 +205,7 @@ class TargetConfig(BaseModel):
 
     platform: str
     clock_period: str
+    fpga_sim: str
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +271,7 @@ class AdvancedConfig(BaseModel):
     firesim_root: Optional[str] = None
     firesim_lab_root: Optional[str] = None
     gen_dir: str = "generated-src"
-    gen_file_basename: str = "FSLabTargetTop"
+    gen_file_basename: str = "FireSim-generated"
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +316,8 @@ class FSLabConfig(BaseModel):
         [PROJ-13] port_map values must exist in blackbox_ports;
                   port_map keys must be in the correct direction list
                   of the registry bridge.
+        [PROJ-16] target.fpga_sim MUST exist as a valid id in the
+                  MasterRegistry.fpgasimulators.
         """
         # Validation context may be absent during unit-testing individual models.
         if info is None or info.context is None:
@@ -340,6 +343,14 @@ class FSLabConfig(BaseModel):
             available = sorted(registry.platforms.keys())
             raise ValueError(
                 f"[PROJ-11] target.platform '{self.target.platform}' is not "
+                f"defined in any loaded registry. Available platforms: {available}"
+            )
+
+        # --- [PROJ-16] FPGA Sim must exist in registry ---
+        if self.target.fpga_sim not in registry.fpgasimulators:
+            available = sorted(registry.fpgasimulators.keys())
+            raise ValueError(
+                f"[PROJ-11] target.platform '{self.target.fpgasimulators}' is not "
                 f"defined in any loaded registry. Available platforms: {available}"
             )
 
