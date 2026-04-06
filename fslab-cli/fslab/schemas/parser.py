@@ -24,6 +24,7 @@ Pass 2 — Project Validation:
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Tuple
 
@@ -36,10 +37,13 @@ from .project import AdvancedConfig, FSLabConfig
 # Default registry path:
 _DEFAULT_REGISTRY = Path("/opt/firesim-lab/lib/registry.yaml")
 
+_CONFIG_LOCK = threading.Lock()
+_LOADED_PATH: Optional[Path] = None
+_CACHED_DATA: Optional[Tuple[FSLabConfig, MasterRegistry]] = None
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
 def _read_yaml(path: Path) -> dict:
     """Read a YAML file and return its contents as a plain dict."""
     with path.open("r", encoding="utf-8") as fh:
@@ -63,11 +67,37 @@ def _load_registry_file(path: Path) -> RegistryFile:
 
 
 # ---------------------------------------------------------------------------
-# Public function
+# Public functions
 # ---------------------------------------------------------------------------
-
 def load_and_validate(
-    project_yaml_path: str,
+    project_yaml_path: str = "fslab.yaml"
+) -> Tuple[FSLabConfig, MasterRegistry]:
+    global _LOADED_PATH, _CACHED_DATA
+    
+    canonical_path = Path(project_yaml_path).resolve()
+
+    # 2. Use the lock to ensure only one thread validates at a time
+    with _CONFIG_LOCK:
+        # Check again inside the lock (Double-checked locking pattern)
+        if _LOADED_PATH is not None:
+            if canonical_path != _LOADED_PATH:
+                raise RuntimeError(
+                    f"Project mismatch! Locked to: {_LOADED_PATH}, "
+                    f"requested: {canonical_path}."
+                )
+            return _CACHED_DATA
+
+        # Perform the expensive I/O and validation
+        config, registry = _internal_load_and_validate(canonical_path)
+        
+        # "Lock in" the result
+        _LOADED_PATH = canonical_path
+        _CACHED_DATA = (config, registry)
+        
+        return _CACHED_DATA
+
+def _internal_load_and_validate(
+    project_yaml_path: Path
 ) -> Tuple[FSLabConfig, MasterRegistry]:
     """
     Load and validate a complete fslab project in two passes.
@@ -106,7 +136,7 @@ def load_and_validate(
     The project YAML is validated with the ``MasterRegistry`` injected as
     Pydantic context so all cross-reference checks execute (PROJ-11–PROJ-13).
     """
-    project_path = Path(project_yaml_path).resolve()
+    project_path = project_yaml_path.resolve()
 
     if not project_path.exists():
         raise FileNotFoundError(

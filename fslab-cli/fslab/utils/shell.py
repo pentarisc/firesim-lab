@@ -237,9 +237,9 @@ def run(
 
             # [CLI-09] Stream-aware real-time output
             if stream == "stderr":
-                console.print(f"[{stderr_style}]{line}[/]")
+                console.print(Text(line, style=stderr_style))
             else:
-                console.print(line)
+                console.print(Text(line))
 
             # Mirror to log file if requested
             if log_fh:

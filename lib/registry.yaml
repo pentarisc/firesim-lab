@@ -59,7 +59,7 @@ features:
     requires_bridge: []
 
 # ==============================================================================
-# registry.yaml  —  platforms section
+# platforms section
 # ==============================================================================
 # Schema reference
 # ----------------
@@ -300,7 +300,7 @@ platforms:
   #     message(STATUS "[fslab] SomeSDK version: ${SomeSDK_VERSION}")
 
 # ==============================================================================
-# registry.yaml  —  metasimulators and fpgasimulators sections
+# metasimulators and fpgasimulators sections
 # ==============================================================================
 #
 # Schema quick-reference
@@ -542,7 +542,7 @@ fpgasimulators:
       		GEN_FILE_BASENAME=$(BASE_FILE_NAME) \
       		GEN_DIR=$(GEN_DIR) \
       		OUT_DIR=$(OUT_DIR) \
-      		DRIVER="$(DRIVER_CC)"
+      		DRIVER=" $(DRIVER_CC) "
 
       .PHONY: xsim xsim-dut
       xsim: $(xsim_drv)

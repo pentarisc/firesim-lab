@@ -28,12 +28,22 @@ app.add_typer(sim_app, name="sim")
 
 _KNOWN_EMULATORS = ["verilator", "vcs", "xcelium"]
 
-# Binary name produced by CMake for each emulator backend.
-# Adjust to match your CMakeLists.txt target names.
-_EMU_BINARY: dict[str, str] = {
-    "verilator": "verilator-sim",
-    "vcs":        "vcs-sim",
-    "xcelium":    "xcelium-sim",
+_EMU_METASIM_BINARY: dict[str, str] = {
+    "verilator": "V",
+    "vcs":        "",
+    "xcelium":    "X",
+}
+
+# TODO: Fix this.
+_EMU_FPGASIM_BINARY: dict[str, str] = {
+    "f2": "F2"
+}
+
+# Binary name prefixes to driver_name for each emulator backend.
+# Adjust to match your CMakeLists.txt target name prefixes.
+_EMU_BINARY: dict[str, dict[str, str]] = {
+    "metasim": _EMU_METASIM_BINARY,
+    "fpgasim": _EMU_FPGASIM_BINARY
 }
 
 _FSLAB_YAML = Path("fslab.yaml")
@@ -60,7 +70,7 @@ def sim_callback(
     yaml_path: YamlPathOpt = _FSLAB_YAML,
 ) -> None:
     if ctx.invoked_subcommand is None:
-        cmd_metasim(sim_args, skip_rtl, skip_driver, force_gen, yaml_path)
+        cmd_metasim(sim_args, skip_rtl, skip_driver, force_gen, yaml_path, BuildType.METASIM)
 
 
 @sim_app.command("metasim")
@@ -71,7 +81,7 @@ def sim_metasim(
     force_gen: ForceGenOpt = False,
     yaml_path: YamlPathOpt = _FSLAB_YAML,
 ) -> None:
-    cmd_metasim(sim_args, skip_rtl, skip_driver, force_gen, yaml_path)
+    cmd_metasim(sim_args, skip_rtl, skip_driver, force_gen, yaml_path, BuildType.METASIM)
 
 def cmd_metasim(
     sim_args: Optional[str],
@@ -79,6 +89,7 @@ def cmd_metasim(
     skip_driver: bool,
     force_gen: bool,
     yaml_path: Path,
+    build_type: BuildType
 ) -> None:
     """
     [CLI-14] Run a cycle-accurate software simulation.
@@ -100,12 +111,13 @@ def cmd_metasim(
         force_gen=force_gen,
         skip_rtl=skip_rtl,
         skip_driver=skip_driver,
+        build_type=build_type
     )
 
     # ------------------------------------------------------------------
     # Locate the simulation binary
     # ------------------------------------------------------------------
-    binary = _locate_sim_binary(emu=str(BuildType.METASIM), project_root=project_root)
+    binary = _locate_sim_binary(emu=build_type.value, yaml_path=yaml_path)
     info(f"Simulation binary: [path]{binary.relative_to(project_root)}[/]")
 
     # ------------------------------------------------------------------
@@ -143,13 +155,13 @@ def sim_fpgasim(
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _ensure_compiled(
     *,
     yaml_path: Path,
     force_gen: bool,
     skip_rtl: bool,
     skip_driver: bool,
+    build_type: BuildType
 ) -> None:
     """
     [CLI-14] Programmatically invoke the build logic.
@@ -191,14 +203,14 @@ def _ensure_compiled(
 
     # --- C++ driver ---
     if not skip_driver:
-        _run_cmake_make(config=config, project_root=project_root, jobs=4, sm=sm)
+        _run_cmake_make(config=config, project_root=project_root, jobs=4, sm=sm, build_type=build_type)
 
     # Persist updated compile state
     import time
     sm.save(config_hash=config_hash, extra={"last_sim_compile": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
 
 
-def _locate_sim_binary(*, emu: str, project_root: Path) -> Path:
+def _locate_sim_binary(*, emu: str, yaml_path: Path) -> Path:
     """
     Resolve the path to the compiled simulation binary.
 
@@ -207,7 +219,17 @@ def _locate_sim_binary(*, emu: str, project_root: Path) -> Path:
       2. ``build/<emu_binary>``          – flat CMake output layout
       3. ``build/sim``                   – generic fallback target name
     """
-    binary_name = _EMU_BINARY.get(emu, f"{emu}-sim")
+    from fslab.schemas.parser import load_and_validate
+
+    try:
+        config, registry = load_and_validate(str(yaml_path))
+    except Exception as exc:  # noqa: BLE001
+        error(f"Configuration error:\n  {exc}")
+        raise typer.Exit(code=1) from exc
+
+    project_root = Path(config.project.project_dir).resolve()
+    binary_name = f"{_EMU_BINARY.get(emu).get(config.host.emulator, '')}{config.host.driver_name}"
+
     candidates = [
         project_root / "build" / emu / binary_name,
         project_root / "build" / binary_name,
