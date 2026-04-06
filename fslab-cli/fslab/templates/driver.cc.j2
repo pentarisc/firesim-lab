@@ -50,17 +50,23 @@ public:
   }
 
   int simulation_run() override {
-    peek_poke.poke("enable", 1, false);
+    int exit_code = 0;
+    while (!terminated && !finished_scheduled_tasks()) {
+      // step forward maximum amount of allowable cycles
+      peek_poke.step(get_largest_stepsize(), false);
+      // while the simulation is running N cycles, run all simulation bridges
+      while (!peek_poke.is_done() && !terminated) {
 
-    // Give the hardware 50 million cycles to boot in the background.
-    // peek_poke.step(50000000, false);
-
-    while (!peek_poke.is_done() && !terminated) {
-
-      // 1. Tick all standard bridges.
-      for (auto *bridge : registry.get_all_bridges()) {
-        bridge->tick();
-      }
+        // 1. Tick all standard bridges.
+        for (auto *bridge : registry.get_all_bridges()) {
+          bridge->tick();
+          // if a bridge has finished then fully exit
+          if (bridge->terminate()) {
+            exit_code = bridge->exit_code();
+            terminated = true;
+            break;
+          }
+        }
 
       // 2. Per-bridge-type custom tick logic (generated from registry cpp_template).
 {% for bridge in used_bridges %}
@@ -70,8 +76,9 @@ public:
 {%- endset -%}
 {{ content | indent(6, true) }}
 {% endfor %}
+      }
     }
-    return 0;
+    return exit_code;
   }
 
   bool simulation_timed_out() override { return false; }
