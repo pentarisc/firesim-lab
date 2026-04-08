@@ -175,18 +175,48 @@ def _run_generate(
         # Already handled inside check_and_maybe_skip_generation
         return False, current_hash, sm
 
-    _render_templates(config=config, registry=registry, project_root=yaml_path.parent)
+    has_changes, is_rendered, changes_dict = _render_templates(
+        config=config,
+        registry=registry,
+        project_root=yaml_path.parent,
+        sm=sm,
+        force=force
+    )
+
+    if has_changes and not is_rendered and not force:
+        file_details = []
+        for filepath, info_dict in changes_dict.items():
+            status = info_dict["status"]
+            
+            # Color-code the status text (e.g., yellow for modified, red for missing)
+            status_color = "yellow" if status == "modified" else "red"
+            
+            # Formats like: "  • [yellow]modified[/]: [path]/full/path/to/build.sbt[/]"
+            file_details.append(f"  • [{status_color}]{status}[/]: [path]{filepath}[/]")
+            
+        files_str = "\n".join(file_details)
+
+        # Output the formatted error and exit
+        error(
+            "Detected changes to bootstrapped files.\n"
+            "Refusing to regenerate to prevent accidental data loss:\n\n"
+            f"{files_str}\n\n"
+            "Please review these changes or run with [bold]--force[/] to overwrite.\n"
+        )
+        raise typer.Exit(code=1)
 
     # ------------------------------------------------------------------
     # Step 5 – Persist the new hash so subsequent runs can skip generation
     # ------------------------------------------------------------------
-    sm.save(
-        config_hash=current_hash,
-        extra={
-            "generated_for": str(yaml_path),
-            "project_name": getattr(config, "name", "unknown"),
-        },
-    )
+    if is_rendered:
+        sm.save(
+            config_hash=current_hash,
+            generated_files=changes_dict,
+            extra={
+                "generated_for": str(yaml_path),
+                "project_name": getattr(config.project, "name", "unknown"),
+            },
+        )
 
     success("Templates rendered successfully.")
     return True, current_hash, sm
@@ -597,7 +627,9 @@ def _run_cmake_make(
 # ===========================================================================
 
 
-def _render_templates(*, config: object, registry: object, project_root: Path) -> None:
+def _render_templates(
+        *, config: object, registry: object, project_root: Path, sm: StateManager, force: bool
+)-> [bool, bool, dict[str, dict[str, str]]]:
     """
     [CLI-03, CLI-12] Render all Jinja2 templates using the validated Pydantic
     models.
@@ -626,7 +658,7 @@ def _render_templates(*, config: object, registry: object, project_root: Path) -
         )
     except Exception as exc:  # noqa: BLE001
         warning(f"Could not load template environment: {exc}. Skipping rendering.")
-        return
+        return [False, False, None]
 
     # Context built from Pydantic model fields
     ctx = _build_template_context(config=config, registry=registry)
@@ -647,6 +679,12 @@ def _render_templates(*, config: object, registry: object, project_root: Path) -
         "user_rtl_readme.md.j2": project_root / "user_rtl" / "README.md"
     }
 
+    has_changes, changes_dict = sm.check_user_modifications(render_plan)
+
+    if(has_changes and not force):
+        #Rendered file(s) modified by user, and force is false, so wont be generated.
+        return [has_changes, False, changes_dict]
+
     for template_name, output_path in render_plan.items():
         try:
             tmpl = env.get_template(template_name)
@@ -657,6 +695,9 @@ def _render_templates(*, config: object, registry: object, project_root: Path) -
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(tmpl.render(**ctx), encoding="utf-8")
         console.print(f"  [dim]wrote[/] [path]{output_path.relative_to(project_root)}[/]")
+    
+    generated_file_state = sm.compute_generated_files_state(render_plan)
+    return [True, True, generated_file_state]
 
 
 # ===========================================================================

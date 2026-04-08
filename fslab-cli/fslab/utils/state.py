@@ -21,8 +21,16 @@ Public API
         True  → hash changed   (or state file absent)  → must regenerate
         False → hash unchanged → safe to skip
 
-    StateManager.save(hash, extra_meta)
-        Persist the hash (and optional metadata) to ``.fslab/state.json``.
+    StateManager.check_user_modifications(render_plan) -> tuple[bool, dict]
+        Checks previously generated files to see if the user modified or 
+        deleted them before a forced overwrite occurs.
+
+    StateManager.compute_generated_files_state(render_plan) -> dict
+        Computes hashes for freshly rendered files to be stored in state.
+
+    StateManager.save(config_hash, generated_files, extra_meta)
+        Persist the config hash, generated file hashes, and metadata to 
+        ``.fslab/state.json``.
 
     StateManager.load() -> dict
         Load the raw state dict; returns {} if the file doesn't exist yet.
@@ -183,17 +191,100 @@ class StateManager:
         return stored_hash != current_hash
 
     # ------------------------------------------------------------------
+    # User Modification Checking
+    # ------------------------------------------------------------------
+
+    def check_user_modifications(
+        self, render_plan: dict[str, Path]
+    ) -> tuple[bool, dict[str, dict[str, str]]]:
+        """
+        Check if the user has modified or deleted any previously bootstrapped
+        files before rendering blindly overwrites them.
+
+        Parameters
+        ----------
+        render_plan:
+            Dictionary mapping template keys (e.g., "build.sbt.j2") to their 
+            target Path objects.
+
+        Returns
+        -------
+        tuple[bool, dict[str, dict[str, str]]]
+            - bool: True if at least one tracked file was modified or deleted.
+            - dict: Details of changed files, keyed by the full string path.
+              Example: { 
+                  "/path/to/build.sbt": {"status": "modified", "template": "build.sbt.j2"},
+                  "/path/to/deleted.cc": {"status": "missing", "template": "driver.cc.j2"} 
+              }
+        """
+        state = self.load()
+        stored_files = state.get("generated_files", {})
+
+        has_changes = False
+        changes: dict[str, dict[str, str]] = {}
+
+        for template_key, path in render_plan.items():
+            # If the template key isn't in state, it's a new file entirely.
+            # We don't consider it "modified" since we never generated it before.
+            if template_key not in stored_files:
+                continue
+
+            stored_data = stored_files[template_key]
+            stored_hash = stored_data.get("hash")
+            
+            resolved_path = path.resolve()
+            path_str = str(resolved_path)
+
+            # 1. Check if the file was deleted by the user
+            if not resolved_path.exists():
+                has_changes = True
+                changes[path_str] = {
+                    "status": "missing",
+                    "template": template_key
+                }
+                continue
+
+            # 2. Check if the file's binary content was modified
+            current_hash = hashlib.sha256(resolved_path.read_bytes()).hexdigest()
+            if current_hash != stored_hash:
+                has_changes = True
+                changes[path_str] = {
+                    "status": "modified",
+                    "template": template_key
+                }
+
+        return has_changes, changes
+
+    def compute_generated_files_state(
+        self, render_plan: dict[str, Path]
+    ) -> dict[str, dict[str, str]]:
+        """
+        Computes the file hashes for a render plan to save into state.
+        Call this *after* successfully generating the files.
+        """
+        files_state = {}
+        for template_key, path in render_plan.items():
+            resolved = path.resolve()
+            if resolved.exists():
+                files_state[template_key] = {
+                    "hash": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+                    "path": str(resolved)
+                }
+        return files_state
+
+    # ------------------------------------------------------------------
     # Persist / load state
     # ------------------------------------------------------------------
 
     def save(
         self,
         config_hash: str,
+        generated_files: Optional[dict[str, dict[str, str]]] = None,
         extra: Optional[dict[str, Any]] = None,
     ) -> None:
         """
-        [CLI-06] Persist *config_hash* (and any *extra* metadata) to
-        ``.fslab/state.json``.
+        [CLI-06] Persist *config_hash*, *generated_files*, and any *extra* 
+        metadata to ``.fslab/state.json``.
 
         The file is written atomically: we write to a ``*.tmp`` file first
         then rename it so a crash mid-write cannot corrupt the state.
@@ -202,6 +293,9 @@ class StateManager:
         ----------
         config_hash:
             The SHA256 computed by ``compute_config_hash``.
+        generated_files:
+            Optional dictionary returned by ``compute_generated_files_state`` 
+            mapping template keys to their paths and hashes.
         extra:
             Optional dict merged into the state payload (e.g., last build
             time, the sbt version used, etc.).
@@ -212,6 +306,7 @@ class StateManager:
             "config_hash": config_hash,
             "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "fslab_version": _fslab_version(),
+            "generated_files": generated_files or {},
         }
         if extra:
             payload.update(extra)
@@ -274,6 +369,9 @@ class StateManager:
         table.add_row("Config hash", state.get("config_hash", "—")[:16] + "…")
         table.add_row("Saved at", state.get("saved_at", "—"))
         table.add_row("fslab version", state.get("fslab_version", "—"))
+        
+        gen_files = state.get("generated_files", {})
+        table.add_row("Tracked files", str(len(gen_files)))
 
         console.print(table)
 
