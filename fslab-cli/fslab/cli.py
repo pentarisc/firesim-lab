@@ -8,7 +8,8 @@ fslab/cli.py
 
 Usage (after `pip install -e .`):
     fslab --help
-    fslab init --name my-design --platform f2
+    fslab --new my-design
+    fslab init --top_module my_top --top_module-file top.v --platform f2
     fslab generate --force
     fslab build --skip-driver
     fslab sim --emu verilator
@@ -59,9 +60,11 @@ app = typer.Typer(
 # ---------------------------------------------------------------------------
 
 # Init scaffolding
-from fslab.commands.init import app as init_app  # noqa: E402
+from fslab.commands.init import new_app
+app.add_typer(new_app)
 
-app.add_typer(init_app, name="init", help="Start a new fslab project.")
+from fslab.commands.init import init_app
+app.add_typer(init_app)
 
 # Generate & compile (share one router – both deal with code-gen / build)
 from fslab.commands.build import app as build_top_app  # noqa: E402

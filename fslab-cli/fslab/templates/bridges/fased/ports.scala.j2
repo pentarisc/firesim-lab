@@ -1,0 +1,53 @@
+// ── AXI4 write address ────────────────────────────────────────────────────
+  val {{ instance.port_map.m_aw_valid }} = Output(Bool())
+  val {{ instance.port_map.m_aw_id }} = Output(UInt({{ instance.params.idBits }}.W))
+  val {{ instance.port_map.m_aw_addr }} = Output(UInt({{ instance.params.addrBits }}.W))
+  val {{ instance.port_map.m_aw_len }} = Output(UInt(8.W))
+  val {{ instance.port_map.m_aw_size }} = Output(UInt(3.W))
+  val {{ instance.port_map.m_aw_burst }} = Output(UInt(2.W))
+  val {{ instance.port_map.m_aw_lock }} = Output(Bool())
+  val {{ instance.port_map.m_aw_cache }} = Output(UInt(4.W))
+  val {{ instance.port_map.m_aw_prot }} = Output(UInt(3.W))
+  val {{ instance.port_map.m_aw_qos }} = Output(UInt(4.W))
+  val {{ instance.port_map.m_aw_user }} = Output(UInt({{ instance.params.userBits }}.W))
+  val {{ instance.port_map.m_aw_region }} = Output(UInt(4.W))
+  val {{ instance.port_map.s_aw_ready }} = Input(Bool())
+
+// ── AXI4 write data ───────────────────────────────────────────────────────
+  val {{ instance.port_map.m_w_valid }} = Output(Bool())
+  val {{ instance.port_map.m_w_data }} = Output(UInt({{ instance.params.dataBits }}.W))
+  val {{ instance.port_map.m_w_strb }} = Output(UInt({{ instance.params.dataBits // 8 }}.W))
+  val {{ instance.port_map.m_w_last }} = Output(Bool())
+  val {{ instance.port_map.m_w_user }} = Output(UInt({{ instance.params.userBits }}.W))
+  val {{ instance.port_map.s_w_ready }} = Input(Bool())
+
+// ── AXI4 write response ───────────────────────────────────────────────────
+  val {{ instance.port_map.s_b_valid }} = Input(Input)
+  val {{ instance.port_map.s_b_id }} = Input(UInt({{ instance.params.idBits }}.W))
+  val {{ instance.port_map.s_b_resp }} = Input(UInt(2.W))
+  val {{ instance.port_map.s_b_user }} = Input(UInt({{ instance.params.userBits }}.W))
+  val {{ instance.port_map.m_b_ready }} = Ouput(Bool())
+
+// ── AXI4 read address ─────────────────────────────────────────────────────
+  val {{ instance.port_map.m_ar_valid }} = Output(Bool())
+  val {{ instance.port_map.m_ar_id }} = Output(UInt({{ instance.params.idBits }}.W))
+  val {{ instance.port_map.m_ar_addr }} = Output(UInt({{ instance.params.addrBits }}.W))
+  val {{ instance.port_map.m_ar_len }} = Output(UInt(8.W))
+  val {{ instance.port_map.m_ar_size }} = Output(UInt(3.W))
+  val {{ instance.port_map.m_ar_burst }} = Output(UInt(2.W))
+  val {{ instance.port_map.m_ar_lock }} = Output(Bool())
+  val {{ instance.port_map.m_ar_cache }} = Output(UInt(4.W))
+  val {{ instance.port_map.m_ar_prot }} = Output(UInt(3.W))
+  val {{ instance.port_map.m_ar_qos }} = Output(UInt(4.W))
+  val {{ instance.port_map.m_ar_user }} = Output(UInt({{ instance.params.userBits }}.W))
+  val {{ instance.port_map.m_ar_region }} = Output(UInt(4.W))
+  val {{ instance.port_map.m_ar_ready }} = Input(Bool())
+
+// ── AXI4 read data ────────────────────────────────────────────────────────
+  val {{ instance.port_map.s_r_valid }} = Input(Bool())
+  val {{ instance.port_map.s_r_id }} = Input(UInt({{ instance.params.idBits }}.W))
+  val {{ instance.port_map.s_r_data }} = Input(UInt({{ instance.params.dataBits }}.W))
+  val {{ instance.port_map.s_r_resp }} = Input(UInt(2.W))
+  val {{ instance.port_map.s_r_last }} = Input(Bool())
+  val {{ instance.port_map.s_r_user }} = Input(UInt({{ instance.params.userBits }}.W))
+  val {{ instance.port_map.m_r_ready }} = Ouput(Bool())

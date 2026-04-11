@@ -17,6 +17,7 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
 from rich.theme import Theme
+from rich.markup import escape
 
 # ---------------------------------------------------------------------------
 # [CLI-02] Shared console with an opinionated colour theme.
@@ -94,3 +95,6 @@ def kv_table(rows: dict[str, str], title: str = "") -> None:
     if title:
         console.print(f"[section]{title}[/]")
     console.print(table)
+
+def regex_msg(regex):
+    return f"Must match {escape(regex.pattern)}"

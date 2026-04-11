@@ -59,12 +59,12 @@ class {{ fslab_top }}(implicit p: Parameters) extends RawModule {
 
   withClockAndReset(clock, reset) {
     val dut = Module(new {{ top_module }})
-{% if clock_port %}
+{%- if clock_port %}
     dut.io.{{ clock_port }} := clock
-{% endif %}
-{% if reset_port %}
+{%- endif %}
+{%- if reset_port %}
     dut.io.{{ reset_port }} := reset.asBool
-{% endif %}
+{%- endif %}
 
     // ── Per-Bridge Wiring (one snippet per bridge instance) ────────────────
 {% for instance in instances %}

@@ -8,7 +8,7 @@ Validation requirements
 -----------------------
   REG-01  ID format regex
   REG-02  All required bridge fields present
-  REG-03  Optional bridge fields (runtime_plusargs, module_macro_prefix,
+  REG-03  Optional bridge fields (runtime_plusargs,
           scala_templates.top_imports)
   REG-04  Platform required fields
   REG-05  Feature required fields
@@ -42,37 +42,8 @@ import re
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-
-# ---------------------------------------------------------------------------
-# Compiled regex patterns
-# ---------------------------------------------------------------------------
-
-# [REG-01] IDs: alphanumerics, underscores, hyphens.
-_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-
-# [REG-08] Verilog port names.
-_VERILOG_PORT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_$]*$")
-
-# [REG-09 / REG-09m] POSIX env var names: uppercase, digits, underscore.
-_ENV_VAR_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
-
-# [REG-10 / REG-10m] Library name characters.
-_LIB_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-\.\+]+$")
-
-# [REG-11] CMake-style path refs: absolute, ${VAR}, or $ENV{VAR}.
-_CMAKE_PATH_RE = re.compile(r"^(/|\$\{|\$ENV\{)")
-
-# [REG-11m] Makefile-style path refs: absolute, $(VAR), or ${VAR}.
-# Note: $(VAR) is Make env/variable expansion. $ENV{VAR} is cmake-only and
-# would appear literally in the Makefile (not expanded by Make) — reject it.
-_MAKEFILE_PATH_RE = re.compile(r"^(/|\$\(|\$\{)")
-
-# [REG-13 / REG-13m / REG-14] Jinja2 expression/statement/comment markers.
-_JINJA2_EXPR_RE = re.compile(r"\{\{|\}\}|\{%-?|\{#")
-
-# [REG-09x] Extract $(VAR) references from Makefile-style path strings.
-_MAKEFILE_VAR_RE = re.compile(r"\$\(([^)]+)\)")
-
+import fslab.utils.regexes as rx
+from fslab.utils.display import regex_msg
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -80,17 +51,17 @@ _MAKEFILE_VAR_RE = re.compile(r"\$\(([^)]+)\)")
 
 def _validate_alpha_num(value: str, key: str, entity: str) -> str:
     """[REG-01] Validate that a value matches the allowed character set."""
-    if not _ID_RE.match(value):
+    if not rx.ID_RE.match(value):
         raise ValueError(
-            f"[REG-01] {entity} {key} '{value}' is invalid. "
-            r"Must match ^[a-zA-Z0-9_-]+$"
+            f"[REG-01] {entity} {key} '{value}' is invalid. " +
+            regex_msg(rx.ID_RE)
         )
     return value
 
 
 def _validate_no_jinja2(value: str, field_name: str, code: str) -> str:
     """[REG-13/REG-14] Reject Jinja2 markers in verbatim-emit fields."""
-    if value and _JINJA2_EXPR_RE.search(value):
+    if value and rx.JINJA2_EXPR_RE.search(value):
         raise ValueError(
             f"[{code}] {field_name} contains an unresolved Jinja2 marker "
             "('{{', '}}', '{%', or '{#'). "
@@ -124,7 +95,7 @@ def _validate_lib_names(values: list[str], field_name: str, code: str) -> list[s
                 f"[{code}] {field_name} entry '{lib}' must not start with '-l'. "
                 f"Use '{lib[2:]}' instead."
             )
-        if not _LIB_NAME_RE.match(lib):
+        if not rx.LIB_NAME_RE.match(lib):
             raise ValueError(
                 f"[{code}] {field_name} entry '{lib}' contains invalid characters. "
                 r"Allowed: alphanumerics, hyphens, underscores, dots, '+'."
@@ -217,7 +188,7 @@ class SimTarget(BaseModel):
 class BridgeEntry(BaseModel):
     """
     [REG-02] All fields required except those in [REG-03].
-    [REG-03] runtime_plusargs, module_macro_prefix, top_imports are optional.
+    [REG-03] runtime_plusargs, top_imports are optional.
     """
 
     id: str
@@ -231,7 +202,6 @@ class BridgeEntry(BaseModel):
     cpp_template: str
     scala_templates: ScalaTemplates
 
-    module_macro_prefix: Optional[str] = None
     runtime_plusargs: Optional[list[RuntimePlusarg]] = None
 
     @field_validator("id", mode="before")
@@ -250,7 +220,7 @@ class BridgeEntry(BaseModel):
         all_ports = list(self.input_ports) + list(self.output_ports)
         seen: set[str] = set()
         for port in all_ports:
-            if not _VERILOG_PORT_RE.match(port):
+            if not rx.VERILOG_PORT_RE.match(port):
                 raise ValueError(
                     f"Bridge '{self.id}': port '{port}' is not a valid Verilog identifier."
                 )
@@ -297,11 +267,10 @@ class PlatformEntry(BaseModel):
     def validate_env_var_names(cls, v: list[str]) -> list[str]:
         """[REG-09] POSIX env var names only."""
         for name in v:
-            if not _ENV_VAR_RE.match(name):
+            if not rx.ENV_VAR_RE.match(name):
                 raise ValueError(
                     f"[REG-09] required_env_vars entry '{name}' is not a valid "
-                    "POSIX env var name. "
-                    r"Must match ^[A-Z_][A-Z0-9_]*$ "
+                    f"POSIX env var name. {regex_msg(rx.ENV_VAR_RE)}"
                     f"Did you mean '{name.upper().replace('-', '_')}'?"
                 )
         return v
@@ -317,7 +286,7 @@ class PlatformEntry(BaseModel):
     def validate_cmake_paths(cls, v: list[str], info) -> list[str]:
         """[REG-11] CMake-style path references."""
         return _validate_paths(
-            v, info.field_name, "REG-11", _CMAKE_PATH_RE,
+            v, info.field_name, "REG-11", rx.CMAKE_PATH_RE,
             "Each entry must start with '/' (absolute), '${' (cmake var), "
             "or '$ENV{' (cmake env var)."
         )
@@ -444,11 +413,11 @@ class MetaSimEntry(BaseModel):
     def validate_env_var_names(cls, v: list[str]) -> list[str]:
         """[REG-09m] POSIX env var names only."""
         for name in v:
-            if not _ENV_VAR_RE.match(name):
+            if not rx.ENV_VAR_RE.match(name):
                 raise ValueError(
                     f"[REG-09m] required_env_vars entry '{name}' is not a valid "
-                    "POSIX env var name. "
-                    r"Must match ^[A-Z_][A-Z0-9_]*$"
+                    "POSIX env var name. " +
+                    regex_msg(rx.ENV_VAR_RE)
                 )
         return v
 
@@ -463,7 +432,7 @@ class MetaSimEntry(BaseModel):
     def validate_makefile_paths(cls, v: list[str], info) -> list[str]:
         """[REG-11m] Makefile-style path refs: $(VAR), ${VAR}, or /."""
         return _validate_paths(
-            v, info.field_name, "REG-11m", _MAKEFILE_PATH_RE,
+            v, info.field_name, "REG-11m", rx.MAKEFILE_PATH_RE,
             "Each entry must start with '/' (absolute), '$(' (Make variable), "
             "or '${' (Make variable brace form). "
             "Do not use cmake's '$ENV{VAR}' syntax here — it is not expanded by Make."
@@ -519,7 +488,7 @@ class MetaSimEntry(BaseModel):
         all_paths = self.extra_include_dirs + self.extra_link_dirs
         referenced: set[str] = set()
         for path in all_paths:
-            for match in _MAKEFILE_VAR_RE.finditer(path):
+            for match in rx.MAKEFILE_VAR_RE.finditer(path):
                 referenced.add(match.group(1))
 
         undeclared = referenced - set(self.required_env_vars)
@@ -595,7 +564,7 @@ class FpgaSimEntry(BaseModel):
     def validate_env_var_names(cls, v: list[str]) -> list[str]:
         """[REG-09m] POSIX env var names only."""
         for name in v:
-            if not _ENV_VAR_RE.match(name):
+            if not rx.ENV_VAR_RE.match(name):
                 raise ValueError(
                     f"[REG-09m] required_env_vars entry '{name}' is not a valid "
                     "POSIX env var name."
@@ -613,7 +582,7 @@ class FpgaSimEntry(BaseModel):
     def validate_makefile_paths(cls, v: list[str], info) -> list[str]:
         """[REG-11m] Makefile-style path refs."""
         return _validate_paths(
-            v, info.field_name, "REG-11m", _MAKEFILE_PATH_RE,
+            v, info.field_name, "REG-11m", rx.MAKEFILE_PATH_RE,
             "Each entry must start with '/' (absolute), '$(' or '${'."
         )
 
@@ -651,7 +620,7 @@ class FpgaSimEntry(BaseModel):
         all_paths = self.extra_include_dirs + self.extra_link_dirs
         referenced: set[str] = set()
         for path in all_paths:
-            for match in _MAKEFILE_VAR_RE.finditer(path):
+            for match in rx.MAKEFILE_VAR_RE.finditer(path):
                 referenced.add(match.group(1))
 
         undeclared = referenced - set(self.required_env_vars)

@@ -33,32 +33,13 @@ from typing import Any, Optional
 from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator, model_validator, computed_field
+import fslab.utils.regexes as rx
+from fslab.utils.display import regex_msg
 
-# ---------------------------------------------------------------------------
-# Compiled regex patterns
-# ---------------------------------------------------------------------------
-
-# [PROJ-01]
-_PROJECT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-
-# [PROJ-02] Scala/Java-style qualified identifiers (dots allowed for packages)
-_MODULE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
-
-# [PROJ-05] Blackbox port definition: "in|out <width_token>"
-#   width_token may be: clock, reset, a decimal number, or a Verilog identifier
-_BB_PORT_RE = re.compile(
-    r"^(in|out)\s+(clock|reset|\d+|[a-zA-Z_][a-zA-Z0-9_]*)$"
-)
-
-# [PROJ-06]
-_BRIDGE_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 # Allowed sets
 _DESIGN_TYPES = {"chisel", "blackbox"}
 _EMULATOR_TYPES = {"verilator", "vcs", "xcelium"}
-
-# [PROJ-15]
-VERILOG_MODULE_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_$]*$')
 
 # ---------------------------------------------------------------------------
 # project: block
@@ -83,10 +64,10 @@ class ProjectConfig(BaseModel):
     @classmethod
     def validate_name(cls, v: str) -> str:
         """[PROJ-01] project.name must match ^[a-zA-Z0-9_-]+$"""
-        if not _PROJECT_NAME_RE.match(v):
+        if not rx.PROJECT_NAME_RE.match(v):
             raise ValueError(
-                f"[PROJ-01] project.name '{v}' is invalid. "
-                r"Must match ^[a-zA-Z0-9_-]+$"
+                f"[PROJ-01] project.name '{v}' is invalid. " +
+                regex_msg(rx.PROJECT_NAME_RE)
             )
         return v
 
@@ -94,10 +75,10 @@ class ProjectConfig(BaseModel):
     @classmethod
     def validate_module_identifiers(cls, v: str, info: Any) -> str:
         """[PROJ-02] package_name, config_class must be valid identifiers."""
-        if not _MODULE_RE.match(v):
+        if not rx.MODULE_RE.match(v):
             raise ValueError(
-                f"[PROJ-02] project.{info.field_name} '{v}' is invalid. "
-                r"Must match ^[a-zA-Z_][a-zA-Z0-9_.]*$"
+                f"[PROJ-02] project.{info.field_name} '{v}' is invalid. " +
+                regex_msg(rx.MODULE_RE)
             )
         return v
 
@@ -137,10 +118,10 @@ class DesignConfig(BaseModel):
         if v is None:
             return v
         for port_name, port_def in v.items():
-            if not _BB_PORT_RE.match(port_def):
+            if not rx.BB_PORT_RE.match(port_def):
                 raise ValueError(
-                    f"[PROJ-05] blackbox_ports['{port_name}'] = '{port_def}' is invalid. "
-                    r"Must match ^(in|out)\s+(clock|reset|\d+|[a-zA-Z_][a-zA-Z0-9_]*)$"
+                    f"[PROJ-05] blackbox_ports['{port_name}'] = '{port_def}' is invalid. " +
+                    regex_msg(rx.BB_PORT_RE)
                 )
         return v
 
@@ -148,10 +129,10 @@ class DesignConfig(BaseModel):
     @classmethod
     def validate_top_module_name(cls, v: str, info: Any) -> str:
         """[PROJ-15] top_module be valid identifier."""
-        if not VERILOG_MODULE_RE.match(v):
+        if not rx.VERILOG_MODULE_RE.match(v):
             raise ValueError(
-                f"[PROJ-15] design.{info.field_name} '{v}' is invalid. "
-                r"Must match ^[a-zA-Z_][a-zA-Z0-9_$]*$"
+                f"[PROJ-15] design.{info.field_name} '{v}' is invalid. " +
+                regex_msg(rx.VERILOG_MODULE_RE)
             )
         return v
 
@@ -171,19 +152,39 @@ class DesignConfig(BaseModel):
                     "at least one entry when design.type is 'blackbox'."
                 )
 
+            clock_found = False
+            reset_found = False
+
             # [PROJ-09]
             for port_name, port_def in self.blackbox_ports.items():
                 # port_def is already validated by [PROJ-05], so split is safe
                 _, width_token = port_def.split(maxsplit=1)
                 # If the width token is not a numeric literal, 'clock', or 'reset',
                 # it must be a parameter reference.
-                is_literal = width_token.isdigit() or width_token in ("clock", "reset")
+                is_literal = width_token.isdigit() or width_token in ("clock", "reset", "logic", "reg")
                 if not is_literal and width_token not in self.parameters:
                     raise ValueError(
                         f"[PROJ-09] blackbox_ports['{port_name}'] references "
                         f"parameter '{width_token}' which is not defined in "
                         "design.parameters."
                     )
+                if port_def == "in clock":
+                    clock_found = True
+
+                if port_def == "in reset":
+                    reset_found = True
+
+            if not clock_found:
+                raise ValueError(
+                    f"design.blackbox_ports must contain a clock port "
+                     "defined as 'in clock'."
+                )
+
+            if not reset_found:
+                raise ValueError(
+                    f"design.blackbox_ports must contain a reset port "
+                     "defined as 'in reset'."
+                )
 
         elif self.type == "chisel":
             # [PROJ-08]
@@ -251,10 +252,10 @@ class BridgeConfig(BaseModel):
     @classmethod
     def validate_name(cls, v: str) -> str:
         """[PROJ-06] bridge.name must match ^[a-zA-Z_][a-zA-Z0-9_]*$"""
-        if not _BRIDGE_NAME_RE.match(v):
+        if not rx.BRIDGE_NAME_RE.match(v):
             raise ValueError(
-                f"[PROJ-06] bridge.name '{v}' is invalid. "
-                r"Must match ^[a-zA-Z_][a-zA-Z0-9_]*$"
+                f"[PROJ-06] bridge.name '{v}' is invalid. " +
+                regex_msg(rx.BRIDGE_NAME_RE)
             )
         return v
 

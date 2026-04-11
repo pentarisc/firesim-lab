@@ -1,0 +1,69 @@
+    val {{ instance.name }}_nastiKey = NastiParameters(dataBits = {{ instance.params.dataBits }},
+                                   addrBits = {{ instance.params.addrBits }},
+                                   idBits = {{ instance.params.idBits }},
+                                   nastiXUserBits = {{ instance.params.userBits }})
+    val {{ instance.name }}_nastiIo  = Wire(new NastiIO({{ instance.name }}_nastiKey))
+    val {{ instance.name }}_nasti    = Wire(new NastiIO({{ instance.name }}_nastiKey))
+    
+    // ── AXI4 write address ────────────────────────────────────────────────────
+    {{ instance.name }}_nasti.aw.valid       := dut.io.{{ instance.port_map.m_aw_valid }}
+    {{ instance.name }}_nasti.aw.bits.id     := dut.io.{{ instance.port_map.m_aw_id }}
+    {{ instance.name }}_nasti.aw.bits.addr   := dut.io.{{ instance.port_map.m_aw_addr }}
+    {{ instance.name }}_nasti.aw.bits.len    := dut.io.{{ instance.port_map.m_aw_len }}
+    {{ instance.name }}_nasti.aw.bits.size   := dut.io.{{ instance.port_map.m_aw_size }}
+    {{ instance.name }}_nasti.aw.bits.burst  := dut.io.{{ instance.port_map.m_aw_burst }}
+    {{ instance.name }}_nasti.aw.bits.lock   := dut.io.{{ instance.port_map.m_aw_lock }}
+    {{ instance.name }}_nasti.aw.bits.cache  := dut.io.{{ instance.port_map.m_aw_cache }}
+    {{ instance.name }}_nasti.aw.bits.prot   := dut.io.{{ instance.port_map.m_aw_prot }}
+    {{ instance.name }}_nasti.aw.bits.qos    := dut.io.{{ instance.port_map.m_aw_qos }}
+    {{ instance.name }}_nasti.aw.bits.user   := DontCare
+    {{ instance.name }}_nasti.aw.bits.region := 0.U
+    dut.io.{{ instance.port_map.s_aw_ready  }} := {{ instance.name }}_nasti.aw.ready
+
+    // ── AXI4 write data ───────────────────────────────────────────────────────
+    {{ instance.name }}_nasti.w.valid     := dut.io.{{ instance.port_map.m_w_valid }}
+    {{ instance.name }}_nasti.w.bits.data := dut.io.{{ instance.port_map.m_w_data }}
+    {{ instance.name }}_nasti.w.bits.strb := dut.io.{{ instance.port_map.m_w_strb }}
+    {{ instance.name }}_nasti.w.bits.last := dut.io.{{ instance.port_map.m_w_last }}
+    {{ instance.name }}_nasti.w.bits.user := DontCare
+    {{ instance.name }}_nasti.w.bits.id   := DontCare // We only use AXI4, not AXI3
+    dut.io.{{ instance.port_map.s_w_ready }} := {{ instance.name }}_nasti.w.ready
+
+    // ── AXI4 write response ───────────────────────────────────────────────────
+    dut.io.{{ instance.port_map.s_b_valid }}     := {{ instance.name }}_nasti.b.valid
+    dut.io.{{ instance.port_map.s_b_id }}   := {{ instance.name }}_nasti.b.bits.id
+    dut.io.{{ instance.port_map.s_b_resp }} := {{ instance.name }}_nasti.b.bits.resp
+    dut.io.{{ instance.port_map.s_b_user }} := DontCare
+    {{ instance.name }}_nasti.b.ready    := dut.io.{{ instance.port_map.m_b_ready }}
+
+    // ── AXI4 read address ─────────────────────────────────────────────────────
+    {{ instance.name }}_nasti.ar.valid       := dut.io.{{ instance.port_map.m_ar_valid }}
+    {{ instance.name }}_nasti.ar.bits.id     := dut.io.{{ instance.port_map.m_ar_id }}
+    {{ instance.name }}_nasti.ar.bits.addr   := dut.io.{{ instance.port_map.m_ar_addr }}
+    {{ instance.name }}_nasti.ar.bits.len    := dut.io.{{ instance.port_map.m_ar_len }}
+    {{ instance.name }}_nasti.ar.bits.size   := dut.io.{{ instance.port_map.m_ar_size }}
+    {{ instance.name }}_nasti.ar.bits.burst  := dut.io.{{ instance.port_map.m_ar_burst }}
+    {{ instance.name }}_nasti.ar.bits.lock   := dut.io.{{ instance.port_map.m_ar_lock }}
+    {{ instance.name }}_nasti.ar.bits.cache  := dut.io.{{ instance.port_map.m_ar_cache }}
+    {{ instance.name }}_nasti.ar.bits.prot   := dut.io.{{ instance.port_map.m_ar_prot }}
+    {{ instance.name }}_nasti.ar.bits.qos    := dut.io.{{ instance.port_map.m_ar_qos }}
+    {{ instance.name }}_nasti.ar.bits.user   := DontCare
+    {{ instance.name }}_nasti.ar.bits.region := 0.U
+    dut.io.{{ instance.port_map.s_ar_ready }} := {{ instance.name }}_nasti.ar.ready
+
+    // ── AXI4 read data ────────────────────────────────────────────────────────
+    dut.io.{{ instance.port_map.s_r_valid }}     := {{ instance.name }}_nasti.r.valid
+    dut.io.{{ instance.port_map.s_r_id }}   := {{ instance.name }}_nasti.r.bits.id
+    dut.io.{{ instance.port_map.s_r_data }} := {{ instance.name }}_nasti.r.bits.data
+    dut.io.{{ instance.port_map.s_r_resp }} := {{ instance.name }}_nasti.r.bits.resp
+    dut.io.{{ instance.port_map.s_r_last }} := {{ instance.name }}_nasti.r.bits.last
+    dut.io.{{ instance.port_map.s_r_user }} := DontCare
+    {{ instance.name }}_nasti.r.ready    := dut.io.{{ instance.port_map.m_r_ready }}
+
+    FASEDBridge(clock, nasti, reset.asBool,
+      CompleteConfig(
+        {{ instance.name }}_nastiKey,
+        None,
+        Some("{{ instance.params.memoryRegionName }}"),
+      )
+    )

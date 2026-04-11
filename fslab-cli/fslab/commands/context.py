@@ -73,7 +73,6 @@ Each BridgeInstance is a SimpleNamespace exposing:
     cpp_sources         list[str]
     input_ports         list[str]
     output_ports        list[str]
-    module_macro_prefix str | None
     runtime_plusargs    list | None
     scala_templates     ScalaTemplates (Pydantic model)
       .dut_imports      str          path to Jinja2 sub-template
@@ -137,7 +136,6 @@ def _make_bridge_instance(
         cpp_sources=bridge_entry.cpp_sources,
         input_ports=bridge_entry.input_ports,
         output_ports=bridge_entry.output_ports,
-        module_macro_prefix=bridge_entry.module_macro_prefix,
         runtime_plusargs=bridge_entry.runtime_plusargs,
         # ScalaTemplates Pydantic model kept intact so attribute access works:
         # bridge.scala_templates.dut_imports / .top_imports / .ports / .wiring

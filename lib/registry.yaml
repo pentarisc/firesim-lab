@@ -15,22 +15,103 @@ bridges:
     description: >
       Connects the target's UART TX/RX pins to the host via a token channel.
       Host driver writes received bytes to a file or stdout.
-    input_ports: ["rxd"]
-    output_ports: ["txd"]
+    input_ports:
+      - "rxd"
+    output_ports:
+      - "txd"
     cpp_type: "uart_t"
     cpp_headers: ["bridges/uart.h"]
     cpp_sources: ["bridges/uart.cc"]
-    module_macro_prefix: UARTBRIDGEMODULE
     runtime_plusargs:
-      - flag: "+uart-loopback"
-        description: "Echo TX bytes back to RX"
-        required_params: [addrBits, dataBits, idBits]
+#      - flag: "+uart-loopback"
+#        description: "Echo TX bytes back to RX"
+    required_params: [freq_mhz, baud_rate]
     cpp_template: "bridges/uart/sim_loop.cc.j2"
     scala_templates:
       #dut_imports: "bridges/uart/dut_imports.scala.j2"
       top_imports: "bridges/uart/top_imports.scala.j2"
       ports:       "bridges/uart/ports.scala.j2"
       wiring:      "bridges/uart/wiring.scala.j2"
+
+  - id: fased
+    label: FASED Memory Timing Model
+    description: >
+      Attaches a target AXI4 port to the FASED DRAM timing model.
+      The C++ driver is built into firesim-lib automatically; this entry
+      adds makefrag documentation and the GoldenGate symlink hook only.
+    input_ports:
+      # AXI4 write address (aw)
+      - "s_aw_ready"
+      # AXI4 write data (w)
+      - "s_w_ready"
+      # AXI4 write response (b)
+      - "s_b_valid"
+      - "s_b_id"
+      - "s_b_resp"
+      - "s_b_user"
+      # AXI4 read address (ar)
+      - "m_ar_ready"
+      # AXI4 read data (r)
+      - "s_r_valid"
+      - "s_r_id"
+      - "s_r_data"
+      - "s_r_resp"
+      - "s_r_last"
+      - "s_r_user"
+    output_ports:
+      # AXI4 write address (aw)
+      - "m_aw_valid"
+      - "m_aw_id"
+      - "m_aw_addr"
+      - "m_aw_len"
+      - "m_aw_size"
+      - "m_aw_burst"
+      - "m_aw_lock"
+      - "m_aw_cache"
+      - "m_aw_prot"
+      - "m_aw_qos"
+      - "m_aw_user"
+      - "m_aw_region"
+      # AXI4 write data (w)
+      - "m_w_valid"
+      - "m_w_data"
+      - "m_w_strb"
+      - "m_w_last"
+      - "m_w_user"
+      # AXI4 write response (b)
+      - "m_b_ready"
+      # AXI4 read address (ar)
+      - "m_ar_valid"
+      - "m_ar_id"
+      - "m_ar_addr"
+      - "m_ar_len"
+      - "m_ar_size"
+      - "m_ar_burst"
+      - "m_ar_lock"
+      - "m_ar_cache"
+      - "m_ar_prot"
+      - "m_ar_qos"
+      - "m_ar_user"
+      - "m_ar_region"
+      # AXI4 read data (r)
+      - "m_r_ready"
+    cpp_type: "FASEDMemoryTimingModel"
+    cpp_headers: ["bridges/uart.h"]
+    cpp_sources: ["bridges/uart.cc"]
+    runtime_plusargs:
+      - flag: "+mm-unified-latency=<cycles>"
+        description: "Simple unified read/write latency model"
+      - flag: "+dramsim"
+        description: "Enable DRAMSim2 timing model"
+      - flag: "+fased-init-depth=<n>"
+        description: "Initial DRAM row-buffer fill depth"
+    required_params: [addrBits, dataBits, idBits, userBits, memoryRegionName]
+    cpp_template: "bridges/uart/sim_loop.cc.j2"
+    scala_templates:
+      #dut_imports: "bridges/fased/dut_imports.scala.j2"
+      top_imports: "bridges/fased/top_imports.scala.j2"
+      ports:       "bridges/fased/ports.scala.j2"
+      wiring:      "bridges/fased/wiring.scala.j2"
 
 # ---------------------------------------------------------------------------
 # Features — non-bridge build-time scaffolding options

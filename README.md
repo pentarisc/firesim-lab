@@ -619,7 +619,6 @@ bridges:
     cpp_define: ENABLE_MYBRIDGE_BRIDGE
     cpp_header: mybridge.h       # under targets/common/src/main/cc/bridges/
     gg_scala_dir: null
-    module_macro_prefix: MYBRIDGEBRIDGEMODULE
     max_instances: 1
     driver_class: mybridge_t
     constructor_template: "new mybridge_t(*this, {struct}, {idx}, {args})"
