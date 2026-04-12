@@ -19,7 +19,7 @@ MODULE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
 # [PROJ-05] Blackbox port definition: "in|out <width_token>"
 #   width_token may be: clock, reset, a decimal number, or a Verilog identifier
 BB_PORT_RE = re.compile(
-    r"^(in|out)\s+(clock|reset|\d+|[a-zA-Z_][a-zA-Z0-9_]*)$"
+    r"^(in|out)\s+(clock|reset|\d+|[a-zA-Z_][a-zA-Z0-9_\[\]:]*)$"
 )
 
 # [REG-01] IDs: alphanumerics, underscores, hyphens.

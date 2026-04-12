@@ -15,6 +15,7 @@ bridges:
     description: >
       Connects the target's UART TX/RX pins to the host via a token channel.
       Host driver writes received bytes to a file or stdout.
+    origin: fslab
     input_ports:
       - "rxd"
     output_ports:
@@ -39,6 +40,7 @@ bridges:
       Attaches a target AXI4 port to the FASED DRAM timing model.
       The C++ driver is built into firesim-lib automatically; this entry
       adds makefrag documentation and the GoldenGate symlink hook only.
+    origin: firesim
     input_ports:
       # AXI4 write address (aw)
       - "s_aw_ready"
@@ -50,7 +52,7 @@ bridges:
       - "s_b_resp"
       - "s_b_user"
       # AXI4 read address (ar)
-      - "m_ar_ready"
+      - "s_ar_ready"
       # AXI4 read data (r)
       - "s_r_valid"
       - "s_r_id"
@@ -96,8 +98,8 @@ bridges:
       # AXI4 read data (r)
       - "m_r_ready"
     cpp_type: "FASEDMemoryTimingModel"
-    cpp_headers: ["bridges/uart.h"]
-    cpp_sources: ["bridges/uart.cc"]
+    cpp_headers: ["bridges/fased_memory_timing_model.h"]
+    cpp_sources: ["bridges/fased_memory_timing_model.cc"]
     runtime_plusargs:
       - flag: "+mm-unified-latency=<cycles>"
         description: "Simple unified read/write latency model"

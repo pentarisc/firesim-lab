@@ -11,6 +11,7 @@
   config_class    str                    config.project.config_class
   clock_port      str | None             blackbox_ports key with value "in clock"
   reset_port      str | None             blackbox_ports key with value "in reset"
+  enable_port     str | None             blackbox_ports key with value "in enable"
 
   unique_bridges  dict[str, BridgeInstance]
     Keyed by bridge type id.  Used for Top-level import statements.
@@ -36,7 +37,6 @@ package {{ package_name }}
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
-import firesim.lib.bridges.{FASEDBridge, CompleteConfig, PeekPokeBridge, RationalClockBridge, ResetPulseBridge, ResetPulseBridgeParameters}
 import midas.targetutils.GlobalResetCondition
 
 // ── Bridge Top-Level Imports ───────────────────────────────────────────────────
@@ -64,6 +64,9 @@ class {{ fslab_top }}(implicit p: Parameters) extends RawModule {
 {%- endif %}
 {%- if reset_port %}
     dut.io.{{ reset_port }} := reset.asBool
+{%- endif %}
+{%- if enable_port %}
+    dut.io.{{ enable_port }} := true.B // true always for now.
 {%- endif %}
 
     // ── Per-Bridge Wiring (one snippet per bridge instance) ────────────────

@@ -45,6 +45,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 import fslab.utils.regexes as rx
 from fslab.utils.display import regex_msg
 
+_ORIGINS = {"firesim", "fslab", "custom"}
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
@@ -194,6 +196,7 @@ class BridgeEntry(BaseModel):
     id: str
     label: str
     description: str
+    origin: str
     input_ports: list[str]
     output_ports: list[str]
     cpp_type: str
@@ -208,6 +211,17 @@ class BridgeEntry(BaseModel):
     @classmethod
     def validate_id(cls, v: str) -> str:
         return _validate_alpha_num(v, "id", "Bridge")
+
+    @field_validator("origin", mode="before")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        """brige.origin must be one of 'firesim', 'fslab' or 'custom'."""
+        if v not in _ORIGINS:
+            raise ValueError(
+                f"bridge.origin '{v}' is invalid. "
+                f"Must be one of: {sorted(_ORIGINS)}"
+            )
+        return v
 
     @field_validator("cpp_type", mode="before")
     @classmethod

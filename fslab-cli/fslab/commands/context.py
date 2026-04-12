@@ -29,6 +29,7 @@ Derived from design.blackbox_ports
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 clock_port          str | None  key whose value == "in clock"
 reset_port          str | None  key whose value == "in reset"
+enable_port         str | None  key whose value == "in enable"
 verilog_files       list[str] design.sources (blackbox only)
 
 C++ build settings (CMakeLists.txt.j2, driver.cc.j2)
@@ -39,10 +40,12 @@ link_libs           list[str]  config.host.libs + required system libs (deduped)
 
 Source file lists (CMakeLists.txt.j2)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-user_cc_files       list[str]  config.host.sources
-user_h_files        list[str]  config.host.includes
-bridge_cc_files     list[str]  cpp_sources from every used registry bridge (deduped)
-bridge_h_files      list[str]  cpp_headers from every used registry bridge (deduped)
+user_cc_files             list[str]  config.host.sources
+user_h_files              list[str]  config.host.includes
+fslab_bridge_cc_files     list[str]  cpp_sources from every used registry bridge (deduped)
+fslab_bridge_h_files      list[str]  cpp_headers from every used registry bridge (deduped)
+custom_bridge_cc_files    list[str]  cpp_sources from every used custom registry bridge (deduped)
+custom_bridge_h_files     list[str]  cpp_headers from every used custom registry bridge (deduped)
 
 Bridge objects for code-generation templates
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -130,6 +133,7 @@ def _make_bridge_instance(
         id=bridge_entry.id,
         label=bridge_entry.label,
         description=bridge_entry.description,
+        origin=bridge_entry.origin,
         cpp_type=bridge_entry.cpp_type,
         cpp_template=bridge_entry.cpp_template,
         cpp_headers=bridge_entry.cpp_headers,
@@ -168,6 +172,7 @@ def _build_template_context(
 
     # ── Scalar / path fields ───────────────────────────────────────────────
     project_name      = config.project.name
+    project_dir       = config.project.project_dir
     package_name      = config.project.package_name
     fslab_top         = config.project.fslab_top
     config_class      = config.project.config_class
@@ -187,6 +192,7 @@ def _build_template_context(
     # Scan for the key whose port definition is "in clock" or "in reset".
     clock_port:   str | None = None
     reset_port:   str | None = None
+    enable_port:  str | None = None
     verilog_files: list[str] | None = None
     verilog_file_names: list[str] | None = None
 
@@ -196,6 +202,8 @@ def _build_template_context(
                 clock_port = port_name
             elif port_def == "in reset":
                 reset_port = port_name
+            elif port_def == "in enable":
+                enable_port = port_name
 
     if config.design.sources:
         verilog_files = list(config.design.sources)
@@ -223,8 +231,11 @@ def _build_template_context(
     # wiring template inclusion (DUT.scala, Top.scala, driver.cc).
     instances: list[SimpleNamespace] = []
 
-    raw_bridge_cc: list[str] = []
-    raw_bridge_h:  list[str] = []
+    raw_fslab_bridge_cc: list[str] = []
+    raw_fslab_bridge_h:  list[str] = []
+
+    raw_custom_bridge_cc: list[str] = []
+    raw_custom_bridge_h:  list[str] = []
 
     for bridge_cfg in config.bridges:
         reg_bridge = registry.bridges.get(bridge_cfg.type)
@@ -245,14 +256,22 @@ def _build_template_context(
             )
         )
 
-        raw_bridge_cc.extend(reg_bridge.cpp_sources)
-        raw_bridge_h.extend(reg_bridge.cpp_headers)
+        # We ignore firesim bridges as they are included by default in CMakeLists.txt
+        if reg_bridge.origin == "fslab":
+            raw_fslab_bridge_cc.extend(reg_bridge.cpp_sources)
+            raw_fslab_bridge_h.extend(reg_bridge.cpp_headers)
+        elif reg_bridge.origin == "custom":
+            raw_custom_bridge_cc.extend(reg_bridge.cpp_sources)
+            raw_custom_bridge_h.extend(reg_bridge.cpp_headers)
 
     # used_bridges: the unique-type list form, convenient for driver.cc.j2.
     used_bridges: list[SimpleNamespace] = list(unique_bridges_map.values())
 
-    bridge_cc_files: list[str] = _dedup_ordered(raw_bridge_cc)
-    bridge_h_files:  list[str] = _dedup_ordered(raw_bridge_h)
+    fslab_bridge_cc_files: list[str] = _dedup_ordered(raw_fslab_bridge_cc)
+    fslab_bridge_h_files:  list[str] = _dedup_ordered(raw_fslab_bridge_h)
+
+    custom_bridge_cc_files: list[str] = _dedup_ordered(raw_custom_bridge_cc)
+    custom_bridge_h_files:  list[str] = _dedup_ordered(raw_custom_bridge_h)
 
     # ------------------------------------------------------------------
     # Assemble and return the flat context dict
@@ -262,8 +281,9 @@ def _build_template_context(
         "registry": registry,
         # paths & identifiers
         "project_name":      project_name,
+        "project_dir" :      project_dir,
         "package_name":      package_name,
-        "fslab_top":        fslab_top,
+        "fslab_top":         fslab_top,
         "config_class":      config_class,
         "platform":          platform,
         "clock_period":      clock_period,
@@ -275,6 +295,7 @@ def _build_template_context(
         # derived design fields
         "clock_port":        clock_port,
         "reset_port":        reset_port,
+        "enable_port":       enable_port,
         "top_module":        top_module,
         "verilog_files":     verilog_files,
         "verilog_file_names": verilog_file_names,
@@ -285,8 +306,10 @@ def _build_template_context(
         # source file lists
         "user_cc_files":     user_cc_files,
         "user_h_files":      user_h_files,
-        "bridge_cc_files":   bridge_cc_files,
-        "bridge_h_files":    bridge_h_files,
+        "fslab_bridge_cc_files":   fslab_bridge_cc_files,
+        "fslab_bridge_h_files":    fslab_bridge_h_files,
+        "custom_bridge_cc_files" : custom_bridge_cc_files,
+        "custom_bridge_h_files" : custom_bridge_h_files,
         # bridge objects — three shapes for three access patterns
         "unique_bridges":    unique_bridges_map,  # dict[type_id, BridgeInstance]
         "used_bridges":      used_bridges,         # list[BridgeInstance], unique types

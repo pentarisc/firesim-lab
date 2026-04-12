@@ -1,8 +1,7 @@
     val {{ instance.name }}_nastiKey = NastiParameters(dataBits = {{ instance.params.dataBits }},
                                    addrBits = {{ instance.params.addrBits }},
-                                   idBits = {{ instance.params.idBits }},
-                                   nastiXUserBits = {{ instance.params.userBits }})
-    val {{ instance.name }}_nastiIo  = Wire(new NastiIO({{ instance.name }}_nastiKey))
+                                   idBits = {{ instance.params.idBits }})
+    
     val {{ instance.name }}_nasti    = Wire(new NastiIO({{ instance.name }}_nastiKey))
     
     // ── AXI4 write address ────────────────────────────────────────────────────
@@ -60,7 +59,7 @@
     dut.io.{{ instance.port_map.s_r_user }} := DontCare
     {{ instance.name }}_nasti.r.ready    := dut.io.{{ instance.port_map.m_r_ready }}
 
-    FASEDBridge(clock, nasti, reset.asBool,
+    FASEDBridge(clock, {{ instance.name }}_nasti, reset.asBool,
       CompleteConfig(
         {{ instance.name }}_nastiKey,
         None,

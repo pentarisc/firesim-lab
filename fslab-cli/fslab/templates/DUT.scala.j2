@@ -10,6 +10,7 @@
   package_name    str                    config.project.package_name
   clock_port      str | None             blackbox_ports key with value "in clock"
   reset_port      str | None             blackbox_ports key with value "in reset"
+  enable_port     str | None             blackbox_ports key with value "in enable"
   verilog_file    str | None             basename of design.sources[0]
 
   unique_bridges  dict[str, BridgeInstance]
@@ -49,6 +50,9 @@ class {{ top_module }}IO extends Bundle {
 {%- endif -%}
 {%- if reset_port %}
   val {{ reset_port }} = Input(Bool())
+{% endif %}
+{%- if enable_port %}
+  val {{ enable_port }} = Input(Bool())
 {% endif %}
 
   // ── Per-Bridge Port Declarations (one snippet per bridge instance) ─────────

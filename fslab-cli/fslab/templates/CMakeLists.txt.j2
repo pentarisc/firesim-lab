@@ -47,8 +47,10 @@
   Sources
     user_cc_files       list[str]
     user_h_files        list[str]
-    bridge_cc_files     list[str]
-    bridge_h_files      list[str]
+    fslab_bridge_cc_files     list[str]
+    fslab_bridge_h_files      list[str]
+    custom_bridge_cc_files     list[str]
+    custom_bridge_h_files      list[str]
 
   Platform (sections 4 and 4b)
     platform_cfg                   Resolved PlatformEntry from registry
@@ -119,6 +121,7 @@ set(PLATFORM          "{{ platform }}"          CACHE STRING "Target FPGA Platfo
 set(DRIVER_NAME       "{{ driver_name }}"       CACHE STRING "Base name for drivers")
 set(GEN_FILE_BASENAME "{{ gen_file_basename }}" CACHE STRING "GoldenGate generated basename")
 set(CLOCK_PERIOD      "{{ clock_period }}"      CACHE STRING "Simulation Clock Period")
+set(PROJECT_DIR       "{{ project_dir }}"       CACHE STRING "Project directory")
 
 set(FIRESIM_ROOT      "{{ firesim_root }}"      CACHE PATH "Path to FireSim")
 set(FIRESIM_LAB_ROOT  "{{ firesim_lab_root }}"  CACHE PATH "Path to FireSim Lab Bridges")
@@ -181,14 +184,20 @@ file(GLOB MIDAS_BRIDGE_H  CONFIGURE_DEPENDS
 # -- FireSim-Lab Bridge Sources --
 set(BRIDGE_CC
     ${MIDAS_BRIDGE_CC}
-{% for src in bridge_cc_files %}
+{% for src in fslab_bridge_cc_files %}
     ${FSLAB_BRIDGES_DIR}/src/main/cc/{{ src }}
+{% endfor %}
+{% for src in custom_bridge_cc_files %}
+    ${PROJECT_DIR}/src/main/cc/{{ src }}
 {% endfor %}
 )
 set(BRIDGE_H
     ${MIDAS_BRIDGE_H}
-{% for src in bridge_h_files %}
+{% for src in fslab_bridge_h_files %}
     ${FSLAB_BRIDGES_DIR}/src/main/cc/{{ src }}
+{% endfor %}
+{% for src in custom_bridge_h_files %}
+    ${PROJECT_DIR}/src/main/cc/{{ src }}
 {% endfor %}
 )
 
@@ -212,6 +221,7 @@ string(REPLACE ";" " " MAKE_USER_CC   "${USER_CC}")
 string(REPLACE ";" " " MAKE_USER_H    "${USER_H}")
 string(REPLACE ";" " " MAKE_BRIDGE_CC "${BRIDGE_CC}")
 string(REPLACE ";" " " MAKE_BRIDGE_H  "${BRIDGE_H}")
+string(REPLACE ";" " " MAKE_DESIGN_RTL  "${DESIGN_RTL}")
 
 # ------------------------------------------------------------------------------
 # 4. Target: Host Software Driver  ->  build/driver/
@@ -414,7 +424,7 @@ emul_dir := \$(midas_dir)/emul
 
 emul_cc := ${MAKE_USER_CC} ${MAKE_BRIDGE_CC} \$(emul_dir)/simif_emul.cc \$(emul_dir)/mmio.cc \$(emul_dir)/mm.cc \$(emul_dir)/dpi.cc \$(midas_dir)/entry.cc \$(emul_dir)/qsfp.cc
 emul_h  := ${MAKE_USER_H}  ${MAKE_BRIDGE_H}  \$(emul_dir)/simif_emul.h  \$(emul_dir)/mmio.h  \$(emul_dir)/mm.h  \$(midas_dir)/entry.h  \$(emul_dir)/qsfp.h
-emul_v  := \$(design_vh) \$(DESIGN_V) \$(sim_fpga_resource_models) ${DESIGN_RTL}
+emul_v  := \$(design_vh) \$(DESIGN_V) \$(sim_fpga_resource_models) ${MAKE_DESIGN_RTL}
 
 TB            := emul
 SIM_TIMESCALE := 1ps/1ps

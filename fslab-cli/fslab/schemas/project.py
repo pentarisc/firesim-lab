@@ -157,17 +157,43 @@ class DesignConfig(BaseModel):
 
             # [PROJ-09]
             for port_name, port_def in self.blackbox_ports.items():
-                # port_def is already validated by [PROJ-05], so split is safe
                 _, width_token = port_def.split(maxsplit=1)
-                # If the width token is not a numeric literal, 'clock', or 'reset',
-                # it must be a parameter reference.
-                is_literal = width_token.isdigit() or width_token in ("clock", "reset", "logic", "reg")
-                if not is_literal and width_token not in self.parameters:
+
+                # Match patterns like:
+                # logic
+                # logic[3:0]
+                # reg[WIDTH-1:0] (future-proofing)
+                m = re.fullmatch(r'(\w+)(\[(.+):(.+)\])?', width_token)
+
+                if not m:
+                    raise ValueError(
+                        f"[PROJ-09] Invalid port definition '{port_def}'"
+                    )
+
+                base_type = m.group(1)        # logic / reg / etc.
+                msb = m.group(3)              # e.g. 3
+                lsb = m.group(4)              # e.g. 0
+
+                # Check base type
+                is_literal = base_type in ("clock", "reset", "enable", "logic", "reg")
+
+                # Check range if present
+                if msb is not None and lsb is not None:
+                    range_is_valid = (
+                        (msb.isdigit() or msb in self.parameters) and
+                        (lsb.isdigit() or lsb in self.parameters)
+                    )
+                else:
+                    range_is_valid = True
+
+                # Final validation
+                if not (is_literal and range_is_valid):
                     raise ValueError(
                         f"[PROJ-09] blackbox_ports['{port_name}'] references "
-                        f"parameter '{width_token}' which is not defined in "
-                        "design.parameters."
+                        f"invalid type or range '{width_token}'. "
+                        f"Ensure base type is valid and range uses literals or defined parameters."
                     )
+
                 if port_def == "in clock":
                     clock_found = True
 
