@@ -37,6 +37,7 @@ package {{ package_name }}
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
+import firesim.lib.bridges.{PeekPokeBridge, RationalClockBridge, ResetPulseBridge, ResetPulseBridgeParameters}
 import midas.targetutils.GlobalResetCondition
 
 // ── Bridge Top-Level Imports ───────────────────────────────────────────────────
