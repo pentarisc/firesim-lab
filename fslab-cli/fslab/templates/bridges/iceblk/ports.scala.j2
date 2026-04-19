@@ -1,0 +1,34 @@
+// =====================
+// Request Channel
+// =====================
+val {{ instance.port_map.bdev_req_valid }} = Output(Bool())
+val {{ instance.port_map.bdev_req_ready }} = Input(Bool())
+
+val {{ instance.port_map.bdev_req_bits_write }}  = Output(Bool())
+val {{ instance.port_map.bdev_req_bits_offset }} = Output(UInt(32.W))
+val {{ instance.port_map.bdev_req_bits_len }}    = Output(UInt(32.W))
+val {{ instance.port_map.bdev_req_bits_tag }}    = Output(UInt({{ instance.params.tag_bits.value }}.W))
+
+// =====================
+// Write Data Channel
+// =====================
+val {{ instance.port_map.bdev_data_valid }} = Output(Bool())
+val {{ instance.port_map.bdev_data_ready }} = Input(Bool())
+
+val {{ instance.port_map.bdev_data_bits_data }} = Output(UInt(64.W))
+val {{ instance.port_map.bdev_data_bits_tag }}  = Output(UInt({{ instance.params.tag_bits.value }}.W))
+
+// =====================
+// Response Channel
+// =====================
+val {{ instance.port_map.bdev_resp_valid }} = Input(Bool())
+val {{ instance.port_map.bdev_resp_ready }} = Output(Bool())
+
+val {{ instance.port_map.bdev_resp_bits_data }} = Input(UInt(64.W))
+val {{ instance.port_map.bdev_resp_bits_tag }}  = Input(UInt({{ instance.params.tag_bits.value }}.W))
+
+// =====================
+// Info Channel
+// =====================
+val {{ instance.port_map.bdev_info_nsectors }}    = Input(UInt(32.W))
+val {{ instance.port_map.bdev_info_max_req_len }} = Input(UInt(32.W))

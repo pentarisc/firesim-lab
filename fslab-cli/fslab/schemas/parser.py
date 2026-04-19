@@ -25,14 +25,17 @@ Pass 2 — Project Validation:
 from __future__ import annotations
 
 import threading
+import importlib.util
 from pathlib import Path
-from typing import Tuple
-
+from typing import Tuple, Annotated, Dict, Union, List
+import functools
+import operator
 import yaml
-from pydantic import ValidationError
+from pydantic import ValidationError, create_model, Field, model_validator
 
 from .registry import MasterRegistry, RegistryFile
 from .project import AdvancedConfig, FSLabConfig
+from .resolvers import BRIDGE_CFG_REGISTRY
 
 # Default registry path:
 _DEFAULT_REGISTRY = Path("/opt/firesim-lab/lib/registry.yaml")
@@ -64,6 +67,70 @@ def _load_registry_file(path: Path) -> RegistryFile:
         )
     raw = _read_yaml(path)
     return RegistryFile.model_validate(raw)
+
+
+def _load_user_plugin(plugin_path: Path):
+    """Dynamically loads a python script into memory."""
+    if os.environ.get("ENABLE_CUSTOM_PLUGINS") != "1":
+        raise PermissionError(
+            f"The YAML configuration is attempting to run a custom Python plugin ({plugin_path.name}).\n"
+            "For security reasons, this is disabled by default.\n"
+            "If you trust this project set ENABLE_CUSTOM_PLUGINS=1 in /target/.firesim-lab.env file\n"
+            "and restart the container using firesim-lab or source the file."
+        )
+
+    if not plugin_path.exists():
+        raise FileNotFoundError(f"Custom plugin not found at: {plugin_path}")
+        
+    spec = importlib.util.spec_from_file_location(plugin_path.stem, plugin_path)
+    module = importlib.util.module_from_spec(spec)
+    # Executing this module registers their Pydantic classes into your system
+    spec.loader.exec_module(module)
+
+def _sync_bridge_refs(self):
+    """
+    This runs AFTER the entire LiveConfig (and all resources) 
+    have been validated and converted to Python types.
+    """
+    # 1. Access the validated sibling field, e.g. design.parameters
+    if self.design.parameters:
+        design_params = self.design.parameters
+
+        # 2. Distribute to children
+        for bridge in self.bridges:
+            # Check if the child has the specific method to handle this
+            if hasattr(bridge, "resolve_refs"):
+                bridge.resolve_refs(design_params)
+    
+    print("sync bridge ref complete.")
+    return self
+
+def _get_live_config_model():
+    """
+    Creates a 'Specialized' version of FSLabConfig 
+    that knows about all currently registered plugins.
+    """
+    # 1. Build the dynamic Union from the current state of BRIDGE_CFG_REGISTRY
+    DynamicUnion = functools.reduce(operator.or_, BRIDGE_CFG_REGISTRY)
+    
+    DiscriminatedBridgeConfig = Annotated[
+        DynamicUnion, 
+        Field(discriminator='type')
+    ]
+
+    # 2. Create a NEW class that inherits from FSLabConfig
+    # but OVERRIDES the 'resources' field with the real types.
+    # This keeps all your other fields, methods, and validators intact!
+    LiveConfig = create_model(
+        "LiveFSLabConfig",
+        __base__=FSLabConfig,
+        bridges=(List[DiscriminatedBridgeConfig], Field(...)),
+        __validators__={
+            "sync_logic": model_validator(mode='after')(_sync_bridge_refs)
+        }
+    )
+    
+    return LiveConfig
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +234,16 @@ def _internal_load_and_validate(
     )
 
     # 1b. Custom registries (higher priority; loaded in list order — REG-07)
-    for custom_str in advanced.custom_registries:
-        custom_path = Path(custom_str)
+    for custom_entry in advanced.custom_registries:
+        # custom_entry is now a RegistryEntry object!
+        
+        # ---> Load the Python plugin if the user provided one
+        if custom_entry.plugin:
+            plugin_path = Path(custom_entry.plugin)
+            _load_user_plugin(plugin_path)
+
+        # ---> Load the YAML registry file
+        custom_path = Path(custom_entry.path)
         registry_files.append(
             _load_registry_file(custom_path)
         )
@@ -179,7 +254,9 @@ def _internal_load_and_validate(
     # ------------------------------------------------------------------
     # PASS 2 — Validate the project with MasterRegistry as context
     # ------------------------------------------------------------------
-    config = FSLabConfig.model_validate(
+    LiveConfig = _get_live_config_model() # Generate dynamic bridge config classes.
+
+    config = LiveConfig.model_validate(
         raw_project,
         context={"registry": master_registry},
     )

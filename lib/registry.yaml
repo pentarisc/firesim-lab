@@ -107,13 +107,56 @@ bridges:
         description: "Enable DRAMSim2 timing model"
       - flag: "+fased-init-depth=<n>"
         description: "Initial DRAM row-buffer fill depth"
-    required_params: [addrBits, dataBits, idBits, userBits, memoryRegionName]
+    required_params: [addr_bits, data_bits, id_bits, user_bits, memory_region_name]
     cpp_template: "bridges/uart/sim_loop.cc.j2"
     scala_templates:
       #dut_imports: "bridges/fased/dut_imports.scala.j2"
       top_imports: "bridges/fased/top_imports.scala.j2"
       ports:       "bridges/fased/ports.scala.j2"
       wiring:      "bridges/fased/wiring.scala.j2"
+
+  - id: iceblk
+    label: BlockDevice Bridge
+    description: >
+      BlockDevBridge — Provides access to a virtual disk served from the host.
+    origin: fslab
+    input_ports:
+      # Request Channel
+      - "bdev_req_ready"
+      # Write Data Channel
+      - "bdev_data_ready"
+      # Response Channel
+      - "bdev_resp_valid"
+      - "bdev_resp_bits_data"
+      - "bdev_resp_bits_tag"
+      # Info Channel
+      - "bdev_info_nsectors"
+      - "bdev_info_max_req_len"
+    output_ports:
+      # Request Channel
+      - "bdev_req_valid"
+      - "bdev_req_bits_write"
+      - "bdev_req_bits_offset"
+      - "bdev_req_bits_len"
+      - "bdev_req_bits_tag"
+      # Write Data Channel
+      - "bdev_data_valid"
+      - "bdev_data_bits_data"
+      - "bdev_data_bits_tag"
+      # Response Channel
+      - "bdev_resp_ready"
+
+    cpp_type: "blockdev_t"
+    cpp_headers: ["bridges/blockdev.h"]
+    cpp_sources: ["bridges/blockdev.cc"]
+    runtime_plusargs:
+    required_params: [tag_bits, n_trackers]
+    cpp_template: "bridges/iceblk/sim_loop.cc.j2"
+    scala_templates:
+      #dut_imports: "bridges/uart/dut_imports.scala.j2"
+      top_imports: "bridges/iceblk/top_imports.scala.j2"
+      ports:       "bridges/iceblk/ports.scala.j2"
+      wiring:      "bridges/iceblk/wiring.scala.j2"
 
 # ---------------------------------------------------------------------------
 # Features — non-bridge build-time scaffolding options
@@ -445,7 +488,7 @@ metasimulators:
     # simif_emul_all.cc from scratch — it is already handled by the Makefrag.
     makefile_fragment: |
       include $(midas_dir)/rtlsim/Makefrag-verilator
-      $(sim_harness): $(midas_dir)/simif_emul_all.cc
+      $(sim_harness): ;
       verilator: $(OUT_DIR)/V$(DRIVER_NAME)
       verilator-debug: $(OUT_DIR)/V$(DRIVER_NAME)-debug
 

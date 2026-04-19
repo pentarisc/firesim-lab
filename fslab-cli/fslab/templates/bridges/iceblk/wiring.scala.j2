@@ -1,0 +1,49 @@
+    val {{ instance.name }}_bdConfig = BlockDeviceConfig(nTrackers={{ instance.params.n_trackers.value }})
+    val {{ instance.name }}_bdIO = Wire(new BlockDeviceIO({{ instance.name }}_bdConfig))
+
+    // ============================================================
+    // Request Channel (Decoupled → flattened)
+    // ============================================================
+    {{ instance.name }}_bdIO.req.valid := dut.io.{{ instance.port_map.bdev_req_valid }}
+    dut.io.{{ instance.port_map.bdev_req_ready }} := {{ instance.name }}_bdIO.req.ready
+
+    {{ instance.name }}_bdIO.req.bits.write := dut.io.{{ instance.port_map.bdev_req_bits_write }}
+    {{ instance.name }}_bdIO.req.bits.offset := dut.io.{{ instance.port_map.bdev_req_bits_offset }}
+    {{ instance.name }}_bdIO.req.bits.len := dut.io.{{ instance.port_map.bdev_req_bits_len }}
+    // tag port mapped below.
+
+    // ============================================================
+    // Write Data Channel
+    // ============================================================
+    {{ instance.name }}_bdIO.data.valid := dut.io.{{ instance.port_map.bdev_data_valid }}
+    dut.io.{{ instance.port_map.bdev_data_ready }} := {{ instance.name }}_bdIO.data.ready
+
+    {{ instance.name }}_bdIO.data.bits.data := dut.io.{{ instance.port_map.bdev_data_bits_data }}
+    // tag port mapped below.
+
+    // ============================================================
+    // Response Channel (flattened → Decoupled)
+    // ============================================================
+    dut.io.{{ instance.port_map.bdev_resp_valid }} := {{ instance.name }}_bdIO.resp.valid
+    {{ instance.name }}_bdIO.resp.ready := dut.io.{{ instance.port_map.bdev_resp_ready }}
+
+    dut.io.{{ instance.port_map.bdev_resp_bits_data }} := {{ instance.name }}_bdIO.resp.bits.data
+    // tag port mapped below.
+
+    // ============================================================
+    // Info Channel
+    // ============================================================
+    dut.io.{{ instance.port_map.bdev_info_nsectors }} := {{ instance.name }}_bdIO.info.nsectors
+    dut.io.{{ instance.port_map.bdev_info_max_req_len }} := {{ instance.name }}_bdIO.info.max_req_len
+
+{%- if instance.params.n_trackers.value <= 1 %}
+    {{ instance.name }}_bdIO.req.bits.tag := 0.U
+    {{ instance.name }}_bdIO.data.bits.tag := 0.U
+    dut.io.{{ instance.port_map.bdev_resp_bits_tag }} := 0.U
+{%- else %}
+    {{ instance.name }}_bdIO.req.bits.tag := dut.io.{{ instance.port_map.bdev_req_bits_tag }}
+    {{ instance.name }}_bdIO.data.bits.tag := dut.io.{{ instance.port_map.bdev_data_bits_tag }}
+    dut.io.{{ instance.port_map.bdev_resp_bits_tag }} := {{ instance.name }}_bdIO.resp.bits.tag
+{%- endif %}
+
+    BlockDevBridge(clock, {{ instance.name }}_bdIO, reset.asBool)

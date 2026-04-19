@@ -206,6 +206,7 @@ class BridgeEntry(BaseModel):
     scala_templates: ScalaTemplates
 
     runtime_plusargs: Optional[list[RuntimePlusarg]] = None
+    required_params: Optional[list[str]] = None
 
     @field_validator("id", mode="before")
     @classmethod

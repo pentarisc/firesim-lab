@@ -29,13 +29,12 @@ Validation requirements satisfied here:
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Annotated, Dict, Union, List, Any
 from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator, model_validator, computed_field
 import fslab.utils.regexes as rx
 from fslab.utils.display import regex_msg
-
 
 # Allowed sets
 _DESIGN_TYPES = {"chisel", "blackbox"}
@@ -113,7 +112,7 @@ class DesignConfig(BaseModel):
     ) -> Optional[dict[str, str]]:
         """
         [PROJ-05] Each value in blackbox_ports must match:
-                  ^(in|out)\\s+(clock|reset|\\d+|[a-zA-Z_][a-zA-Z0-9_]*)$
+                  ^(in|out)\\s+(clock|reset|\\d+|[a-zA-Z_][a-zA-Z0-9_[]:]*)$
         """
         if v is None:
             return v
@@ -261,45 +260,38 @@ class HostConfig(BaseModel):
             )
         return v
 
-
-# ---------------------------------------------------------------------------
-# bridges: list item
-# ---------------------------------------------------------------------------
-
-class BridgeConfig(BaseModel):
-    """One entry in the project's bridges list."""
-
-    type: str
-    name: str
-    port_map: dict[str, str] = Field(default_factory=dict)
-    params: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("name", mode="before")
-    @classmethod
-    def validate_name(cls, v: str) -> str:
-        """[PROJ-06] bridge.name must match ^[a-zA-Z_][a-zA-Z0-9_]*$"""
-        if not rx.BRIDGE_NAME_RE.match(v):
-            raise ValueError(
-                f"[PROJ-06] bridge.name '{v}' is invalid. " +
-                regex_msg(rx.BRIDGE_NAME_RE)
-            )
-        return v
-
-
 # ---------------------------------------------------------------------------
 # advanced: block
 # ---------------------------------------------------------------------------
+class RegistryEntry(BaseModel):
+    path: str
+    plugin: Optional[str] = None
 
 class AdvancedConfig(BaseModel):
     """Paths and generation parameters."""
 
     default_registry: Optional[str] = None
-    custom_registries: list[str] = Field(default_factory=list)
+    custom_registries: Optional [Union[str, RegistryEntry]] = Field(default_factory=list)
     firesim_root: Optional[str] = None
     firesim_lab_root: Optional[str] = None
     gen_dir: str = "generated-src"
     gen_file_basename: str = "FireSim-generated"
 
+    @field_validator("custom_registries", mode="before")
+    @classmethod
+    def normalize_registries(cls, registries):
+        if self.custom_registries is None:
+            return []
+            
+        normalized = []
+        for item in registries:
+            if isinstance(item, str):
+                # Convert standard strings into RegistryEntry objects
+                normalized.append(RegistryEntry(path=item))
+            else:
+                # It's already a RegistryEntry object
+                normalized.append(item)
+        return normalized
 
 # ---------------------------------------------------------------------------
 # Top-level project config with cross-registry validation
@@ -325,7 +317,8 @@ class FSLabConfig(BaseModel):
     design: DesignConfig
     target: TargetConfig
     host: HostConfig
-    bridges: list[BridgeConfig] = Field(default_factory=list)
+    # bridges will be overriden by BRIDGE_CFG_REGISTRY in parser.
+    bridges: List[Any] = Field(default_factory=list)
     advanced: AdvancedConfig = Field(default_factory=AdvancedConfig)
 
     # ------------------------------------------------------------------
@@ -394,6 +387,15 @@ class FSLabConfig(BaseModel):
                 )
 
             reg_bridge = registry.bridges[bridge_cfg.type]
+
+            required_params = reg_bridge.required_params
+            missing_params = set(required_params) - set(bridge_cfg.params)
+
+            if missing_params:
+                raise ValueError(
+                    f"Missing required parameters: {sorted(missing_params)}. "
+                    f"Available: {sorted(reg_bridge.required_params)}"
+                )
 
             # --- [PROJ-13] Port-map validation (blackbox designs only) ---
             if self.design.type == "blackbox" and self.design.blackbox_ports:

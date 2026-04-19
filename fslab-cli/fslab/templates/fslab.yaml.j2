@@ -153,8 +153,8 @@ design:
 #  - type: "uart"
 #    name: "serial_0"
 #    port_map:
-#      tx: "uart_tx"
-#      rx: "uart_rx"
+#      txd: "uart_tx"
+#      rxd: "uart_rx"
 #    params:
 #      baud_rate: 115200
 #
@@ -218,12 +218,38 @@ design:
 #      # AXI4 read data (r)
 #      m_r_ready: "m_r_ready"
 #    params:
-#      addrBits: 32
-#      dataBits: 64
-#      idBits: 4
-#      userBits: 1
-#      memoryRegionName: DefaultMemoryRegion
-
+#      addr_bits: 32
+#      data_bits: 64
+#      id_bits: 4
+#      user_bits: 1
+#      memory_region_name: DefaultMemoryRegion
+#
+#  - type: "iceblk"
+#    name: "disk_0"
+#    port_map:
+#      # Request Channel
+#      bdev_req_ready : "d0_bdev_req_ready"
+#      bdev_req_valid : "d0_bdev_req_valid"
+#      bdev_req_bits_write : "d0_bdev_req_bits_write"
+#      bdev_req_bits_offset : "d0_bdev_req_bits_offset"
+#      bdev_req_bits_len : "d0_bdev_req_bits_len"
+#      bdev_req_bits_tag : "d0_bdev_req_bits_tag"
+#      # Write Data Channel
+#      bdev_data_ready : "d0_bdev_data_ready"
+#      bdev_data_valid : "d0_bdev_data_valid"
+#      bdev_data_bits_data : "d0_bdev_data_bits_data"
+#      bdev_data_bits_tag : "d0_bdev_data_bits_tag"
+#      # Response Channel
+#      bdev_resp_ready : "d0_bdev_resp_ready"
+#      bdev_resp_valid : "d0_bdev_resp_valid"
+#      bdev_resp_bits_data : "d0_bdev_resp_bits_data"
+#      bdev_resp_bits_tag : "d0_bdev_resp_bits_tag"
+#      # Info Channel
+#      bdev_info_nsectors : "d0_bdev_info_nsectors"
+#      bdev_info_max_req_len : "d0_bdev_info_max_req_len"
+#    params:
+#      tag_bits: 1
+#      n_trackers: 1
 
 ## Advanced options that let you extend firesim-lab and fined grained control.
 ## OPTIONAL: You can leave this section commented.
@@ -231,8 +257,16 @@ design:
 #advanced:
 #  # Registry paths (Last-definition wins if IDs conflict)
 #  default_registry: "/opt/firesim-lab/lib/registry.yaml"
+#
+#  # WARNING: The `plugin` directive will execute arbitrary Python code. 
+#  # Only enable custom plugins if you wrote them yourself or completely 
+#  # trust the source repository. Do not run custom plugins from 
+#  # untrusted third-party projects.
 #  custom_registries:
-#    - "lib/custom_ip/registry.yaml"
+#    - path: "lib/custom_ip/registry.yaml"
+#      plugin: "lib/custom_ip/validator.py" # Optional
+#      
+#    - path: "lib/legacy_ip/registry.yaml"
 #  
 #  # Toolchain Paths
 #  firesim_root: "/opt/firesim"

@@ -1,6 +1,6 @@
-    val {{ instance.name }}_nastiKey = NastiParameters(dataBits = {{ instance.params.dataBits }},
-                                   addrBits = {{ instance.params.addrBits }},
-                                   idBits = {{ instance.params.idBits }})
+    val {{ instance.name }}_nastiKey = NastiParameters(dataBits = {{ instance.params.data_bits.value }},
+                                   addrBits = {{ instance.params.addr_bits.value }},
+                                   idBits = {{ instance.params.id_bits.value }})
     
     val {{ instance.name }}_nasti    = Wire(new NastiIO({{ instance.name }}_nastiKey))
     
@@ -63,6 +63,6 @@
       CompleteConfig(
         {{ instance.name }}_nastiKey,
         None,
-        Some("{{ instance.params.memoryRegionName }}"),
+        Some("{{ instance.params.memory_region_name.value }}"),
       )
     )

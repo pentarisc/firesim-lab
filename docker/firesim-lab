@@ -313,6 +313,16 @@ if [[ $_env_loaded -eq 0 || $DO_RECONFIGURE -eq 1 ]]; then
   fi
   VERILATOR_THREADS="${VERILATOR_THREADS:-$DEFAULT_VERILATOR_THREADS}"
 
+  # ── Custom plugins ─────────────────────────────────────────────────────────
+  if [[ -z "${ENABLE_CUSTOM_PLUGINS:-}" ]]; then
+    read -e -p "  $(_bold "Enable custom Python plugins (Security Risk)? [y/N]:") [n]: " allow_plugins
+  fi
+  if [[ "$allow_plugins" =~ ^[Yy]$ ]]; then
+    ENABLE_CUSTOM_PLUGINS=1
+  else
+    ENABLE_CUSTOM_PLUGINS=0
+  fi
+
   # ── Memory limits (not prompted — override via env var if needed) ─────────────
   CONTAINER_MEMORY_LIMIT="${CONTAINER_MEMORY_LIMIT:-$DEFAULT_MEMORY_LIMIT}"
   CONTAINER_MEMORY_RESERVE="${CONTAINER_MEMORY_RESERVE:-$DEFAULT_MEMORY_RESERVE}"
@@ -349,6 +359,9 @@ HOST_WORKSPACE_DIR=${WORKSPACE_DIR}
 # ── Host user mapping ───────────────────────────────────────────────────────
 HOST_UID=${HOST_UID}
 HOST_GID=${HOST_GID}
+
+# ── Security ────────────────────────────────────────────────────────────────
+ENABLE_CUSTOM_PLUGINS=${ENABLE_CUSTOM_PLUGINS}
 
 # ── Performance tuning ──────────────────────────────────────────────────────
 VERILATOR_THREADS=${VERILATOR_THREADS}
@@ -458,8 +471,8 @@ _enter_shell() {
     echo "printf '%b\n' '  \033[1mImage\033[0m     : ${FIRESIM_IMAGE}'"
     echo "printf '%b\n' ''"
     echo "printf '%b\n' '  \033[1mQuick reference:\033[0m'"
-    echo "printf '%b\n' '    fslab new <project>                              — Scaffold a new project'"
-    echo "printf '%b\n' '    cd /target/<project>                             — Copy design sources   '"
+    echo "printf '%b\n' '    fslab new <my-project>                           — Scaffold a new project'"
+    echo "printf '%b\n' '    cd /target/<my-project>                          — Copy design sources   '"
     echo "printf '%b\n' '                                                       (.v, .sv) to user_rtl'"
     echo "printf '%b\n' '    fslab init -t <top module> -f <top module file>  — generate fslab.yaml'"
     echo "printf '%b\n' '                                                       then update fslab.yaml'"
@@ -504,7 +517,7 @@ if [[ -z "$PROJECT_NAME" ]]; then
   echo "  $(_yellow "ℹ  No firesim-lab project found in this workspace.")"
   echo "  $(_bold "Start a new project inside the container:")"
   echo ""
-  echo "    $(_cyan "fslab new $_project \\")  "
+  echo "    $(_cyan "fslab new $_project")  "
   echo ""
 
 elif [[ ! -f "$WORKSPACE_DIR/$PROJECT_NAME/fslab.yaml" ]]; then

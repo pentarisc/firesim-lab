@@ -64,6 +64,9 @@ services:
       # Override in .env or on the command line.
       VERILATOR_THREADS: ${VERILATOR_THREADS:-4}
 
+      # Enable user-defined plugins for user-defined registry validation. Disabled by default.
+      ENABLE_CUSTOM_PLUGINS: ${ENABLE_CUSTOM_PLUGINS:-0}
+
     # ── Volume mounts ───────────────────────────────────────────────────────
     volumes:
       # ── Tier 3: user target project ──────────────────────────────────────

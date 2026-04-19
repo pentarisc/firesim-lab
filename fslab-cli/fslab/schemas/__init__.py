@@ -17,13 +17,17 @@ from .registry import (
 )
 from .project import (
     AdvancedConfig,
-    BridgeConfig,
     DesignConfig,
     FSLabConfig,
     HostConfig,
     ProjectConfig,
     TargetConfig,
 )
+from .resolvers import (
+    BridgeConfig,
+    BridgeParam
+)
+
 from .parser import load_and_validate
 
 __all__ = [
@@ -39,12 +43,14 @@ __all__ = [
     "FpgaSimEntry",
     # project
     "AdvancedConfig",
-    "BridgeConfig",
     "DesignConfig",
     "FSLabConfig",
     "HostConfig",
     "ProjectConfig",
     "TargetConfig",
+    # resolvers
+    "BridgeConfig",
+    "BridgeParam"
     # parser
     "load_and_validate",
 ]
