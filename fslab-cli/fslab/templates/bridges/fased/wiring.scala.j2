@@ -3,6 +3,27 @@
                                    idBits = {{ instance.params.id_bits.value }})
     
     val {{ instance.name }}_nasti    = Wire(new NastiIO({{ instance.name }}_nastiKey))
+
+    val MEM_BASE = BigInt("{{ instance.params.mem_base.value }}", 16)
+    val MEM_SIZE = BigInt("{{ instance.params.mem_size.value }}", 16)
+
+    val masterParams = AXI4MasterPortParameters(
+      masters = Seq(AXI4MasterParameters(
+        name = "main_mem_master",
+        id   = IdRange(0, 1 << {{ instance.params.id_bits.value }}),
+        maxFlight = Some(8))))
+
+    val slaveParams = AXI4SlavePortParameters(
+      slaves = Seq(AXI4SlaveParameters(
+        address    = Seq(AddressSet(MEM_BASE, MEM_SIZE - 1)),
+        regionType = RegionType.UNCACHED,
+        supportsRead  = TransferSizes(1, 64),
+        supportsWrite = TransferSizes(1, 64),
+        interleavedId = Some(0))),
+      beatBytes = {{ instance.params.data_bits.value }} / 8)
+
+    val edge = AXI4EdgeParameters(masterParams, slaveParams,
+      params = Parameters.empty, sourceInfo = chisel3.experimental.SourceInfo.materialize)
     
     // ── AXI4 write address ────────────────────────────────────────────────────
     {{ instance.name }}_nasti.aw.valid       := dut.io.{{ instance.port_map.m_aw_valid }}
@@ -62,7 +83,7 @@
     FASEDBridge(clock, {{ instance.name }}_nasti, reset.asBool,
       CompleteConfig(
         {{ instance.name }}_nastiKey,
-        None,
+        Some(AXI4EdgeSummary.createCompatEdgeSummary(edge)),
         Some("{{ instance.params.memory_region_name.value }}"),
       )
     )

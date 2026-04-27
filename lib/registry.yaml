@@ -107,7 +107,14 @@ bridges:
         description: "Enable DRAMSim2 timing model"
       - flag: "+fased-init-depth=<n>"
         description: "Initial DRAM row-buffer fill depth"
-    required_params: [addr_bits, data_bits, id_bits, user_bits, memory_region_name]
+    required_params:
+      - addr_bits
+      - data_bits
+      - id_bits
+      - user_bits
+      - memory_region_name
+      - mem_base
+      - mem_size
     cpp_template: "bridges/uart/sim_loop.cc.j2"
     scala_templates:
       #dut_imports: "bridges/fased/dut_imports.scala.j2"
