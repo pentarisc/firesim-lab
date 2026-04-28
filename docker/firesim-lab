@@ -73,7 +73,7 @@ REPO_RAW="https://raw.githubusercontent.com/pentarisc/firesim-lab/main"
 COMPOSE_URL="${REPO_RAW}/docker/docker-compose.yaml"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yaml"
 
-DEFAULT_IMAGE="firesim-lab:latest"
+DEFAULT_IMAGE="pentarisc/firesim-lab:latest"
 DEFAULT_VERILATOR_THREADS=$(nproc 2>/dev/null || echo 4)
 DEFAULT_MEMORY_LIMIT="16g"
 DEFAULT_MEMORY_RESERVE="8g"
