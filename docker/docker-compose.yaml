@@ -34,7 +34,7 @@ services:
         SBT_VERSION: ${SBT_VERSION:-1.10.1}
         JAVA_VERSION: ${JAVA_VERSION:-17}
         
-    image: ${FIRESIM_IMAGE:-firesim-lab:latest}
+    image: ${FIRESIM_IMAGE:-pentarisc/firesim-lab:latest}
     container_name: ${CONTAINER_NAME:-firesim-lab}
 
     user: "${HOST_UID}:${HOST_GID}"
