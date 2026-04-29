@@ -77,6 +77,11 @@ DEFAULT_IMAGE="pentarisc/firesim-lab:latest"
 DEFAULT_VERILATOR_THREADS=$(nproc 2>/dev/null || echo 4)
 DEFAULT_MEMORY_LIMIT="16g"
 DEFAULT_MEMORY_RESERVE="8g"
+# GID of the firesim-lab-cache group baked into the Docker image.
+# All cache directories are group-owned by this GID with permissions 2775.
+# Only change this if 2543 conflicts with an existing group on your host AND
+# you are rebuilding the image locally with a matching CACHE_GID build arg.
+DEFAULT_CACHE_GID=2543
 
 # Container name is workspace-scoped only — one container per workspace.
 # Illegal docker name characters are replaced with '-'.
@@ -178,13 +183,22 @@ _compose() {
 
 # ── Handle --clean-cache ──────────────────────────────────────────────────────
 if [[ $DO_CLEAN_CACHE -eq 1 ]]; then
-  echo "$(_yellow "⚠  Removing all named SBT and ccache volumes...")"
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "$(_red "Error:") No .firesim-lab.env found in $WORKSPACE_DIR"
+    echo "Nothing to clean."
+    exit 1
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+  echo "$(_yellow "⚠  Removing SBT and ccache volumes for UID ${HOST_UID}...")"
   docker volume rm \
-    firesim-lab-sbt-ivy \
-    firesim-lab-sbt-coursier \
-    firesim-lab-sbt-boot \
-    firesim-lab-sbt-global \
-    firesim-lab-verilator-ccache \
+    "${VOLUME_SBT_IVY}" \
+    "${VOLUME_SBT_COURSIER}" \
+    "${VOLUME_SBT_BOOT}" \
+    "${VOLUME_SBT_GLOBAL}" \
+    "${VOLUME_CCACHE}" \
     2>/dev/null || true
   echo "$(_green "✓") Cache volumes removed. They will be re-seeded on next start."
   exit 0
@@ -314,6 +328,9 @@ if [[ $_env_loaded -eq 0 || $DO_RECONFIGURE -eq 1 ]]; then
   VERILATOR_THREADS="${VERILATOR_THREADS:-$DEFAULT_VERILATOR_THREADS}"
 
   # ── Custom plugins ─────────────────────────────────────────────────────────
+  # allow_plugins is initialised here so the test below is safe under `set -u`
+  # even when ENABLE_CUSTOM_PLUGINS is already set and the inner read is skipped.
+  allow_plugins=""
   if [[ -z "${ENABLE_CUSTOM_PLUGINS:-}" ]]; then
     read -e -p "  $(_bold "Enable custom Python plugins (Security Risk)? [y/N]:") [n]: " allow_plugins
   fi
@@ -322,6 +339,11 @@ if [[ $_env_loaded -eq 0 || $DO_RECONFIGURE -eq 1 ]]; then
   else
     ENABLE_CUSTOM_PLUGINS=0
   fi
+
+  # ── Cache group ID ────────────────────────────────────────────────────────────
+  # Not prompted.  Must match the CACHE_GID ARG baked into the image (default
+  # 2543).  Override only if rebuilding the image locally with a custom GID.
+  CACHE_GID="${CACHE_GID:-$DEFAULT_CACHE_GID}"
 
   # ── Memory limits (not prompted — override via env var if needed) ─────────────
   CONTAINER_MEMORY_LIMIT="${CONTAINER_MEMORY_LIMIT:-$DEFAULT_MEMORY_LIMIT}"
@@ -333,6 +355,21 @@ fi
 # ── Host user identity ────────────────────────────────────────────────────────
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
+
+# ── CACHE_GID host conflict check ─────────────────────────────────────────────
+# GID 2543 (firesim-lab-cache) is used inside the container to grant write
+# access to pre-warmed cache directories.  It never leaks to the host, so a
+# collision is harmless in practice — we warn rather than abort.
+CACHE_GID="${CACHE_GID:-$DEFAULT_CACHE_GID}"
+_conflicting_group=$(getent group "${CACHE_GID}" 2>/dev/null | cut -d: -f1 || true)
+if [[ -n "$_conflicting_group" ]]; then
+  echo "  $(_yellow "⚠  Host GID ${CACHE_GID} is already used by group '${_conflicting_group}'.")"
+  echo "     The container uses this GID internally for cache directory access."
+  echo "     This is normally harmless.  If you see unexpected permission errors,"
+  echo "     rebuild the image with a different CACHE_GID and set it in .firesim-lab.env."
+  echo ""
+fi
+unset _conflicting_group
 
 # ── Write .firesim-lab.env into the workspace ─────────────────────────────────
 echo "$(_cyan "→ Writing settings to $ENV_FILE...")"
@@ -360,6 +397,13 @@ HOST_WORKSPACE_DIR=${WORKSPACE_DIR}
 HOST_UID=${HOST_UID}
 HOST_GID=${HOST_GID}
 
+# ── Cache group ──────────────────────────────────────────────────────────────
+# GID of the firesim-lab-cache group baked into the container image.
+# The entrypoint adds the host user to this group at container start so they
+# can write to all pre-warmed cache directories (ivy2, coursier, sbt, ccache).
+# Only change this if you rebuilt the image with a custom CACHE_GID build arg.
+CACHE_GID=${CACHE_GID}
+
 # ── Security ────────────────────────────────────────────────────────────────
 ENABLE_CUSTOM_PLUGINS=${ENABLE_CUSTOM_PLUGINS}
 
@@ -367,6 +411,17 @@ ENABLE_CUSTOM_PLUGINS=${ENABLE_CUSTOM_PLUGINS}
 VERILATOR_THREADS=${VERILATOR_THREADS}
 CONTAINER_MEMORY_LIMIT=${CONTAINER_MEMORY_LIMIT}
 CONTAINER_MEMORY_RESERVE=${CONTAINER_MEMORY_RESERVE}
+
+# ── Named volumes (user-specific, scoped to HOST_UID=${HOST_UID}) ────────────
+# Each volume name embeds the host UID so that multiple users on the same
+# Docker host have independent caches.  These names are baked into this env
+# file and referenced directly by docker-compose — no variable arithmetic is
+# performed at compose time, which avoids docker-compose substitution issues.
+VOLUME_SBT_IVY=firesim-lab-sbt-ivy-${HOST_UID}
+VOLUME_SBT_COURSIER=firesim-lab-sbt-coursier-${HOST_UID}
+VOLUME_SBT_BOOT=firesim-lab-sbt-boot-${HOST_UID}
+VOLUME_SBT_GLOBAL=firesim-lab-sbt-global-${HOST_UID}
+VOLUME_CCACHE=firesim-lab-verilator-ccache-${HOST_UID}
 ENV
 
 echo "  $(_green "✓") Settings saved"
@@ -381,6 +436,8 @@ echo "  Workspace      : $WORKSPACE_DIR  →  /target"
 if [[ -n "$PROJECT_NAME" ]]; then
 echo "  Project        : $PROJECT_NAME   →  /target/$PROJECT_NAME"
 fi
+echo "  Host UID:GID   : $HOST_UID:$HOST_GID"
+echo "  Cache GID      : $CACHE_GID  (firesim-lab-cache, baked into image)"
 echo "  Verilator jobs : $VERILATOR_THREADS"
 echo "  Memory limit   : $CONTAINER_MEMORY_LIMIT (reserve: $CONTAINER_MEMORY_RESERVE)"
 echo "  ─────────────────────────────────────────────────────────"
@@ -484,7 +541,8 @@ _enter_shell() {
     echo "printf '%b\n' ''"
   } > "$rc"
   docker cp "$rc" "$CONTAINER_NAME:/tmp/.firesim-lab-rc" > /dev/null 2>&1 && rm "$rc"
-  docker exec -it "$CONTAINER_NAME" bash --rcfile /tmp/.firesim-lab-rc
+  docker exec -it "$CONTAINER_NAME" \
+    firesim-lab-shell bash --rcfile /tmp/.firesim-lab-rc
 }
 
 if _container_running; then

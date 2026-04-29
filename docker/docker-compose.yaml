@@ -2,25 +2,46 @@
 #  docker-compose.yaml — firesim-lab simulation environment
 #
 #  Tier layout (all three tiers present at runtime):
-#    /opt/firesim          — baked into image (immutable, Tier 1)
-#    /opt/firesim-lab      — baked into image (immutable, Tier 2)
-#    /target           — mounted from host (your project, Tier 3)
+#    /opt/firesim          — baked into image, root-owned, world-readable (Tier 1)
+#    /opt/firesim-lab      — baked into image, root-owned, world-readable (Tier 2)
+#    /target               — bind-mounted from host (your project, Tier 3)
 #
-#  Named volumes:
-#    sbt-ivy-cache     — ~/.ivy2        (Ivy artifact cache)
-#    sbt-coursier      — ~/.cache/coursier (Coursier resolver cache)
-#    sbt-boot          — ~/.sbt/boot    (SBT launcher bootstrap)
-#    sbt-global        — ~/.sbt/1.0     (global SBT plugins/settings)
+#  Generic image design
+#  ────────────────────
+#  The image is pulled from Docker Hub (or built once locally) and shared by
+#  all users.  HOST_UID / HOST_GID are runtime environment variables written
+#  by run.sh into .firesim-lab.env.  The container entrypoint (running as
+#  root) uses them to:
+#    • Create transient /etc/passwd + /etc/group entries for the host user.
+#    • Add the host user to the firesim-lab-cache group (GID CACHE_GID).
+#    • Drop privileges via gosu before executing the user's command.
+#  No `user:` override is set here — the entrypoint handles privilege
+#  dropping, which allows it to perform the group setup steps first.
 #
-#  The image pre-warms these caches during build (pip install + sbt update).
-#  Named volumes persist them across container restarts so re-runs are fast
-#  even after the container is removed.  The image-internal cache acts as a
-#  warm seed; Docker merges image layers with volume contents on first start.
+#  HOME is explicitly set to /home/firesim-lab (the fixed cache home baked
+#  into the image) so SBT, ccache, pip, and other tools resolve ~ correctly
+#  regardless of which UID is running.  The entrypoint also writes this path
+#  into the /etc/passwd entry for the host user so getpwuid() agrees.
 #
-#  Required .env variables (written by run.sh):
-#    HOST_WORKSPACE_DIR   — absolute path to the user's target project on the host
-#    FIRESIM_IMAGE     — image name:tag  (e.g. myorg/firesim-lab:latest)
-#    CONTAINER_NAME    — name for the running container
+#  Named volumes
+#  ─────────────
+#    sbt-ivy-cache     — /home/firesim-lab/.ivy2
+#    sbt-coursier      — /home/firesim-lab/.cache/coursier
+#    sbt-boot          — /home/firesim-lab/.sbt/boot
+#    sbt-global        — /home/firesim-lab/.sbt/1.0
+#    verilator-ccache  — /home/firesim-lab/.cache/ccache
+#
+#  All cache directories are 2775 (setgid + group-writable) and owned by
+#  firesim-lab-cache (GID 2543 by default).  The setgid bit ensures that
+#  files created at runtime by the host user inherit GID 2543, keeping them
+#  writable by future container runs — with no per-start chown required.
+#
+#  Required .env variables (written by run.sh into .firesim-lab.env):
+#    HOST_WORKSPACE_DIR  — absolute host path to the user's target project
+#    HOST_UID            — host user's numeric UID
+#    HOST_GID            — host user's numeric primary GID
+#    FIRESIM_IMAGE       — image name:tag  (e.g. pentarisc/firesim-lab:latest)
+#    CONTAINER_NAME      — name for the running container
 # =============================================================================
 
 services:
@@ -29,72 +50,82 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        FIRESIM_COMMIT: ${FIRESIM_COMMIT:-main}
+        FIRESIM_COMMIT:     ${FIRESIM_COMMIT:-main}
         FIRESIM_LAB_COMMIT: ${FIRESIM_LAB_COMMIT:-main}
-        SBT_VERSION: ${SBT_VERSION:-1.10.1}
-        JAVA_VERSION: ${JAVA_VERSION:-17}
-        
+        SBT_VERSION:        ${SBT_VERSION:-1.10.1}
+        JAVA_VERSION:       ${JAVA_VERSION:-17}
+        # CACHE_GID controls the group that owns all cache directories.
+        # Only override this when rebuilding locally AND the default GID (2543)
+        # conflicts with an existing group on your host.  Must match the value
+        # baked into the image if pulling from Docker Hub.
+        CACHE_GID:          ${CACHE_GID:-2543}
+
     image: ${FIRESIM_IMAGE:-pentarisc/firesim-lab:latest}
     container_name: ${CONTAINER_NAME:-firesim-lab}
 
-    user: "${HOST_UID}:${HOST_GID}"
+    # No `user:` override — the entrypoint detects the host user's UID/GID
+    # from the ownership of /target (the workspace bind mount) and calls gosu
+    # to drop privileges after setting up /etc/passwd and /etc/group entries.
+    # The entrypoint must start as root to modify these files.
 
     # Keep stdin open so `docker exec` and interactive sessions work.
-    # The default command drops into bash; override on the CLI if needed.
     stdin_open: true
     tty: true
     command: /bin/bash
 
     # ── Environment variables visible inside the container ──────────────────
     environment:
-      # Tier 1 — FireSim checkout (baked into image)
-      FIRESIM_ROOT: /opt/firesim
+      # ── Cache group ID ────────────────────────────────────────────────────
+      # HOST_UID and HOST_GID are intentionally absent — the entrypoint and
+      # firesim-lab-shell detect them from /target ownership, which is always
+      # correct and requires no environment variable plumbing through compose.
+      CACHE_GID: ${CACHE_GID:-2543}
 
-      # Tier 2 — firesim-lab framework (baked into image)
+      # ── Fixed HOME — critical for cache path resolution ───────────────────
+      # SBT resolves ~/.ivy2, ~/.sbt, etc. from HOME; ccache resolves
+      # CCACHE_DIR; pip resolves its cache from HOME.  Keeping HOME fixed
+      # to the pre-warmed cache location means these tools work correctly
+      # for any host UID without re-fetching dependencies.
+      HOME: /home/firesim-lab
+
+      # ── Tier paths ────────────────────────────────────────────────────────
+      FIRESIM_ROOT:     /opt/firesim
       FIRESIM_LAB_ROOT: /opt/firesim-lab
+      TARGET_ROOT:      /target
 
-      # Tier 3 — user target project (mounted from host)
-      TARGET_ROOT: /target
+      # ── SBT ───────────────────────────────────────────────────────────────
+      # Memory limits + disable interactive supershell (breaks non-TTY CI).
+      SBT_OPTS: "-Xmx8g -Xss8m -Dsbt.supershell=false -Dsbt.server.type=none"
 
-      # SBT options — memory limits and disable the interactive supershell
-      # (supershell does not render correctly in non-TTY CI environments).
-      SBT_OPTS: "-Xmx8g -Xss8m -Dsbt.supershell=false"
-
-      # Verilator thread count — set to number of physical cores for speed.
-      # Override in .env or on the command line.
+      # ── Verilator ─────────────────────────────────────────────────────────
+      # Set to the number of physical cores on the host for best performance.
       VERILATOR_THREADS: ${VERILATOR_THREADS:-4}
 
-      # Enable user-defined plugins for user-defined registry validation. Disabled by default.
+      # ── Plugin system ─────────────────────────────────────────────────────
       ENABLE_CUSTOM_PLUGINS: ${ENABLE_CUSTOM_PLUGINS:-0}
 
     # ── Volume mounts ───────────────────────────────────────────────────────
     volumes:
-      # ── Tier 3: user target project ──────────────────────────────────────
-      # The entire target project directory is mounted read-write.
-      # generated-src/ lands inside here (see GENERATED_DIR above) so all
-      # build artifacts persist on the host between container runs.
+      # ── Tier 3: user target project (bind mount) ──────────────────────────
+      # Read-write so generated-src/ and build artifacts persist on the host.
       - type: bind
         source: ${HOST_WORKSPACE_DIR}
         target: /target
 
       # ── SBT / Ivy artifact cache ──────────────────────────────────────────
-      # Ivy2 stores downloaded JARs and POMs.  Persisting this named volume
-      # means dependencies are not re-fetched after `docker pull` or rebuild.
-      # On first start Docker seeds the volume from the image layer
-      # (/home/firesim-lab/.ivy2) which was pre-warmed during `docker build`.
+      # Pre-warmed during image build; persisted across container restarts.
+      # Group-writable (2775 + setgid GID 2543) — no chown on container start.
       - type: volume
         source: sbt-ivy-cache
         target: /home/firesim-lab/.ivy2
 
       # ── Coursier resolver cache ───────────────────────────────────────────
-      # Coursier is SBT 1.x's default resolver.  Separate from Ivy2 above.
       - type: volume
         source: sbt-coursier
         target: /home/firesim-lab/.cache/coursier
 
       # ── SBT boot directory ────────────────────────────────────────────────
       # Stores the SBT launcher and Scala compiler distributions.
-      # Seeded from image; persisted so `sbt` starts instantly.
       - type: volume
         source: sbt-boot
         target: /home/firesim-lab/.sbt/boot
@@ -105,17 +136,13 @@ services:
         target: /home/firesim-lab/.sbt/1.0
 
       # ── Verilator build cache (ccache) ────────────────────────────────────
-      # Verilator invokes g++ on hundreds of generated .cpp files.
-      # ccache eliminates redundant recompilation when only a subset changes.
-      # The image should have ccache installed and CCACHE_DIR set.
+      # Eliminates redundant g++ recompilation of Verilator-generated C++.
       - type: volume
         source: verilator-ccache
         target: /home/firesim-lab/.cache/ccache
 
     # ── Resource limits ─────────────────────────────────────────────────────
     # Chisel elaboration + Verilator compilation are memory-intensive.
-    # Adjust to fit the host machine.  These are soft limits (reservation)
-    # and hard limits (limit).
     deploy:
       resources:
         limits:
@@ -124,24 +151,34 @@ services:
           memory: ${CONTAINER_MEMORY_RESERVE:-8g}
 
     # ── Working directory ────────────────────────────────────────────────────
-    # Drop into the target project root so `source env.sh && make compile`
-    # works immediately without any `cd`.
     working_dir: /target
 
 # =============================================================================
 #  Named volumes
-#  Docker manages these on the host under /var/lib/docker/volumes/.
-#  They persist until explicitly removed with `docker volume rm`.
-#  Each is seeded on first use from the corresponding image layer path.
+#  Managed by Docker under /var/lib/docker/volumes/.
+#  Persist until explicitly removed with `docker volume rm` or
+#  `firesim-lab --clean-cache`.
+#  Seeded on first use from the corresponding image layer path.
+#
+#  Volume names are user-specific (embed HOST_UID) so that multiple users
+#  on the same Docker host have independent caches.  The names are
+#  pre-composed by the run script and written into .firesim-lab.env as
+#  VOLUME_* variables, which are substituted here by docker-compose's
+#  --env-file mechanism.  Because the values are plain strings (not
+#  expressions involving HOST_UID), substitution is reliable.
+#
+#  Note: after a major SBT version upgrade, stale boot/global volumes may
+#  cause version conflicts.  Run `firesim-lab --clean-cache` to wipe and
+#  re-seed from the new image layer.
 # =============================================================================
 volumes:
   sbt-ivy-cache:
-    name: firesim-lab-sbt-ivy
+    name: ${VOLUME_SBT_IVY}
   sbt-coursier:
-    name: firesim-lab-sbt-coursier
+    name: ${VOLUME_SBT_COURSIER}
   sbt-boot:
-    name: firesim-lab-sbt-boot
+    name: ${VOLUME_SBT_BOOT}
   sbt-global:
-    name: firesim-lab-sbt-global
+    name: ${VOLUME_SBT_GLOBAL}
   verilator-ccache:
-    name: firesim-lab-verilator-ccache
+    name: ${VOLUME_CCACHE}

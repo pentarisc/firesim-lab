@@ -1,0 +1,38 @@
+#!/bin/bash
+# =============================================================================
+#  firesim-lab-shell — privilege-dropping shell entry point
+#
+#  Installed in the image at /usr/local/bin/firesim-lab-shell.
+#  Intended to be called via `docker exec` so that interactive shells entered
+#  after container start run as the host user rather than root.
+#
+#  Why this exists instead of `docker exec -u HOST_UID`:
+#    `docker exec -u` calls setuid()/setgid() but does NOT call initgroups().
+#    This means supplementary groups (in particular firesim-lab-cache, which
+#    grants write access to the pre-warmed cache directories) are absent from
+#    the shell.  gosu always calls initgroups(), so the full group membership
+#    established by entrypoint.sh is correctly inherited.
+#
+#  HOST_UID is detected from the ownership of /target (the workspace bind
+#  mount) rather than from an environment variable.  This matches the approach
+#  used by entrypoint.sh and requires no environment variable plumbing.
+#
+#  Usage (called by the firesim-lab run script):
+#    docker exec -it <container> firesim-lab-shell <command> [args...]
+# =============================================================================
+set -euo pipefail
+
+HOST_UID=$(stat -c '%u' /target)
+
+if [[ "${HOST_UID}" -eq 0 ]]; then
+    echo "[firesim-lab-shell] WARNING: /target is owned by root; running as root." >&2
+    exec "$@"
+fi
+
+if [[ $# -eq 0 ]]; then
+    echo "[firesim-lab-shell] ERROR: No command specified." >&2
+    echo "[firesim-lab-shell] Usage: firesim-lab-shell <command> [args...]" >&2
+    exit 1
+fi
+
+exec gosu "${HOST_UID}" "$@"
