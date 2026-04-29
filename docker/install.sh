@@ -46,7 +46,7 @@ FILES=(
   "docker/docker-compose.yaml"
   "docker/Dockerfile"
   "docker/entrypoint.sh"
-  "firesim-lab-shell"
+  "docker/firesim-lab-shell"
 )
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
