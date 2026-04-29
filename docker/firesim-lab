@@ -178,7 +178,7 @@ fi
 
 # ── Shared compose invocation (always uses workspace .env) ───────────────────
 _compose() {
-  $COMPOSE --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  $COMPOSE -p "$CONTAINER_NAME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
 # ── Handle --clean-cache ──────────────────────────────────────────────────────
@@ -278,7 +278,7 @@ else
   echo "  $(_yellow "⚠  Multiple firesim-lab projects detected.")"
   echo "     Only one project per workspace is supported."
   echo ""
-  local i=1
+  i=1
   for name in "${DETECTED[@]}"; do
     echo "     $i) $name"
     (( i++ ))
@@ -286,7 +286,7 @@ else
   echo ""
   while true; do
     read -p "     Enter the project name to use: " PROJECT_NAME
-    local valid=0
+    valid=0
     for name in "${DETECTED[@]}"; do
       [[ "$name" == "$PROJECT_NAME" ]] && valid=1 && break
     done
