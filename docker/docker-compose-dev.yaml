@@ -70,7 +70,7 @@ services:
         CACHE_GID:          ${CACHE_GID:-2543}
 
     image: ${FIRESIM_IMAGE:-pentarisc/firesim-lab:latest}
-    container_name: ${CONTAINER_NAME:-firesim-lab}
+    container_name: ${CONTAINER_NAME:-firesim-lab-dev}
 
     # No `user:` override — the entrypoint detects the host user's UID/GID
     # from the ownership of /target (the workspace bind mount) and calls gosu
@@ -115,6 +115,13 @@ services:
 
     # ── Volume mounts ───────────────────────────────────────────────────────
     volumes:
+
+      # ── Tier 3: override /opt/firesim-lab with your own for developmet purposes ──────
+      # (change ~/pentarisc/projects/firesim-lab to wherever you have cloned firesim-lab)
+      - type: bind
+        source: ${HOME}/pentarisc/projects/firesim-lab
+        target: /opt/firesim-lab
+
       # ── Tier 3: user target project (bind mount) ──────────────────────────
       # Read-write so generated-src/ and build artifacts persist on the host.
       - type: bind

@@ -26,6 +26,7 @@
 #include "core/simulation.h"
 #include "core/systematic_scheduler.h"
 #include "bridges/peek_poke.h"
+#include "sim/firesim_lab_top.h"
 {% for bridge in used_bridges %}
 {% for header in bridge.cpp_headers %}
 #include "{{ header }}"
@@ -35,12 +36,11 @@
 #include <vector>
 #include <string>
 
-class {{ driver_name }} : public systematic_scheduler_t, public simulation_t {
+class {{ driver_name }} : public firesim_lab_top_t {
 public:
   {{ driver_name }}(simif_t &simif, widget_registry_t &registry,
                     const std::vector<std::string> &args)
-      : systematic_scheduler_t(args),
-        simulation_t(registry, args),
+      : firesim_lab_top_t(simif, registry, args),
         simif(simif),
         peek_poke(registry.get_widget<peek_poke_t>())
   {
@@ -81,7 +81,7 @@ public:
     return exit_code;
   }
 
-  bool simulation_timed_out() override { return false; }
+  bool simulation_timed_out() override { return false; } // TODO: fix this with proper timeout.
 
 private:
   simif_t          &simif;

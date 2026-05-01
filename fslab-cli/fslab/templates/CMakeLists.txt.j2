@@ -181,9 +181,22 @@ file(GLOB MIDAS_BRIDGE_H  CONFIGURE_DEPENDS
     "${MIDAS_DIR}/core/*.h"
 )
 
+# -- Firesim-lab core sources
+file(GLOB FSLAB_CORE_CC CONFIGURE_DEPENDS
+    "${FSLAB_BRIDGES_DIR}/src/main/cc/*.cc"
+    "${FSLAB_BRIDGES_DIR}/src/main/cc/sim/*.cc"
+)
+
+file(GLOB FSLAB_CORE_H CONFIGURE_DEPENDS
+    "${FSLAB_BRIDGES_DIR}/src/main/cc/*.h"
+    "${FSLAB_BRIDGES_DIR}/src/main/cc/sim/*.h"
+)
+
 # -- FireSim-Lab Bridge Sources --
 set(BRIDGE_CC
     ${MIDAS_BRIDGE_CC}
+    ${FSLAB_BRIDGES_DIR}/src/main/cc/bridges/loadmem_bin.cc
+    ${FSLAB_CORE_CC}
 {% for src in fslab_bridge_cc_files %}
     ${FSLAB_BRIDGES_DIR}/src/main/cc/{{ src }}
 {% endfor %}
@@ -193,6 +206,8 @@ set(BRIDGE_CC
 )
 set(BRIDGE_H
     ${MIDAS_BRIDGE_H}
+    ${FSLAB_BRIDGES_DIR}/src/main/cc/bridges/loadmem_bin.h
+    ${FSLAB_CORE_H}
 {% for src in fslab_bridge_h_files %}
     ${FSLAB_BRIDGES_DIR}/src/main/cc/{{ src }}
 {% endfor %}
