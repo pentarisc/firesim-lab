@@ -296,6 +296,9 @@ def build_callback(
     yaml_path: YamlPathOpt = _FSLAB_YAML,
     jobs: JobsOpt = 4,
 ) -> None:
+    """
+    Build the project. Default build option is metasim
+    """
     if ctx.invoked_subcommand is None:
         cmd_compile(
             skip_rtl=skip_rtl,
@@ -350,7 +353,7 @@ def build_fpgasim(
     yaml_path: YamlPathOpt = _FSLAB_YAML,
     jobs: JobsOpt = 4,
 ) -> None:
-    """Build the project with C++ FPGA simulation target (hardware-accelerated)."""
+    """Build the project with C++ FPGA simulation target (simulator like Vivado xsim)."""
     cmd_compile(
         skip_rtl=skip_rtl,
         skip_driver=skip_driver,
@@ -359,6 +362,16 @@ def build_fpgasim(
         jobs=jobs,
         build_type=BuildType.FPGASIM,
     )
+
+@build_app.command("bitstream")
+def sim_fpgasim(
+    skip_rtl: SkipRtlOpt = False,
+    skip_driver: SkipDriverOpt = False,
+    force_gen: ForceGenOpt = False,
+    yaml_path: YamlPathOpt = _FSLAB_YAML,
+) -> None:
+    """Build the project bitstream for target platform (e.g. AWS F2)."""
+    success("FPGA bitstream yet implemented.") # TODO check that this command is run on the target FPGA environment, where vivado etc., is available. (e.g. F2)
 
 def cmd_compile(
     skip_rtl: bool,

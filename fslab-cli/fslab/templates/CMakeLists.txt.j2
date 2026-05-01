@@ -36,7 +36,7 @@
     clock_period        str
     firesim_root        str
     firesim_lab_root    str
-    platforms_dir       str
+    platforms_root      str
 
   Compiler
     cxx_standard        int
@@ -125,7 +125,7 @@ set(PROJECT_DIR       "{{ project_dir }}"       CACHE STRING "Project directory"
 
 set(FIRESIM_ROOT      "{{ firesim_root }}"      CACHE PATH "Path to FireSim")
 set(FIRESIM_LAB_ROOT  "{{ firesim_lab_root }}"  CACHE PATH "Path to FireSim Lab Bridges")
-set(PLATFORMS_DIR     "{{ platforms_dir }}"     CACHE PATH "Path to FireSim Platforms directory")
+set(PLATFORMS_ROOT    "{{ platforms_root }}"    CACHE PATH "Path to FireSim Platforms directory")
 set(GEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/{{ gen_dir }}" CACHE PATH "Generated RTL/Headers directory")
 set(V_DIR   "${FIRESIM_ROOT}/sim/midas/src/main/verilog"       CACHE PATH "Static Verilog directory")
 set(MIDAS_DIR         "${FIRESIM_ROOT}/sim/midas/src/main/cc" CACHE PATH "midas c++ sources")

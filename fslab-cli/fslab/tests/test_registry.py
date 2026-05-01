@@ -46,7 +46,7 @@ expect_err('spaces in name', {**base, 'extra_libs': ['my lib']}, 'REG-10')
 print()
 print('--- REG-11: extra_include_dirs / extra_link_dirs ---')
 expect_ok('absolute path', {**base, 'extra_include_dirs': ['/usr/include']})
-expect_ok('cmake var ref', {**base, 'extra_include_dirs': ['\${PLATFORMS_DIR}/sdk/include']})
+expect_ok('cmake var ref', {**base, 'extra_include_dirs': ['\${PLATFORMS_ROOT}/sdk/include']})
 expect_ok('cmake env ref', {**base,
     'required_env_vars': ['XILINX_XRT'],
     'extra_include_dirs': ['\$ENV{XILINX_XRT}/include']})

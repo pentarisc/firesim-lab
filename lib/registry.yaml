@@ -246,7 +246,7 @@ features:
 # not be baked in at generation time (license servers, SDK roots set by
 # setup scripts, etc.).
 #
-# CMake cache variables set in section 1 of the template (${PLATFORMS_DIR},
+# CMake cache variables set in section 1 of the template (${PLATFORMS_ROOT},
 # ${MIDAS_DIR}, etc.) can also be referenced directly in path strings.
 # ==============================================================================
 
@@ -261,12 +261,12 @@ platforms:
     config_package: "firesim.midasexamples"
     config_class: "DefaultF2Config"
     rpath_origin: true
-    required_env_vars: []          # PLATFORMS_DIR is a CMake cache var — no env needed
+    required_env_vars: []     # PLATFORMS_ROOT is a CMake cache var — no env needed
     extra_cxx_flags: []
     extra_include_dirs:
-      - "${PLATFORMS_DIR}/f2/aws-fpga-firesim-f2/sdk/userspace/include"
+      - "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2/sdk/userspace/include"
     extra_link_dirs:
-      - "${PLATFORMS_DIR}/f2/aws-fpga-firesim-f2/sdk/userspace/lib"
+      - "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2/sdk/userspace/lib"
     extra_libs:
       - fpga_mgmt
       - z

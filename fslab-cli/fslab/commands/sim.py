@@ -69,6 +69,9 @@ def sim_callback(
     force_gen: ForceGenOpt = False,
     yaml_path: YamlPathOpt = _FSLAB_YAML,
 ) -> None:
+    """
+    Run simulation. Build the project if necessary. Default is metasim. 
+    """
     if ctx.invoked_subcommand is None:
         cmd_metasim(sim_args, skip_rtl, skip_driver, force_gen, yaml_path, BuildType.METASIM)
 

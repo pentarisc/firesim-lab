@@ -24,6 +24,7 @@ gen_dir             str        config.advanced.gen_dir
 gen_file_basename   str        config.advanced.gen_file_basename
 firesim_root        str        config.advanced.firesim_root  (or "/opt/firesim")
 firesim_lab_root    str        config.advanced.firesim_lab_root  (or "/opt/firesim-lab")
+platforms_root      str        config.advanced.platforms_root  (or "/opt/firesim/platforms")
 
 Derived from design.blackbox_ports
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -183,6 +184,7 @@ def _build_template_context(
     gen_file_basename = config.advanced.gen_file_basename
     firesim_root      = config.advanced.firesim_root     or "/opt/firesim"
     firesim_lab_root  = config.advanced.firesim_lab_root or "/opt/firesim-lab"
+    platforms_root    = config.advanced.platforms_root  or "/opt/firesim/platforms"
     top_module        = config.design.top_module
     platform_cfg      = registry.platforms.get(platform)
     metasim_cfg       = registry.metasimulators.get(config.host.emulator)
@@ -292,6 +294,7 @@ def _build_template_context(
         "gen_file_basename": gen_file_basename,
         "firesim_root":      firesim_root,
         "firesim_lab_root":  firesim_lab_root,
+        "platforms_root" :   platforms_root,
         # derived design fields
         "clock_port":        clock_port,
         "reset_port":        reset_port,

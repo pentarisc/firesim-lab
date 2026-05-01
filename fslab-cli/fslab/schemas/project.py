@@ -274,6 +274,7 @@ class AdvancedConfig(BaseModel):
     custom_registries: Optional [Union[str, RegistryEntry]] = Field(default_factory=list)
     firesim_root: Optional[str] = None
     firesim_lab_root: Optional[str] = None
+    platforms_root: Optional[str] = None
     gen_dir: str = "generated-src"
     gen_file_basename: str = "FireSim-generated"
 
