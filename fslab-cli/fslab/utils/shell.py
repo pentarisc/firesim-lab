@@ -273,8 +273,10 @@ def run_or_die(
     java elaboration, cmake, make.  Steps that are optional (e.g. a
     lint check) should call ``run()`` and inspect the return code themselves.
     """
+    filtered_cmd = [s for s in cmd if s.strip()]
+    
     returncode = run(
-        cmd,
+        filtered_cmd,
         cwd=cwd,
         env=env,
         label=label,
@@ -349,8 +351,9 @@ def run_with_spinner(
     full_env = {**os.environ, **(env or {})}
     merged: q_module.SimpleQueue = q_module.SimpleQueue()
 
+    filtered_cmd = [s for s in cmd if s.strip()]
     proc = subprocess.Popen(
-        cmd,
+        filtered_cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

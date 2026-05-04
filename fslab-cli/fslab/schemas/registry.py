@@ -370,8 +370,6 @@ class MetaSimEntry(BaseModel):
     Fields that differ from PlatformEntry
     --------------------------------------
     tool_cxxopts     Equivalent of VERILATOR_CXXOPTS / VCS_CXXOPTS / XCELIUM_CXXOPTS.
-    make_flags       Extra flags forwarded to the sub-make invocation, e.g.
-                     ["-j8", "VM_PARALLEL_BUILDS=1"] for Verilator.
     rtlsim_define    Adds -D RTLSIM to CXXFLAGS. True for all SW metasim tools.
     cmake_targets    Explicit list of cmake targets to expose for this tool.
                      Each maps one cmake custom target to one make target in
@@ -395,7 +393,6 @@ class MetaSimEntry(BaseModel):
 
     # Tool configuration
     tool_cxxopts: list[str] = Field(default_factory=lambda: ["-O2"])
-    make_flags: list[str] = Field(default_factory=list)
     rtlsim_define: bool = True
 
     # Shared build configuration (same semantics as PlatformEntry, different path syntax)
@@ -529,7 +526,6 @@ class FpgaSimEntry(BaseModel):
                      e.g. "f2" — the driver is compiled targeting the F2
                      interface even though the broader project platform may differ.
     rtlsim_define    Not present — fpgasim drivers do not set -D RTLSIM.
-    make_flags       Not needed for fpgasim (no parallel Verilator-style build).
 
     Path syntax is Makefile-style, identical to MetaSimEntry.
     """

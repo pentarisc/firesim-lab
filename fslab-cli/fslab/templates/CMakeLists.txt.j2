@@ -69,7 +69,6 @@
       .id               str        e.g. verilator / vcs / xcelium
       .label            str
       .tool_cxxopts     list[str]  VERILATOR_CXXOPTS / VCS_CXXOPTS / etc. (default ["-O2"])
-      .make_flags       list[str]  Extra flags for sub-make (e.g. ["-j8","VM_PARALLEL_BUILDS=1"])
       .rtlsim_define    bool       Add -D RTLSIM to CXXFLAGS (true for all SW metasim)
       .rpath_origin     bool
       .required_env_vars list[str]
@@ -425,11 +424,6 @@ CXXFLAGS := -std=c++{{ cxx_standard }}{% for f in cxx_flags %} {{ f }}{% endfor 
 #          + GEN_DIR path + common libs + rpath + extra link dirs/libs
 LDFLAGS :={% for opt in sim.extra_link_options %} {{ opt }}{% endfor %} -L\$(GEN_DIR){% for lib in link_libs %} -l{{ lib }}{% endfor %}{% if sim.rpath_origin %} -Wl,-rpath='$$$$ORIGIN'{% endif %}{% for d in sim.extra_link_dirs %} -L{{ d }}{% endfor %}{% for lib in sim.extra_libs %} -l{{ lib }}{% endfor %}
 
-{% if sim.make_flags %}
-# Tool-specific sub-make flags
-{{ sim.id | upper }}_MAKEFLAGS :={% for f in sim.make_flags %} {{ f }}{% endfor %}
-
-{% endif %}
 # -- RTL / source variables required by FireSim Makefrags --------------------
 DESIGN_V  := \$(GEN_DIR)/${GEN_FILE_BASENAME}.sv
 design_vh := \$(GEN_DIR)/${GEN_FILE_BASENAME}.const.vh
@@ -465,7 +459,7 @@ sim_harness    := \$(midas_dir)/simif_emul_all.cc
 # cmake target: metasim-<name>   make target: <make_target or name>
 {% for tgt in sim.cmake_targets %}
 add_custom_target(metasim-{{ tgt.name }}
-    COMMAND ${CMAKE_MAKE_PROGRAM}{% for f in sim.make_flags %} {{ f }}{% endfor %} -f "Makefile.{{ sim.id }}.sim" {{ tgt.make_target if tgt.make_target else tgt.name }}
+    COMMAND ${CMAKE_MAKE_PROGRAM} -f "Makefile.{{ sim.id }}.sim" {{ tgt.make_target if tgt.make_target else tgt.name }}
     WORKING_DIRECTORY "${METASIM_BUILD_DIR}"
     COMMENT "{{ tgt.comment if tgt.comment else '[fslab] ' ~ sim.label ~ ': ' ~ tgt.name }}"
     VERBATIM

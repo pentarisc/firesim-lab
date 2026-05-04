@@ -237,6 +237,7 @@ SkipDriverOpt = Annotated[bool, typer.Option("--skip-driver", help="Skip C++ dri
 ForceGenOpt = Annotated[bool, typer.Option("--force-gen", help="[CLI-07] Force regeneration even if config hash is unchanged.")]
 YamlPathOpt = Annotated[Path, typer.Option("--config", "-c", help="Path to the project YAML.")]
 JobsOpt = Annotated[int, typer.Option("--jobs", "-j", min=1, help="Parallel make jobs for the C++ driver build.")]
+ExtraMakeArgs = Annotated[str, typer.Option("--extra-args", "-e", help="Extra arguments to make e.g. VM_PARALLEL_BUILDS=1")]
 
 def build_options(func):
     @wraps(func)
@@ -272,6 +273,13 @@ def build_options(func):
             min=1,
             help="Parallel make jobs for the C++ driver build.",
         ),
+        extra_args: str = typer.Option(
+            "",
+            "--extra-args",
+            "-e",
+            help=("Extra arguments to Make e.g. VM_PARALLEL_BUILDS=1. "
+                  "Will be inserted immediately after make command."),
+        ),
         **kwargs,
     ):
         return func(
@@ -281,6 +289,7 @@ def build_options(func):
             force_gen=force_gen,
             yaml_path=yaml_path,
             jobs=jobs,
+            extra_args=extra_args,
             **kwargs,
         )
 
@@ -295,6 +304,7 @@ def build_callback(
     force_gen: ForceGenOpt = False,
     yaml_path: YamlPathOpt = _FSLAB_YAML,
     jobs: JobsOpt = 4,
+    extra_args: ExtraMakeArgs = ""
 ) -> None:
     """
     Build the project. Default build option is metasim
@@ -306,6 +316,7 @@ def build_callback(
             force_gen=force_gen,
             yaml_path=yaml_path,
             jobs=jobs,
+            extra_args=extra_args,
             build_type=BuildType.METASIM,
         )
 
@@ -316,6 +327,7 @@ def build_metasim(
     force_gen: ForceGenOpt = False,
     yaml_path: YamlPathOpt = _FSLAB_YAML,
     jobs: JobsOpt = 4,
+    extra_args: ExtraMakeArgs = ""
 ) -> None:
     """Build the project with C++ MetaSim simulation target (software simulator)."""
     cmd_compile(
@@ -324,6 +336,7 @@ def build_metasim(
         force_gen=force_gen,
         yaml_path=yaml_path,
         jobs=jobs,
+        extra_args=extra_args,
         build_type=BuildType.METASIM,
     )
 
@@ -334,6 +347,7 @@ def build_driver(
     force_gen: ForceGenOpt = False,
     yaml_path: YamlPathOpt = _FSLAB_YAML,
     jobs: JobsOpt = 4,
+    extra_args: ExtraMakeArgs = ""
 ) -> None:
     """Build the project with C++ driver for the target platform."""
     cmd_compile(
@@ -342,6 +356,7 @@ def build_driver(
         force_gen=force_gen,
         yaml_path=yaml_path,
         jobs=jobs,
+        extra_args=extra_args,
         build_type=BuildType.DRIVER,
     )
 
@@ -352,6 +367,7 @@ def build_fpgasim(
     force_gen: ForceGenOpt = False,
     yaml_path: YamlPathOpt = _FSLAB_YAML,
     jobs: JobsOpt = 4,
+    extra_args: ExtraMakeArgs = ""
 ) -> None:
     """Build the project with C++ FPGA simulation target (simulator like Vivado xsim)."""
     cmd_compile(
@@ -360,6 +376,7 @@ def build_fpgasim(
         force_gen=force_gen,
         yaml_path=yaml_path,
         jobs=jobs,
+        extra_args=extra_args,
         build_type=BuildType.FPGASIM,
     )
 
@@ -379,6 +396,7 @@ def cmd_compile(
     force_gen: bool,
     yaml_path: Path,
     jobs: int,
+    extra_args: str,
     build_type: BuildType = BuildType.METASIM
 ) -> None:
     """
@@ -423,21 +441,24 @@ def cmd_compile(
     # ------------------------------------------------------------------
     if not skip_rtl:
         section("Step 2 / 3 – java midas.chiselstage.Generator")
-        _run_chisel_generator(config=config, registry=registry, project_root=project_root, sm=sm)
+        _run_chisel_generator(config=config, registry=registry,
+                                project_root=project_root, sm=sm)
 
     # ------------------------------------------------------------------
     # [CLI-13] Step 3 – java midas.stage.GoldenGateMain (MIDAS elaboration)
     # ------------------------------------------------------------------
     if not skip_rtl:
         section("Step 3 / 3 – java midas.stage.GoldenGateMain")
-        _run_golden_gate_main(config=config, registry=registry, project_root=project_root, sm=sm)
+        _run_golden_gate_main(config=config, registry=registry,
+                                project_root=project_root, sm=sm)
 
     # ------------------------------------------------------------------
     # [CLI-13] Step 4 – cmake configure + make (C++ driver)
     # ------------------------------------------------------------------
     if not skip_driver:
         section("Step 4 – cmake / make (C++ driver)")
-        _run_cmake_make(config=config, project_root=project_root, jobs=jobs, sm=sm, build_type=build_type)
+        _run_cmake_make(config=config, project_root=project_root, jobs=jobs,
+                         extra_args = extra_args, sm=sm, build_type=build_type)
 
     # ------------------------------------------------------------------
     # Persist updated state (mark last successful compile)
@@ -603,7 +624,8 @@ def _run_golden_gate_main(
 
 
 def _run_cmake_make(
-    *, config: object, project_root: Path, jobs: int, sm: StateManager, build_type: BuildType
+    *, config: object, project_root: Path, jobs: int, extra_args: str,
+    sm: StateManager, build_type: BuildType
 ) -> None:
     """
     [CLI-13] Configure and build the C++ simulation driver.
@@ -628,9 +650,9 @@ def _run_cmake_make(
 
     # make
     run_or_die(
-        ["make", "-C", str(build_dir), f"-j{jobs}", build_type.value],
+        ["make", f"{extra_args}", "-C", str(build_dir), f"-j{jobs}", build_type.value],
         cwd=project_root,
-        label=f"[make -j{jobs}]",
+        label=f"[make {extra_args} -j{jobs}]",
         log_file=log,
     )
 

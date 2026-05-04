@@ -470,8 +470,7 @@ metasimulators:
   - id: verilator
     label: "Verilator MIDAS-Level Simulator"
 
-    tool_cxxopts: ["-O2"]              # VERILATOR_CXXOPTS ?= -O2
-    make_flags: ["-j8", "VM_PARALLEL_BUILDS=1"]  # VERILATOR_MAKEFLAGS ?= -j8 VM_PARALLEL_BUILDS=1
+    tool_cxxopts: ["-O2"]    # VERILATOR_CXXOPTS
     rtlsim_define: true
     rpath_origin: true
 
@@ -494,6 +493,7 @@ metasimulators:
     # sim_harness is set to a no-op rule (": ;") so Make does not try to build
     # simif_emul_all.cc from scratch — it is already handled by the Makefrag.
     makefile_fragment: |
+      VERILATOR_FLAGS := --threads 8
       include $(midas_dir)/rtlsim/Makefrag-verilator
       $(sim_harness): ;
       verilator: $(OUT_DIR)/V$(DRIVER_NAME)
@@ -515,7 +515,6 @@ metasimulators:
     label: "VCS MIDAS-Level Simulator"
 
     tool_cxxopts: ["-O2"]              # VCS_CXXOPTS ?= -O2
-    make_flags: []
     rtlsim_define: true
     rpath_origin: true
 
@@ -559,7 +558,6 @@ metasimulators:
     label: "Xcelium MIDAS-Level Simulator"
 
     tool_cxxopts: ["-O2"]              # XCELIUM_CXXOPTS ?= -O2
-    make_flags: []
     rtlsim_define: true
     rpath_origin: true
 
@@ -587,7 +585,6 @@ metasimulators:
   # - id: <tool_id>
   #   label: "<Human Readable Label>"
   #   tool_cxxopts: ["-O2"]
-  #   make_flags: []
   #   rtlsim_define: true
   #   rpath_origin: true
   #   required_env_vars: []
