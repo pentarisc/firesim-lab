@@ -238,6 +238,7 @@ ForceGenOpt = Annotated[bool, typer.Option("--force-gen", help="[CLI-07] Force r
 YamlPathOpt = Annotated[Path, typer.Option("--config", "-c", help="Path to the project YAML.")]
 JobsOpt = Annotated[int, typer.Option("--jobs", "-j", min=1, help="Parallel make jobs for the C++ driver build.")]
 ExtraMakeArgs = Annotated[str, typer.Option("--extra-args", "-e", help="Extra arguments to make e.g. VM_PARALLEL_BUILDS=1")]
+DoDebug = Annotated[bool, typer.Option("--debug", "-d", help="Enable build debug.")] # TODO: Enable debug for java and sbt. Currently enabled only for Make.
 
 def build_options(func):
     @wraps(func)
@@ -278,7 +279,13 @@ def build_options(func):
             "--extra-args",
             "-e",
             help=("Extra arguments to Make e.g. VM_PARALLEL_BUILDS=1. "
-                  "Will be inserted immediately after make command."),
+                  "Will be inserted after the target name."),
+        ),
+        debug: bool = typer.Option(
+            False,
+            "--debug",
+            "-d",
+            help="Enable debug while building."
         ),
         **kwargs,
     ):
@@ -290,6 +297,7 @@ def build_options(func):
             yaml_path=yaml_path,
             jobs=jobs,
             extra_args=extra_args,
+            debug=debug,
             **kwargs,
         )
 
@@ -304,7 +312,8 @@ def build_callback(
     force_gen: ForceGenOpt = False,
     yaml_path: YamlPathOpt = _FSLAB_YAML,
     jobs: JobsOpt = 4,
-    extra_args: ExtraMakeArgs = ""
+    extra_args: ExtraMakeArgs = "",
+    debug: DoDebug = False
 ) -> None:
     """
     Build the project. Default build option is metasim
@@ -317,6 +326,7 @@ def build_callback(
             yaml_path=yaml_path,
             jobs=jobs,
             extra_args=extra_args,
+            debug=debug,
             build_type=BuildType.METASIM,
         )
 
@@ -327,7 +337,8 @@ def build_metasim(
     force_gen: ForceGenOpt = False,
     yaml_path: YamlPathOpt = _FSLAB_YAML,
     jobs: JobsOpt = 4,
-    extra_args: ExtraMakeArgs = ""
+    extra_args: ExtraMakeArgs = "",
+    debug: DoDebug = False
 ) -> None:
     """Build the project with C++ MetaSim simulation target (software simulator)."""
     cmd_compile(
@@ -337,6 +348,7 @@ def build_metasim(
         yaml_path=yaml_path,
         jobs=jobs,
         extra_args=extra_args,
+        debug=debug,
         build_type=BuildType.METASIM,
     )
 
@@ -347,7 +359,8 @@ def build_driver(
     force_gen: ForceGenOpt = False,
     yaml_path: YamlPathOpt = _FSLAB_YAML,
     jobs: JobsOpt = 4,
-    extra_args: ExtraMakeArgs = ""
+    extra_args: ExtraMakeArgs = "",
+    debug: DoDebug = False
 ) -> None:
     """Build the project with C++ driver for the target platform."""
     cmd_compile(
@@ -357,6 +370,7 @@ def build_driver(
         yaml_path=yaml_path,
         jobs=jobs,
         extra_args=extra_args,
+        debug=debug,
         build_type=BuildType.DRIVER,
     )
 
@@ -367,7 +381,8 @@ def build_fpgasim(
     force_gen: ForceGenOpt = False,
     yaml_path: YamlPathOpt = _FSLAB_YAML,
     jobs: JobsOpt = 4,
-    extra_args: ExtraMakeArgs = ""
+    extra_args: ExtraMakeArgs = "",
+    debug: DoDebug = False
 ) -> None:
     """Build the project with C++ FPGA simulation target (simulator like Vivado xsim)."""
     cmd_compile(
@@ -377,6 +392,7 @@ def build_fpgasim(
         yaml_path=yaml_path,
         jobs=jobs,
         extra_args=extra_args,
+        debug=debug,
         build_type=BuildType.FPGASIM,
     )
 
@@ -397,6 +413,7 @@ def cmd_compile(
     yaml_path: Path,
     jobs: int,
     extra_args: str,
+    debug: bool,
     build_type: BuildType = BuildType.METASIM
 ) -> None:
     """
@@ -458,7 +475,8 @@ def cmd_compile(
     if not skip_driver:
         section("Step 4 – cmake / make (C++ driver)")
         _run_cmake_make(config=config, project_root=project_root, jobs=jobs,
-                         extra_args = extra_args, sm=sm, build_type=build_type)
+                        extra_args=extra_args, debug=debug,
+                        sm=sm, build_type=build_type)
 
     # ------------------------------------------------------------------
     # Persist updated state (mark last successful compile)
@@ -625,7 +643,7 @@ def _run_golden_gate_main(
 
 def _run_cmake_make(
     *, config: object, project_root: Path, jobs: int, extra_args: str,
-    sm: StateManager, build_type: BuildType
+    debug: bool, sm: StateManager, build_type: BuildType
 ) -> None:
     """
     [CLI-13] Configure and build the C++ simulation driver.
@@ -640,6 +658,11 @@ def _run_cmake_make(
     log = sm.log_file("cmake-make")
     info(f"Log → [path]{log.relative_to(project_root)}[/]")
 
+    make_debug = ""
+
+    if debug: # TODO: If required, add cmake debug.
+      make_debug = "-d"
+
     # cmake configure
     run_or_die(
         ["cmake", "-S", ".", "-B", str(build_dir), "-DCMAKE_BUILD_TYPE=Release"],
@@ -650,9 +673,9 @@ def _run_cmake_make(
 
     # make
     run_or_die(
-        ["make", f"{extra_args}", "-C", str(build_dir), f"-j{jobs}", build_type.value],
+        ["make", make_debug, "-C", str(build_dir), f"-j{jobs}", build_type.value, f"{extra_args}"],
         cwd=project_root,
-        label=f"[make {extra_args} -j{jobs}]",
+        label=f"[make {make_debug} -j{jobs} {build_type.value} {extra_args}]",
         log_file=log,
     )
 
