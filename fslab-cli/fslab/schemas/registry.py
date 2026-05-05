@@ -270,6 +270,9 @@ class PlatformEntry(BaseModel):
     extra_link_dirs: list[str] = Field(default_factory=list)
     extra_libs: list[str] = Field(default_factory=list)
     extra_link_options: list[str] = Field(default_factory=list)
+    board_dir: str = ""
+    fpga_delivery_exts: list[str] = Field(default_factory=list)
+    stamp_hook: str = ""
     cmake_fragment: str = ""
 
     @field_validator("id", mode="before")

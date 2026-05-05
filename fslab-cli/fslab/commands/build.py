@@ -54,6 +54,7 @@ class BuildType(str, Enum):
     METASIM = "metasim"
     FPGASIM = "fpgasim"
     DRIVER = "driver"
+    FPGA = "fpga"
 
 # ---------------------------------------------------------------------------
 # [CLI-04] This router registers BOTH `generate` and `compile` sub-commands.
@@ -396,15 +397,27 @@ def build_fpgasim(
         build_type=BuildType.FPGASIM,
     )
 
-@build_app.command("bitstream")
-def sim_fpgasim(
+@build_app.command("fpga")
+def build_fpga(
     skip_rtl: SkipRtlOpt = False,
     skip_driver: SkipDriverOpt = False,
     force_gen: ForceGenOpt = False,
     yaml_path: YamlPathOpt = _FSLAB_YAML,
+    jobs: JobsOpt = 4,
+    extra_args: ExtraMakeArgs = "",
+    debug: DoDebug = False
 ) -> None:
-    """Build the project bitstream for target platform (e.g. AWS F2)."""
-    success("FPGA bitstream yet implemented.") # TODO check that this command is run on the target FPGA environment, where vivado etc., is available. (e.g. F2)
+    """Build the project with C++ FPGA target driver and generate FPGA bitstream."""
+    cmd_compile(
+        skip_rtl=skip_rtl,
+        skip_driver=skip_driver,
+        force_gen=force_gen,
+        yaml_path=yaml_path,
+        jobs=jobs,
+        extra_args=extra_args,
+        debug=debug,
+        build_type=BuildType.FPGA,
+    )
 
 def cmd_compile(
     skip_rtl: bool,
@@ -473,7 +486,7 @@ def cmd_compile(
     # [CLI-13] Step 4 – cmake configure + make (C++ driver)
     # ------------------------------------------------------------------
     if not skip_driver:
-        section("Step 4 – cmake / make (C++ driver)")
+        section("Step 4 – cmake / make (C++ driver) and prepare for bitstream")
         _run_cmake_make(config=config, project_root=project_root, jobs=jobs,
                         extra_args=extra_args, debug=debug,
                         sm=sm, build_type=build_type)

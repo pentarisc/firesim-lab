@@ -271,6 +271,8 @@ platforms:
       - fpga_mgmt
       - z
     extra_link_options: []
+    board_dir: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2/hdk/cl/developer_designs"
+    fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
 
   # ----------------------------------------------------------------------------
@@ -294,6 +296,8 @@ platforms:
     extra_link_dirs: []
     extra_libs: []
     extra_link_options: []
+    board_dir: "${PLATFORMS_ROOT}/xilinx_alveo_u250"
+    fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
 
   # ----------------------------------------------------------------------------
@@ -312,6 +316,8 @@ platforms:
     extra_link_dirs: []
     extra_libs: []
     extra_link_options: []
+    board_dir: "${PLATFORMS_ROOT}/xilinx_alveo_u280"
+    fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
 
   # ----------------------------------------------------------------------------
@@ -330,6 +336,8 @@ platforms:
     extra_link_dirs: []
     extra_libs: []
     extra_link_options: []
+    board_dir: "${PLATFORMS_ROOT}/xilinx_alveo_u200"
+    fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
 
   # ----------------------------------------------------------------------------
@@ -348,6 +356,8 @@ platforms:
     extra_link_dirs: []
     extra_libs: []
     extra_link_options: []
+    board_dir: "${PLATFORMS_ROOT}/xilinx_vcu118"
+    fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
 
   # ----------------------------------------------------------------------------
@@ -366,6 +376,8 @@ platforms:
     extra_link_dirs: []
     extra_libs: []
     extra_link_options: []
+    board_dir: "${PLATFORMS_ROOT}/rhsresearch_nitefury_ii"
+    fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
 
   # ----------------------------------------------------------------------------
@@ -408,6 +420,8 @@ platforms:
       # Needed so the linker can resolve indirect deps against system libs
       # without adding them to the binary's DT_NEEDED.
       - "-Wl,-rpath-link,/usr/lib/x86_64-linux-gnu"
+    board_dir: "${PLATFORMS_ROOT}/vitis"
+    fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
 
   # ----------------------------------------------------------------------------
