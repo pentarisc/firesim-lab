@@ -50,7 +50,7 @@ __all__ = [
     "TargetConfig",
     # resolvers
     "BridgeConfig",
-    "BridgeParam"
+    "BridgeParam",
     # parser
-    "load_and_validate",
+    "load_and_validate"
 ]

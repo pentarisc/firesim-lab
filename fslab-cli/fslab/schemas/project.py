@@ -31,8 +31,9 @@ from __future__ import annotations
 import re
 from typing import Any, Optional, Annotated, Dict, Union, List, Any
 from pathlib import Path
+from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator, model_validator, computed_field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, computed_field
 import fslab.utils.regexes as rx
 from fslab.utils.display import regex_msg
 
@@ -226,12 +227,93 @@ class DesignConfig(BaseModel):
 # target: block
 # ---------------------------------------------------------------------------
 
+class BuildStrategy(str, Enum):
+    """Vivado build strategy. Subclassing `str` lets pydantic accept the
+    YAML literal directly and lets `build-bitstream.sh` consume `.value`."""
+
+    BASIC = "BASIC"
+    AREA = "AREA"
+    TIMING = "TIMING"
+    EXPLORE = "EXPLORE"
+    CONGESTION = "CONGESTION"
+    NORETIMING = "NORETIMING"
+    DEFAULT = "DEFAULT"
+
+class BuildHostConfig(BaseModel):
+    """SSH connection params for the remote build host."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    host: str = Field(..., min_length=1, description="IP or hostname")
+    user: str = Field(..., min_length=1, description="SSH username")
+    ssh_key: Optional[str] = Field(
+        None,
+        description=(
+            "Path to SSH private key (supports `~`). "
+            "Leave null/omit to fall back to ssh-agent or ~/.ssh/config."
+        ),
+    )
+
+    @field_validator("ssh_key", mode="before")
+    @classmethod
+    def _empty_ssh_key_to_none(cls, v: Any) -> Any:
+        """[BHOST-01] An empty/whitespace ssh_key is treated as omission so
+        fabric falls back to ssh-agent rather than choking on a bad path."""
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @model_validator(mode="after")
+    def _validate_host_shape(self) -> "BuildHostConfig":
+        """[BHOST-02] Catch the common 'user@host' mistake in `host`, and
+        URLs ('https://...') being pasted in by accident."""
+        if "@" in self.host:
+            raise ValueError(
+                f"[BHOST-02] build_host.host '{self.host}' contains '@'. "
+                f"Specify the SSH user via build_host.user instead."
+            )
+        if "://" in self.host:
+            raise ValueError(
+                f"[BHOST-02] build_host.host '{self.host}' looks like a URL. "
+                f"Use only the hostname or IP."
+            )
+        return self
+        
+
+class TargetBuildConfig(BaseModel):
+    """`target.build:` section of the project YAML.
+
+    Attach to your existing target config, e.g.:
+
+        class TargetConfig(BaseModel):
+            platform: str
+            clock_period: str
+            fpga_sim: str
+            build: TargetBuildConfig    # <-- add this
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fpga_frequency: float = Field(
+        ...,
+        gt=0.0,
+        le=300.0,
+        description="Build frequency in MHz; must be in (0, 300].",
+    )
+    build_strategy: BuildStrategy = Field(
+        BuildStrategy.TIMING,
+        description="Vivado build strategy.",
+    )
+    build_host: BuildHostConfig
+
+
 class TargetConfig(BaseModel):
     """FPGA target configuration."""
 
     platform: str
     clock_period: str
     fpga_sim: str
+    build: TargetBuildConfig
 
 
 # ---------------------------------------------------------------------------

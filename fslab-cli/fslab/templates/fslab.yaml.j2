@@ -74,7 +74,13 @@ target:
   platform:     "{{ platform }}"
   clock_period: "1.0"
   fpga_sim: "xsim"
-
+  build:
+    fpga_frequency: 100.0         # MHz, must satisfy 0 < f <= 300
+    build_strategy: "TIMING"      # BASIC|AREA|TIMING|EXPLORE|CONGESTION|NORETIMING|DEFAULT
+    build_host:
+      host: "10.0.0.5"            # remote IP or hostname
+      user: "centos"              # set remote user name
+      ssh_key: "~/.ssh/firesim.pem"   # optional; null/omit => use SSH agent / ~/.ssh/config
 
 ## Add your target's design details here. for non-chisel projects, you need to
 ## specify type as "blackbox" and populate sources and blackbox_ports section.

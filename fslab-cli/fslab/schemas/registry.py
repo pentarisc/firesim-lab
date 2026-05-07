@@ -41,7 +41,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 import fslab.utils.regexes as rx
 from fslab.utils.display import regex_msg
 
@@ -247,6 +247,121 @@ class BridgeEntry(BaseModel):
         return self
 
 
+class RemoteBuildConfig(BaseModel):
+    """`platforms[].remote_build:` section of the registry YAML.
+
+    Field names are platform-agnostic — they describe the role each path
+    plays in the build pipeline, not any specific vendor's HDK.
+    """
+
+    model_config = ConfigDict(extra="allow")  # keeps unrelated consumer
+                                              # fields out of the way
+
+    instance_type: Optional[str] = None
+    ami_id: Optional[str] = None
+    platform_version: Optional[str] = Field(
+        None,
+        description=(
+            "Version tag for the platform HDK (e.g. 'v1.4.0-firesim' for the "
+            "AWS aws-fpga fork). Used for traceability against the docker image."
+        ),
+    )
+    platform_path: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Absolute path to the platform HDK on the remote host "
+            "(e.g. aws-fpga-firesim-f2 root for F2)."
+        ),
+    )
+    build_script: str = Field("build-bitstream.sh", min_length=1)
+
+    # --- NEW fields used by the bitstream/ package ----------------------
+    remote_cl_parent_subdir: str = Field(
+        "hdk/cl/developer_designs",
+        min_length=1,
+        description="Subpath under platform_path where cl_<quintuplet> lives.",
+    )
+    template_cl_name: str = Field(
+        "cl_firesim",
+        min_length=1,
+        description="Name of the template cl_ directory copied per build.",
+    )
+    local_platform_path: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Local path to the platform HDK (typically "
+            "${PLATFORMS_ROOT}/<platform>/<hdk-dirname>). "
+            "${PLATFORMS_ROOT} is substituted at BuildConfig construction."
+        ),
+    )
+    local_build_script: str = Field(
+        ...,
+        min_length=1,
+        description="Local path to build-bitstream.sh. ${PLATFORMS_ROOT} substituted.",
+    )
+    local_project_staging_subdir: str = Field(
+        "build/fpga/cl_{quintuplet}",
+        min_length=1,
+        description=(
+            "Project-relative path to the per-build staging dir. "
+            "Must contain the literal placeholder '{quintuplet}'."
+        ),
+    )
+    local_results_subdir: str = Field(
+        "build/fpga/results-build",
+        min_length=1,
+        description="Project-relative directory where reverse-rsynced build artifacts land.",
+    )
+
+    # --- field validators -----------------------------------------------
+
+    @field_validator("platform_path", "remote_cl_parent_subdir", mode="after")
+    @classmethod
+    def _strip_trailing_slash(cls, v: str) -> str:
+        """[RBUILD-01] Path concatenation in bitstream/ assumes no trailing
+        slash; strip it so user-supplied trailing '/' doesn't double up."""
+        return v.rstrip("/") if v else v
+
+    @field_validator("platform_path", mode="after")
+    @classmethod
+    def _platform_path_absolute(cls, v: str) -> str:
+        """[RBUILD-02] platform_path is a remote path; require Unix-absolute."""
+        if not v.startswith("/"):
+            raise ValueError(
+                f"[RBUILD-02] platform_path must be an absolute Unix path, "
+                f"got: {v!r}"
+            )
+        return v
+
+    @field_validator("local_project_staging_subdir", mode="after")
+    @classmethod
+    def _has_quintuplet_placeholder(cls, v: str) -> str:
+        """[RBUILD-03] local_project_staging_subdir must template per-build.
+        Without {quintuplet}, every project would write to the same path."""
+        if "{quintuplet}" not in v:
+            raise ValueError(
+                f"[RBUILD-03] local_project_staging_subdir must contain the "
+                f"literal placeholder '{{quintuplet}}', got: {v!r}"
+            )
+        return v
+
+    # --- cross-field validator -------------------------------------------
+
+    @model_validator(mode="after")
+    def _validate_local_path_distinctness(self) -> "RemoteBuildConfig":
+        """[RBUILD-04] local_platform_path and local_build_script must be
+        different — they refer to a directory and a file respectively, and
+        a typo conflating them is silently catastrophic."""
+        if self.local_platform_path == self.local_build_script:
+            raise ValueError(
+                f"[RBUILD-04] local_platform_path and local_build_script "
+                f"point to the same value: {self.local_platform_path!r}"
+            )
+        return self
+
+
 class PlatformEntry(BaseModel):
     """
     Describes a target FPGA platform and the cmake build configuration
@@ -274,6 +389,7 @@ class PlatformEntry(BaseModel):
     fpga_delivery_exts: list[str] = Field(default_factory=list)
     stamp_hook: str = ""
     cmake_fragment: str = ""
+    remote_build: RemoteBuildConfig
 
     @field_validator("id", mode="before")
     @classmethod

@@ -274,6 +274,18 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2/hdk/cl/developer_designs"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
+    remote_build:
+      instance_type: "f2.2xlarge"
+      ami_id: "ami-xxxxxxxx"
+      aws_fpga_version: "v1.4.0-firesim"
+      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
+      build_script: "build-bitstream.sh"
+      remote_cl_parent_subdir: "hdk/cl/developer_designs"
+      template_cl_name: "cl_firesim"
+      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
+      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
+      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
+      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
   # xilinx_alveo_u250  —  Conda-only build, no extra SDK paths
@@ -299,6 +311,15 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/xilinx_alveo_u250"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
+    remote_build:
+      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
+      build_script: "build-bitstream.sh"
+      remote_cl_parent_subdir: "hdk/cl/developer_designs"
+      template_cl_name: "cl_firesim"
+      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
+      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
+      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
+      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
   # xilinx_alveo_u280
@@ -319,6 +340,15 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/xilinx_alveo_u280"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
+    remote_build:
+      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
+      build_script: "build-bitstream.sh"
+      remote_cl_parent_subdir: "hdk/cl/developer_designs"
+      template_cl_name: "cl_firesim"
+      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
+      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
+      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
+      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
   # xilinx_alveo_u200
@@ -339,6 +369,15 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/xilinx_alveo_u200"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
+    remote_build:
+      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
+      build_script: "build-bitstream.sh"
+      remote_cl_parent_subdir: "hdk/cl/developer_designs"
+      template_cl_name: "cl_firesim"
+      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
+      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
+      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
+      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
   # xilinx_vcu118
@@ -359,6 +398,15 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/xilinx_vcu118"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
+    remote_build:
+      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
+      build_script: "build-bitstream.sh"
+      remote_cl_parent_subdir: "hdk/cl/developer_designs"
+      template_cl_name: "cl_firesim"
+      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
+      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
+      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
+      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
   # rhsresearch_nitefury_ii
@@ -379,6 +427,15 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/rhsresearch_nitefury_ii"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
+    remote_build:
+      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
+      build_script: "build-bitstream.sh"
+      remote_cl_parent_subdir: "hdk/cl/developer_designs"
+      template_cl_name: "cl_firesim"
+      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
+      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
+      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
+      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
   # vitis  —  Xilinx Vitis / XRT (experimental, Ubuntu 20.04 / 18.04)
@@ -423,6 +480,15 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/vitis"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
+    remote_build:
+      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
+      build_script: "build-bitstream.sh"
+      remote_cl_parent_subdir: "hdk/cl/developer_designs"
+      template_cl_name: "cl_firesim"
+      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
+      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
+      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
+      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
   # TEMPLATE: copy this block when registering a new platform.

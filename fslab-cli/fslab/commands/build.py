@@ -240,6 +240,7 @@ YamlPathOpt = Annotated[Path, typer.Option("--config", "-c", help="Path to the p
 JobsOpt = Annotated[int, typer.Option("--jobs", "-j", min=1, help="Parallel make jobs for the C++ driver build.")]
 ExtraMakeArgs = Annotated[str, typer.Option("--extra-args", "-e", help="Extra arguments to make e.g. VM_PARALLEL_BUILDS=1")]
 DoDebug = Annotated[bool, typer.Option("--debug", "-d", help="Enable build debug.")] # TODO: Enable debug for java and sbt. Currently enabled only for Make.
+UploadPlatform = Annotated[bool, typer.Option("--upload-platform", "-u", help="Upload the platform's HDK / board support files to remote host.")]
 
 def build_options(func):
     @wraps(func)
@@ -405,9 +406,17 @@ def build_fpga(
     yaml_path: YamlPathOpt = _FSLAB_YAML,
     jobs: JobsOpt = 4,
     extra_args: ExtraMakeArgs = "",
-    debug: DoDebug = False
+    debug: DoDebug = False,
+    upload_platform: UploadPlatform = False
 ) -> None:
     """Build the project with C++ FPGA target driver and generate FPGA bitstream."""
+
+    from fslab.bitstream import (
+        BitstreamBuildFailed,
+        InvalidBuildConfig,
+        build_bitstream,
+    )
+    
     cmd_compile(
         skip_rtl=skip_rtl,
         skip_driver=skip_driver,
@@ -418,6 +427,31 @@ def build_fpga(
         debug=debug,
         build_type=BuildType.FPGA,
     )
+
+    try:
+        project, registry = load_and_validate(str(yaml_path.resolve()))
+    except Exception as exc:  # noqa: BLE001
+        error(f"Configuration error:\n  {exc}")
+        raise typer.Exit(code=1) from exc
+
+    # Run the bitstream build.
+    try:
+        ok = build_bitstream(project=project, registry=registry, upload_platform=upload_platform)
+    except InvalidBuildConfig as exc:
+        error(f"Build config error:\n  {exc}")
+        raise typer.Exit(code=1) from exc
+    except BitstreamBuildFailed as exc:
+        error(f"Build aborted:\n  {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if not ok:
+        # build-bitstream.sh exited non-zero; results were already pulled back.
+        error(
+            "build-bitstream.sh reported failure. Check the results dir for logs."
+        )
+        raise typer.Exit(code=1)
+
+    info("Bitstream build complete.")
 
 def cmd_compile(
     skip_rtl: bool,
