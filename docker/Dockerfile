@@ -190,13 +190,20 @@ ENV CACHE_GID=${CACHE_GID}
 FROM base AS firesim-stage
 
 ARG FIRESIM_COMMIT=main
+ARG AWS_FPGA_F2_REF=main
 
 # /opt/firesim is root-owned, world-readable (755).  No chown required.
+# We also overwrite the aws-fpga-firesim-f2 fork with our own to support ubuntu 24.04.
 RUN git clone https://github.com/firesim/firesim.git /opt/firesim \
     && cd /opt/firesim \
     && git checkout ${FIRESIM_COMMIT} \
     && git config submodule.platforms/f1/aws-fpga.update none \
-    && git submodule update --init --recursive
+    && git config submodule.platforms/f2/aws-fpga-firesim-f2.update none \
+    && git submodule update --init --recursive \
+    && git config -f .gitmodules --remove-section submodule.platforms/f2/aws-fpga-firesim-f2 \
+    && rmdir platforms/f2/aws-fpga-firesim-f2 \
+    && git clone https://github.com/pentarisc/aws-fpga-firesim-f2.git platforms/f2/aws-fpga-firesim-f2 \
+    && git -C platforms/f2/aws-fpga-firesim-f2 checkout ${AWS_FPGA_F2_REF}
 
 # Stub env.sh — skips build-setup.sh (aws-fpga hdk/sdk handled separately).
 RUN echo 'export FIRESIM_ENV_SOURCED=1' >> /opt/firesim/env.sh && \
