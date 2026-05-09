@@ -44,11 +44,11 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from functools import wraps
 import inspect
 
-
 from fslab.utils.display import console, error, info, section, success, warning
 from fslab.utils.shell import run_or_die
 from fslab.utils.state import StateManager, check_and_maybe_skip_generation
 from fslab.schemas.parser import load_and_validate
+from fslab.bitstream import BitstreamBuildFailed, InvalidBuildConfig, build_bitstream
 
 class BuildType(str, Enum):
     METASIM = "metasim"
@@ -410,12 +410,6 @@ def build_fpga(
     upload_platform: UploadPlatform = False
 ) -> None:
     """Build the project with C++ FPGA target driver and generate FPGA bitstream."""
-
-    from fslab.bitstream import (
-        BitstreamBuildFailed,
-        InvalidBuildConfig,
-        build_bitstream,
-    )
     
     cmd_compile(
         skip_rtl=skip_rtl,
@@ -426,32 +420,8 @@ def build_fpga(
         extra_args=extra_args,
         debug=debug,
         build_type=BuildType.FPGA,
+        upload_platform=upload_platform
     )
-
-    try:
-        project, registry = load_and_validate(str(yaml_path.resolve()))
-    except Exception as exc:  # noqa: BLE001
-        error(f"Configuration error:\n  {exc}")
-        raise typer.Exit(code=1) from exc
-
-    # Run the bitstream build.
-    try:
-        ok = build_bitstream(project=project, registry=registry, upload_platform=upload_platform)
-    except InvalidBuildConfig as exc:
-        error(f"Build config error:\n  {exc}")
-        raise typer.Exit(code=1) from exc
-    except BitstreamBuildFailed as exc:
-        error(f"Build aborted:\n  {exc}")
-        raise typer.Exit(code=1) from exc
-
-    if not ok:
-        # build-bitstream.sh exited non-zero; results were already pulled back.
-        error(
-            "build-bitstream.sh reported failure. Check the results dir for logs."
-        )
-        raise typer.Exit(code=1)
-
-    info("Bitstream build complete.")
 
 def cmd_compile(
     skip_rtl: bool,
@@ -461,7 +431,8 @@ def cmd_compile(
     jobs: int,
     extra_args: str,
     debug: bool,
-    build_type: BuildType = BuildType.METASIM
+    build_type: BuildType = BuildType.METASIM,
+    upload_platform: bool = False
 ) -> None:
     """
     Full compile pipeline.
@@ -524,6 +495,30 @@ def cmd_compile(
         _run_cmake_make(config=config, project_root=project_root, jobs=jobs,
                         extra_args=extra_args, debug=debug,
                         sm=sm, build_type=build_type)
+
+    # Since FPGA build is run on remote, we invoke it only if asked for.
+    if build_type == BuildType.FPGA:
+        log = sm.log_file("fpga-build")
+
+        # Run the bitstream build.
+        try:
+            ok = build_bitstream(project=config, registry=registry,
+                                 upload_platform=upload_platform, log_file=log)
+        except InvalidBuildConfig as exc:
+            error(f"Build config error:\n  {exc}")
+            raise typer.Exit(code=1) from exc
+        except BitstreamBuildFailed as exc:
+            error(f"Build aborted:\n  {exc}")
+            raise typer.Exit(code=1) from exc
+
+        if not ok:
+            # build-bitstream.sh exited non-zero; results were already pulled back.
+            error(
+                "build-bitstream.sh reported failure. Check the results dir for logs."
+            )
+            raise typer.Exit(code=1)
+
+        info("[bold]Bitstream build complete.[/]")
 
     # ------------------------------------------------------------------
     # Persist updated state (mark last successful compile)

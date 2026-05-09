@@ -10,23 +10,35 @@ two intentional improvements:
      touches Fabric or subprocess directly — keeps the build recipe testable
      by swapping in a fake host.
 
-Fabric 2.x is used for SSH; rsync is invoked via `subprocess` because Fabric 2
-dropped `rsync_project`.
+Fabric 2.x is used for SSH; rsync goes through `run_or_die` from
+`fslab.utils.shell`, which itself uses `subprocess.Popen` and supports
+log-file streaming.
+
+Logging:
+  Every remote-session method (`run`, `put`, `rsync_to`, `rsync_from`)
+  accepts an optional `log_file` argument and appends a structured record
+  for that operation:
+    * `run`    — header + teed stdout/stderr + exit footer
+    * `put`    — header + transfer ok/FAILED footer (SFTP has no streams)
+    * rsync    — handled inside `run_or_die`
 """
 
 from __future__ import annotations
 
 import abc
 import shlex
-import subprocess
+import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, IO, List, Optional, Union
 
 from fabric import Connection  # type: ignore[import-not-found]
 from invoke import Result  # type: ignore[import-not-found]
 
 from fslab.schemas.project import BuildHostConfig
 from fslab.utils.display import console, error, info, section, success, warning
+from fslab.utils.shell import run_or_die
+from fslab.utils.streams import Tee
 
 from .buildconfig import BuildConfig
 
@@ -51,7 +63,8 @@ class RemoteCommandFailed(Exception):
 
 
 class RsyncFailed(Exception):
-    """Raised when an rsync subprocess invocation returns non-zero."""
+    """Raised when an rsync invocation fails. Wraps the underlying
+    `run_or_die` exception so callers can catch this domain-specific type."""
 
 
 # ---------------------------------------------------------------------------
@@ -80,18 +93,33 @@ class BuildHost(abc.ABC):
         warn: bool = False,
         hide: bool = False,
         pty: bool = False,
+        log_file: Optional[Union[str, Path]] = None,
     ) -> Result:
         """Execute `cmd` on the remote host.
 
         If `warn` is False, a non-zero exit raises `RemoteCommandFailed`.
-        If `hide` is True, output is captured but not streamed.
+        If `hide` is True, output is captured but not echoed to the console.
         If `pty` is True, allocate a pseudo-terminal — use this for long-
         running interactive commands (e.g. the build script) so output streams.
+        If `log_file` is given, stdout+stderr are appended to that file (via
+        Tee). When `hide=False`, output goes to both file and console; when
+        `hide=True`, output goes to file only.
         """
 
     @abc.abstractmethod
-    def put(self, local: str, remote: str) -> None:
-        """Upload a single file."""
+    def put(
+        self,
+        local: str,
+        remote: str,
+        *,
+        log_file: Optional[Union[str, Path]] = None,
+    ) -> None:
+        """Upload a single file via SFTP.
+
+        SFTP transfers don't produce streamable output, so when `log_file`
+        is given, only metadata records are written: a header for the
+        transfer and a footer indicating success or failure.
+        """
 
     @abc.abstractmethod
     def rsync_to(
@@ -102,8 +130,14 @@ class BuildHost(abc.ABC):
         exclude: Optional[List[str]] = None,
         follow_symlinks: bool = False,
         delete: bool = False,
+        log_file: Optional[Union[str, Path]] = None,
+        label: Optional[str] = None,
     ) -> None:
-        """Upload a directory tree via rsync."""
+        """Upload a directory tree via rsync.
+
+        `label` is an optional human-readable tag that the underlying
+        runner uses in its console/log output. Defaults to '[rsync push]'.
+        """
 
     @abc.abstractmethod
     def rsync_from(
@@ -112,8 +146,13 @@ class BuildHost(abc.ABC):
         local: str,
         *,
         exclude: Optional[List[str]] = None,
+        log_file: Optional[Union[str, Path]] = None,
+        label: Optional[str] = None,
     ) -> None:
-        """Download a directory tree via rsync."""
+        """Download a directory tree via rsync.
+
+        `label` defaults to '[rsync pull]'.
+        """
 
     # --- context manager ergonomics ---------------------------------------
 
@@ -184,6 +223,28 @@ class ExternalBuildHost(BuildHost):
             )
         return self._conn
 
+    # --- log helpers (shared by run + put) -------------------------------
+
+    def _open_log_with_header(
+        self,
+        log_file: Optional[Union[str, Path]],
+        action_descr: str,
+    ) -> Optional[IO[str]]:
+        """Open log_file in append mode, write a header line, return the
+        handle. Caller is responsible for closing. Returns None when
+        log_file is None."""
+        if log_file is None:
+            return None
+        log_path = Path(log_file).expanduser()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        f = open(log_path, "a", encoding="utf-8", buffering=1)
+        f.write(
+            f"\n--- {datetime.now().isoformat(timespec='seconds')} | "
+            f"{self.params.host} | {action_descr} ---\n"
+        )
+        f.flush()
+        return f
+
     # --- exec / file ops --------------------------------------------------
 
     def run(
@@ -193,24 +254,66 @@ class ExternalBuildHost(BuildHost):
         warn: bool = False,
         hide: bool = False,
         pty: bool = False,
+        log_file: Optional[Union[str, Path]] = None,
     ) -> Result:
         conn = self._require_conn()
         console.print(f"[{self.params.host}] run: {cmd}")
-        # Always pass warn=True to fabric so we can format our own exception
-        # with stderr tail rather than fabric's default UnexpectedExit.
-        result: Result = conn.run(cmd, warn=True, hide=hide, pty=pty)
+
+        f = self._open_log_with_header(log_file, cmd)
+        try:
+            if f is None:
+                # Default fabric behaviour: console-only (or silent if hide).
+                result: Result = conn.run(cmd, warn=True, hide=hide, pty=pty)
+            else:
+                if hide:
+                    out_stream: Any = f
+                    err_stream: Any = f
+                else:
+                    out_stream = Tee(sys.stdout, f)
+                    err_stream = Tee(sys.stderr, f)
+                result = conn.run(
+                    cmd,
+                    warn=True,
+                    pty=pty,
+                    out_stream=out_stream,
+                    err_stream=err_stream,
+                )
+                f.write(f"--- exit {result.return_code} ---\n")
+        finally:
+            if f is not None:
+                f.close()
+
         if not warn and result.return_code != 0:
             raise RemoteCommandFailed(
                 cmd, result.return_code, getattr(result, "stderr", "") or ""
             )
         return result
 
-    def put(self, local: str, remote: str) -> None:
+    def put(
+        self,
+        local: str,
+        remote: str,
+        *,
+        log_file: Optional[Union[str, Path]] = None,
+    ) -> None:
         conn = self._require_conn()
         console.print(f"[{self.params.host}] put: {local} -> {remote}")
-        conn.put(local, remote=remote)
 
-    # --- rsync via subprocess --------------------------------------------
+        f = self._open_log_with_header(log_file, f"put: {local} -> {remote}")
+        try:
+            try:
+                conn.put(local, remote=remote)
+            except Exception as e:
+                if f is not None:
+                    f.write(f"--- transfer FAILED: {e} ---\n")
+                raise
+            if f is not None:
+                f.write("--- transfer ok ---\n")
+        finally:
+            if f is not None:
+                f.close()
+
+    # --- rsync via run_or_die --------------------------------------------
 
     def _ssh_e_arg(self) -> str:
         # accept-new pins host key on first connection, enforces on subsequent.
@@ -232,11 +335,14 @@ class ExternalBuildHost(BuildHost):
         exclude: Optional[List[str]],
         follow_symlinks: bool,
         delete: bool,
+        cwd: Optional[Union[str, Path]],
+        label: str,
+        log_file: Optional[Union[str, Path]],
     ) -> None:
         cmd: List[str] = [
             "rsync",
             "-az",
-            "--info=stats1,progress2",
+            "--info=stats1",
             "-e", self._ssh_e_arg(),
         ]
         # -L follows symlinks (firesim Alveo style); -l preserves them
@@ -249,14 +355,19 @@ class ExternalBuildHost(BuildHost):
             cmd += ["--exclude", ex]
         cmd += [src, dst]
 
-        console.print(f"rsync: {' '.join(shlex.quote(c) for c in cmd)}")
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        if proc.returncode != 0:
-            raise RsyncFailed(
-                f"rsync failed (rc={proc.returncode})\n"
-                f"CMD: {' '.join(shlex.quote(c) for c in cmd)}\n"
-                f"STDERR:\n{proc.stderr}"
+        try:
+            run_or_die(
+                cmd,
+                cwd=cwd,
+                label=label,
+                log_file=log_file,
             )
+        except Exception as e:
+            # Wrap to preserve the `RsyncFailed` domain type. `_pull_results`
+            # in F2BitBuilder catches this for best-effort failure handling.
+            raise RsyncFailed(
+                f"rsync failed: {label} {src} -> {dst}\n{e}"
+            ) from e
 
     def rsync_to(
         self,
@@ -266,6 +377,8 @@ class ExternalBuildHost(BuildHost):
         exclude: Optional[List[str]] = None,
         follow_symlinks: bool = False,
         delete: bool = False,
+        log_file: Optional[Union[str, Path]] = None,
+        label: Optional[str] = None,
     ) -> None:
         target = f"{self.params.user}@{self.params.host}:{remote}"
         self._rsync(
@@ -273,6 +386,11 @@ class ExternalBuildHost(BuildHost):
             exclude=exclude,
             follow_symlinks=follow_symlinks,
             delete=delete,
+            # Local source as cwd — rsync doesn't need it functionally
+            # (absolute paths), but it adds context to run_or_die's log.
+            cwd=local,
+            label=label or "[rsync push]",
+            log_file=log_file,
         )
 
     def rsync_from(
@@ -281,6 +399,8 @@ class ExternalBuildHost(BuildHost):
         local: str,
         *,
         exclude: Optional[List[str]] = None,
+        log_file: Optional[Union[str, Path]] = None,
+        label: Optional[str] = None,
     ) -> None:
         Path(local).mkdir(parents=True, exist_ok=True)
         source = f"{self.params.user}@{self.params.host}:{remote}"
@@ -289,6 +409,9 @@ class ExternalBuildHost(BuildHost):
             exclude=exclude,
             follow_symlinks=False,
             delete=False,
+            cwd=None,  # source is remote; no local cwd to pin
+            label=label or "[rsync pull]",
+            log_file=log_file,
         )
 
 

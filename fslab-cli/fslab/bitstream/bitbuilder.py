@@ -1,6 +1,6 @@
 """Bitstream builder.
 
-Top-level entry point is `build_bitstream(project, registry, *, upload_platform=False)`,
+Top-level entry point is `build_bitstream(project, registry, *, upload_platform=False, log_file=None)`,
 which fslab's `build fpga` CLI subcommand calls directly. Internally it:
 
   1. Resolves a `BuildConfig` from the validated project + registry inputs.
@@ -10,6 +10,12 @@ which fslab's `build fpga` CLI subcommand calls directly. Internally it:
 The platform-specific recipe lives in `F2BitBuilder.build_bitstream`. It
 mirrors firesim's F2BitBuilder up to (but not including) S3/AGFI submission —
 deliberately out of scope for this iteration.
+
+Logging:
+  When `log_file` is passed, every remote-session call during the build —
+  `host.run`, `host.put`, `host.rsync_to`, `host.rsync_from` — appends a
+  structured record to that file. `run` and `put` write through fabric;
+  rsync goes through `fslab.utils.shell.run_or_die`.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ import abc
 import shlex
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Union
 
 from fslab.utils.display import console, error, info, section, success, warning
 
@@ -65,6 +71,7 @@ class BitBuilder(abc.ABC):
         host: BuildHost,
         *,
         upload_platform: bool = False,
+        log_file: Optional[Union[str, Path]] = None,
     ) -> bool:
         """Run the build. Returns True on success, False on script failure."""
 
@@ -98,6 +105,12 @@ class F2BitBuilder(BitBuilder):
     # cl_firesim template is then rsynced separately.
     _PLATFORM_UPLOAD_EXCLUDES = ["hdk/cl/developer_designs/cl_*"]
 
+    def __init__(self, cfg: BuildConfig) -> None:
+        super().__init__(cfg)
+        # Per-build state set in build_bitstream(). Cleared in finally so a
+        # second build using the same builder instance starts clean.
+        self._log_file: Optional[Path] = None
+
     # ----------------------------------------------------------------------
     # Public entry point
     # ----------------------------------------------------------------------
@@ -107,35 +120,65 @@ class F2BitBuilder(BitBuilder):
         host: BuildHost,
         *,
         upload_platform: bool = False,
+        log_file: Optional[Union[str, Path]] = None,
     ) -> bool:
         cfg = self.cfg
+        self._log_file = Path(log_file).expanduser() if log_file else None
+
         info(
             f"Starting F2 bitstream build for {cfg.quintuplet} "
             f"(freq={cfg.fpga_frequency} MHz, strategy={cfg.build_strategy.name})"
         )
+        if self._log_file:
+            info(f"Logging command output to {self._log_file}")
 
-        # ---------- pre-build setup (raises on failure) ----------
-        if upload_platform:
-            self._upload_platform(host)
-        self._validate_remote_prereqs(host)
+        try:
+            # ---------- pre-build setup (raises on failure) ----------
+            if upload_platform:
+                self._upload_platform(host)
+            self._validate_remote_prereqs(host)
 
-        self._stage_template(host)
-        self._create_synth_symlink(host)
-        self._overlay_project_staging(host)
-        self._upload_build_script(host)
+            self._stage_template(host)
+            self._create_synth_symlink(host)
+            self._overlay_project_staging(host)
+            self._upload_build_script(host)
 
-        # ---------- run the build (does NOT raise on non-zero) ----
-        rc = self._run_build_script(host)
+            # ---------- run the build (does NOT raise on non-zero) ----
+            rc = self._run_build_script(host)
 
-        # ---------- reverse-rsync results regardless of pass/fail ----
-        self._pull_results(host, build_passed=(rc == 0))
+            # ---------- reverse-rsync results regardless of pass/fail ----
+            self._pull_results(host, build_passed=(rc == 0))
 
-        if rc != 0:
-            error(f"F2 bitstream build FAILED (build-bitstream.sh rc={rc})")
-            return False
+            if rc != 0:
+                error(f"F2 bitstream build FAILED (build-bitstream.sh rc={rc})")
+                return False
 
-        info(f"F2 bitstream build SUCCEEDED for {cfg.quintuplet}")
-        return True
+            info(f"F2 bitstream build SUCCEEDED for {cfg.quintuplet}")
+            return True
+        finally:
+            self._log_file = None
+
+    # ----------------------------------------------------------------------
+    # Internal: thin wrappers around BuildHost methods. Each auto-applies
+    # this build's log_file, so the step methods stay readable. Callers can
+    # still override log_file per-call by passing it explicitly.
+    # ----------------------------------------------------------------------
+
+    def _run(self, host: BuildHost, cmd: str, **kwargs: Any) -> Any:
+        kwargs.setdefault("log_file", self._log_file)
+        return host.run(cmd, **kwargs)
+
+    def _put(self, host: BuildHost, local: str, remote: str, **kwargs: Any) -> None:
+        kwargs.setdefault("log_file", self._log_file)
+        host.put(local, remote, **kwargs)
+
+    def _rsync_to(self, host: BuildHost, local: str, remote: str, **kwargs: Any) -> None:
+        kwargs.setdefault("log_file", self._log_file)
+        host.rsync_to(local, remote, **kwargs)
+
+    def _rsync_from(self, host: BuildHost, remote: str, local: str, **kwargs: Any) -> None:
+        kwargs.setdefault("log_file", self._log_file)
+        host.rsync_from(remote, local, **kwargs)
 
     # ----------------------------------------------------------------------
     # Steps
@@ -159,27 +202,32 @@ class F2BitBuilder(BitBuilder):
         info(
             f"Uploading platform HDK -> {_host_label(host)}:{cfg.remote_platform_path}"
         )
-        host.run(f"mkdir -p {shlex.quote(cfg.remote_platform_path)}")
-        host.rsync_to(
-            local=str(cfg.local_platform_path) + "/",
-            remote=cfg.remote_platform_path + "/",
+        self._run(host, f"mkdir -p {shlex.quote(cfg.remote_platform_path)}")
+        self._rsync_to(
+            host,
+            str(cfg.local_platform_path) + "/",
+            cfg.remote_platform_path + "/",
             exclude=self._PLATFORM_UPLOAD_EXCLUDES,
             follow_symlinks=False,
+            label="[rsync hdk-base]",
         )
 
         info(
             f"Uploading cl template -> {_host_label(host)}:{cfg.remote_template_cl}"
         )
-        host.run(f"mkdir -p {shlex.quote(cfg.remote_template_cl)}")
-        host.rsync_to(
-            local=str(local_template) + "/",
-            remote=cfg.remote_template_cl + "/",
+        self._run(host, f"mkdir -p {shlex.quote(cfg.remote_template_cl)}")
+        self._rsync_to(
+            host,
+            str(local_template) + "/",
+            cfg.remote_template_cl + "/",
             follow_symlinks=False,
+            label="[rsync cl-template]",
         )
 
     def _validate_remote_prereqs(self, host: BuildHost) -> None:
         cfg = self.cfg
-        r = host.run(
+        r = self._run(
+            host,
             f"test -d {shlex.quote(cfg.remote_template_cl)}",
             warn=True, hide=True,
         )
@@ -195,11 +243,12 @@ class F2BitBuilder(BitBuilder):
         to be the cl_dir itself (not nested), and we wipe any prior attempt
         first so re-runs are deterministic."""
         cfg = self.cfg
-        host.run(f"mkdir -p {shlex.quote(cfg.remote_cl_parent)}")
-        host.run(f"rm -rf {shlex.quote(cfg.remote_cl_dir)}")
-        host.run(
+        self._run(host, f"mkdir -p {shlex.quote(cfg.remote_cl_parent)}")
+        self._run(host, f"rm -rf {shlex.quote(cfg.remote_cl_dir)}")
+        self._run(
+            host,
             f"cp -rf {shlex.quote(cfg.remote_template_cl)} "
-            f"-T {shlex.quote(cfg.remote_cl_dir)}"
+            f"-T {shlex.quote(cfg.remote_cl_dir)}",
         )
         info(f"Staged template at {cfg.remote_cl_dir}")
 
@@ -209,9 +258,10 @@ class F2BitBuilder(BitBuilder):
         cfg = self.cfg
         scripts_dir = f"{cfg.remote_cl_dir}/build/scripts"
         symlink_name = f"synth_cl_{cfg.quintuplet}.tcl"
-        host.run(
+        self._run(
+            host,
             f"cd {shlex.quote(scripts_dir)} && "
-            f"ln -sf synth_cl_firesim.tcl {shlex.quote(symlink_name)}"
+            f"ln -sf synth_cl_firesim.tcl {shlex.quote(symlink_name)}",
         )
         info(f"Created {symlink_name} -> synth_cl_firesim.tcl")
 
@@ -220,18 +270,20 @@ class F2BitBuilder(BitBuilder):
         generated design/* files and the compiled driver into place.
         Trailing slashes matter: copy contents, not the directory itself."""
         cfg = self.cfg
-        host.rsync_to(
-            local=str(cfg.local_project_staging_dir) + "/",
-            remote=cfg.remote_cl_dir + "/",
+        self._rsync_to(
+            host,
+            str(cfg.local_project_staging_dir) + "/",
+            cfg.remote_cl_dir + "/",
             follow_symlinks=False,
+            label="[rsync project-staging]",
         )
         info(f"Overlaid project staging onto {cfg.remote_cl_dir}")
 
     def _upload_build_script(self, host: BuildHost) -> None:
         cfg = self.cfg
         remote_path = f"{cfg.remote_cl_dir}/{cfg.remote_build_script_name}"
-        host.put(str(cfg.local_build_script), remote_path)
-        host.run(f"chmod +x {shlex.quote(remote_path)}")
+        self._put(host, str(cfg.local_build_script), remote_path)
+        self._run(host, f"chmod +x {shlex.quote(remote_path)}")
 
     def _run_build_script(self, host: BuildHost) -> int:
         cfg = self.cfg
@@ -245,7 +297,7 @@ class F2BitBuilder(BitBuilder):
         info(f"Running build script on remote: {cmd}")
         # warn=True so we can still pull results on failure.
         # pty=True so Vivado output streams in real-time.
-        result = host.run(cmd, warn=True, pty=True)
+        result = self._run(host, cmd, warn=True, pty=True)
         return result.return_code
 
     def _pull_results(self, host: BuildHost, *, build_passed: bool) -> None:
@@ -262,9 +314,11 @@ class F2BitBuilder(BitBuilder):
         )
         try:
             local_dst.mkdir(parents=True, exist_ok=True)
-            host.rsync_from(
-                remote=cfg.remote_cl_dir + "/",
-                local=str(local_dst) + "/",
+            self._rsync_from(
+                host,
+                cfg.remote_cl_dir + "/",
+                str(local_dst) + "/",
+                label="[rsync pull-results]",
             )
             info(f"Build artifacts synced to {local_dst}")
         except RsyncFailed as e:
@@ -291,15 +345,20 @@ def make_bitbuilder(cfg: BuildConfig) -> BitBuilder:
 
 
 def build_bitstream(
-    project: object,
-    registry: object,
+    project: Any,
+    registry: Any,
     *,
     upload_platform: bool = False,
+    log_file: Optional[Union[str, Path]] = None,
 ) -> bool:
     """Resolve config, request a host, run the build, release the host.
 
     Returns True on success, False on build-script failure. Raises
     `BitstreamBuildFailed` / `InvalidBuildConfig` for setup errors.
+
+    `log_file`, when set, captures every remote-session call (run, put,
+    rsync) issued during the build. Output also streams to the console
+    in real time.
     """
     cfg = BuildConfig.from_validated(project, registry)
     provider = make_build_host_provider(cfg)
@@ -308,7 +367,11 @@ def build_bitstream(
     host = provider.request(cfg)
     try:
         host.connect()
-        return builder.build_bitstream(host, upload_platform=upload_platform)
+        return builder.build_bitstream(
+            host,
+            upload_platform=upload_platform,
+            log_file=log_file,
+        )
     finally:
         provider.release(host)
 
