@@ -402,18 +402,78 @@ def launch_instance(
     """
     ec2 = session.client("ec2")
 
+    sg_name = "fslab-ssh-access-sg"
+    vpc_id = None
+    security_group_id = None
+    
+    # If a subnet is provided, we must find its VPC to create the SG in the right place
+    if subnet_id:
+        subnet_info = ec2.describe_subnets(SubnetIds=[subnet_id])
+        vpc_id = subnet_info["Subnets"][0]["VpcId"]
+
+    # 1. Check if our SSH Security Group already exists
+    filters = [{"Name": "group-name", "Values": [sg_name]}]
+    if vpc_id:
+        filters.append({"Name": "vpc-id", "Values": [vpc_id]})
+        
+    existing_sgs = ec2.describe_security_groups(Filters=filters).get("SecurityGroups", [])
+
+    if existing_sgs:
+        # Reuse existing security group to prevent clutter
+        security_group_id = existing_sgs[0]["GroupId"]
+        info(f"Using existing Security Group: {security_group_id}")
+    else:
+        # 2. Create the Security Group
+        sg_params = {
+            "GroupName": sg_name,
+            "Description": "Allow SSH access for boto3 spot instances"
+        }
+        if vpc_id:
+            sg_params["VpcId"] = vpc_id
+            
+        sg_resp = ec2.create_security_group(**sg_params)
+        security_group_id = sg_resp["GroupId"]
+        info(f"Created new Security Group: {security_group_id}")
+        
+        # 3. Authorize Ingress for Port 22 (SSH)
+        ec2.authorize_security_group_ingress(
+            GroupId=security_group_id,
+            IpPermissions=[
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": 22,
+                    "ToPort": 22,
+                    "IpRanges": [{"CidrIp": "0.0.0.0/0"}], # 0.0.0.0/0 allows access from anywhere
+                }
+            ],
+        )
+        info("Authorized Port 22 (SSH) for the Security Group.")
+    # -------------------------------------------------------------
+
+    # Proceed with launching the instance
     params: dict = {
         "ImageId": ami_id,
         "InstanceType": instance_type,
         "MinCount": 1,
         "MaxCount": 1,
     }
+    
     if key_name:
         params["KeyName"] = key_name
-    if subnet_id:
-        params["SubnetId"] = subnet_id
     if iam_instance_profile:
         params["IamInstanceProfile"] = {"Name": iam_instance_profile}
+
+    # 4. Attach Subnet, Security Group, and FORCE a Public IP Address
+    if subnet_id:
+        params["NetworkInterfaces"] = [{
+            "DeviceIndex": 0,
+            "SubnetId": subnet_id,
+            "Groups": [security_group_id],
+            "AssociatePublicIpAddress": True, # Crucial for SSH access
+        }]
+    else:
+        # If no subnet is provided, use default VPC and assign the SG directly
+        params["SecurityGroupIds"] = [security_group_id]
 
     if lifecycle == "spot_one_time":
         params["InstanceMarketOptions"] = {
@@ -440,6 +500,7 @@ def launch_instance(
     resp = ec2.run_instances(**params)
     instance_id = resp["Instances"][0]["InstanceId"]
     info(f"Launched EC2 instance {instance_id} ({lifecycle}, {instance_type})")
+    
     return instance_id
 
 

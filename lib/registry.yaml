@@ -371,9 +371,13 @@ platforms:
         # base AMI shipped today; the user must supply one (or set
         # `instance_id:` in fslab.yaml to opt into managed-reuse mode and
         # skip the launch path entirely).
-        instance_type:        "f2.2xlarge"
-        aws_fpga_version:     "v1.4.0-firesim"
-        remote_platform_path: "/home/centos/aws-fpga-firesim-f2"
+        # m4.2xlarge - small design builds, setup testing
+        # z1d.2xlarge - for bigger design builds, (8 cpu, 64gb RAM)
+        # m4.4xlarge - for big design builds, (16 cpu, 64 gb RAM)
+        # f2.6xlarge - for fpga simulation. (24 vcpu, 256gb ram), 1 FPGA slot. 
+        instance_type:        "m4.4xlarge"  
+        aws_fpga_version:     "v0.1-firesim-lab"
+        remote_platform_path: "/home/ubuntu/aws-fpga-firesim-f2"
 
     publish:
       none: {}

@@ -32,10 +32,13 @@ The resolution mirrors how `bitbuilder_args.py` registers args/params
 schema classes — three string-keyed registries, one per axis.
 
 Logging:
-  When `log_file` is passed, every remote-session call during the build —
-  `host.run`, `host.put`, `host.rsync_to`, `host.rsync_from` — appends a
-  structured record to that file. `run` and `put` write through fabric;
-  rsync goes through `fslab.utils.shell.run_or_die`.
+  When `log_file` is passed, every remote-session call during the build
+  AND during the pre-build platform-HDK upload — `host.run`, `host.put`,
+  `host.rsync_to`, `host.rsync_from` — appends a structured record to
+  that file. `run` and `put` write through fabric; rsync goes through
+  `fslab.utils.shell.run_or_die`. The top-level `build_bitstream` threads
+  `log_file` into both `provider.ensure_platform` (covering the upload
+  path) and `builder.build_bitstream` (covering the build path).
 """
 
 from __future__ import annotations
@@ -132,13 +135,22 @@ class BitBuilder(abc.ABC):
         self.cfg = cfg
 
     @abc.abstractmethod
-    def upload_platform(self, host: BuildHost) -> None:
+    def upload_platform(
+        self,
+        host: BuildHost,
+        *,
+        log_file: Optional[Union[str, Path]] = None,
+    ) -> None:
         """Push the platform HDK to the remote host.
 
         Called by `BuildHostProvider.ensure_platform` (not by
         `build_bitstream` directly). Implementations are responsible for
         all the platform-specific layout — which subdirs to send, which
         excludes apply, where to place the cl template.
+
+        `log_file`, when set, captures every remote-session call (run,
+        put, rsync) issued during the upload — matching the behaviour of
+        `build_bitstream`'s `log_file` parameter.
         """
 
     @abc.abstractmethod
@@ -193,15 +205,22 @@ class F2BitBuilder(BitBuilder):
 
     def __init__(self, cfg: BuildConfig) -> None:
         super().__init__(cfg)
-        # Per-build state set in build_bitstream(). Cleared in finally so a
-        # second build using the same builder instance starts clean.
+        # Per-call state set by the public entry points (upload_platform /
+        # build_bitstream). The internal _run/_put/_rsync_* wrappers read
+        # this so step methods stay readable. Cleared in finally so a
+        # second invocation using the same builder instance starts clean.
         self._log_file: Optional[Path] = None
 
     # ----------------------------------------------------------------------
     # Public entry points
     # ----------------------------------------------------------------------
 
-    def upload_platform(self, host: BuildHost) -> None:
+    def upload_platform(
+        self,
+        host: BuildHost,
+        *,
+        log_file: Optional[Union[str, Path]] = None,
+    ) -> None:
         """Mirror fpga.mk stamp behaviour: push the platform HDK base, then
         push the cl_firesim template separately so we can exclude developer
         cl_* dirs from the base sync. (For F2 the HDK is aws-fpga-firesim-f2.)
@@ -210,40 +229,47 @@ class F2BitBuilder(BitBuilder):
         the .firesim-lab-stamp.yaml after this returns.
         """
         cfg = self.cfg
-        local_template = (
-            cfg.local_platform_path
-            / cfg.remote_cl_parent_subdir
-            / cfg.template_cl_name
-        )
-        if not local_template.is_dir():
-            raise BitstreamBuildFailed(
-                f"cl template missing locally: {local_template}"
+        self._log_file = Path(log_file).expanduser() if log_file else None
+
+        try:
+            local_template = (
+                cfg.local_platform_path
+                / cfg.remote_cl_parent_subdir
+                / cfg.template_cl_name
+            )
+            if not local_template.is_dir():
+                raise BitstreamBuildFailed(
+                    f"cl template missing locally: {local_template}"
+                )
+
+            info(
+                f"Uploading platform HDK -> {_host_label(host)}:{cfg.remote_platform_path}"
+            )
+            if self._log_file:
+                info(f"Logging upload output to {self._log_file}")
+            self._run(host, f"mkdir -p {shlex.quote(cfg.remote_platform_path)}")
+            self._rsync_to(
+                host,
+                str(cfg.local_platform_path) + "/",
+                cfg.remote_platform_path + "/",
+                exclude=self._PLATFORM_UPLOAD_EXCLUDES,
+                follow_symlinks=False,
+                label="[rsync hdk-base]",
             )
 
-        info(
-            f"Uploading platform HDK -> {_host_label(host)}:{cfg.remote_platform_path}"
-        )
-        self._run(host, f"mkdir -p {shlex.quote(cfg.remote_platform_path)}")
-        self._rsync_to(
-            host,
-            str(cfg.local_platform_path) + "/",
-            cfg.remote_platform_path + "/",
-            exclude=self._PLATFORM_UPLOAD_EXCLUDES,
-            follow_symlinks=False,
-            label="[rsync hdk-base]",
-        )
-
-        info(
-            f"Uploading cl template -> {_host_label(host)}:{cfg.remote_template_cl}"
-        )
-        self._run(host, f"mkdir -p {shlex.quote(cfg.remote_template_cl)}")
-        self._rsync_to(
-            host,
-            str(local_template) + "/",
-            cfg.remote_template_cl + "/",
-            follow_symlinks=False,
-            label="[rsync cl-template]",
-        )
+            info(
+                f"Uploading cl template -> {_host_label(host)}:{cfg.remote_template_cl}"
+            )
+            self._run(host, f"mkdir -p {shlex.quote(cfg.remote_template_cl)}")
+            self._rsync_to(
+                host,
+                str(local_template) + "/",
+                cfg.remote_template_cl + "/",
+                follow_symlinks=False,
+                label="[rsync cl-template]",
+            )
+        finally:
+            self._log_file = None
 
     def build_bitstream(
         self,
@@ -488,8 +514,8 @@ def build_bitstream(
     S3 uploads / AFI polls don't keep an EC2 instance billing.
 
     `log_file`, when set, captures every remote-session call (run, put,
-    rsync) issued during the build. Output also streams to the console
-    in real time.
+    rsync) issued during BOTH the platform-HDK upload and the build
+    itself. Output also streams to the console in real time.
     """
     cfg = BuildConfig.from_validated(project, registry)
     provider = make_build_host_provider(cfg)
@@ -499,7 +525,10 @@ def build_bitstream(
     try:
         host.connect()
         provider.ensure_platform(
-            host, cfg, builder=builder, force_upload=upload_platform
+            host, cfg,
+            builder=builder,
+            force_upload=upload_platform,
+            log_file=log_file,
         )
         result = builder.build_bitstream(host, log_file=log_file)
     finally:

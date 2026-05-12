@@ -22,6 +22,12 @@ Logging:
     * `put`    — header + transfer ok/FAILED footer (SFTP has no streams)
     * rsync    — handled inside `run_or_die`
 
+  `BuildHostProvider.ensure_platform` and its internal helpers
+  (`_do_upload`, `_run_bootstrap`, `_read_stamp`, `_write_stamp`) also
+  accept a `log_file` argument and thread it into every host call they
+  make, so the pre-build platform-HDK upload is captured in the same
+  log file as the build itself.
+
 Platform-HDK provisioning:
   `BuildHostProvider.ensure_platform()` is the single decision point for
   whether the platform HDK needs to be (re)uploaded before a build. It
@@ -517,6 +523,7 @@ class BuildHostProvider(abc.ABC):
         *,
         builder: Any,  # BitBuilder; typed `Any` to avoid circular import.
         force_upload: bool = False,
+        log_file: Optional[Union[str, Path]] = None,
     ) -> None:
         """Decide whether to upload the platform HDK, then do so if needed.
 
@@ -538,34 +545,39 @@ class BuildHostProvider(abc.ABC):
 
         `force_upload=True` (from `--upload-platform`) overrides everything
         and forces an upload + restamp.
+
+        `log_file`, when set, is threaded into every host call this method
+        and its helpers make (stamp read/write, bootstrap, and the
+        bitbuilder's upload_platform), so the pre-build upload appears in
+        the same log file as the build itself.
         """
         mode: UploadMode = getattr(host, "_upload_mode", "reuse_strict")
 
         if force_upload:
             info("--upload-platform set: forcing HDK upload.")
-            self._do_upload(host, cfg, builder)
+            self._do_upload(host, cfg, builder, log_file=log_file)
             return
 
         if mode == "fresh":
             info("Fresh build host: uploading platform HDK.")
-            self._do_upload(host, cfg, builder)
+            self._do_upload(host, cfg, builder, log_file=log_file)
             return
 
-        stamp = self._read_stamp(host, cfg)
+        stamp = self._read_stamp(host, cfg, log_file=log_file)
         expected_ver = getattr(cfg.host, "aws_fpga_version", None)
         stamp_ver = stamp.get("aws_fpga_version") if stamp else None
 
         if mode == "reuse_soft":
             if stamp is None:
                 info("No stamp on managed instance: uploading platform HDK.")
-                self._do_upload(host, cfg, builder)
+                self._do_upload(host, cfg, builder, log_file=log_file)
                 return
             if expected_ver and stamp_ver != expected_ver:
                 warning(
                     f"Stamp version mismatch ({stamp_ver!r} on remote vs "
                     f"expected {expected_ver!r}); refreshing platform HDK."
                 )
-                self._do_upload(host, cfg, builder)
+                self._do_upload(host, cfg, builder, log_file=log_file)
                 return
             info(
                 f"Stamp verified (aws_fpga_version={stamp_ver!r}); "
@@ -603,12 +615,25 @@ class BuildHostProvider(abc.ABC):
     )
     _REMOTE_BOOTSTRAP_PATH: str = "/tmp/firesim-lab-bootstrap.sh"
 
-    def _do_upload(self, host: BuildHost, cfg: BuildConfig, builder: Any) -> None:
-        builder.upload_platform(host)
-        self._run_bootstrap(host, cfg)
-        self._write_stamp(host, cfg)
+    def _do_upload(
+        self,
+        host: BuildHost,
+        cfg: BuildConfig,
+        builder: Any,
+        *,
+        log_file: Optional[Union[str, Path]] = None,
+    ) -> None:
+        builder.upload_platform(host, log_file=log_file)
+        self._run_bootstrap(host, cfg, log_file=log_file)
+        self._write_stamp(host, cfg, log_file=log_file)
 
-    def _run_bootstrap(self, host: BuildHost, cfg: BuildConfig) -> None:
+    def _run_bootstrap(
+        self,
+        host: BuildHost,
+        cfg: BuildConfig,
+        *,
+        log_file: Optional[Union[str, Path]] = None,
+    ) -> None:
         """Push and run the post-upload bootstrap script.
 
         Soft-fail by design: a non-zero exit logs a warning but does not
@@ -624,11 +649,16 @@ class BuildHostProvider(abc.ABC):
                 f"skipping post-upload sanity check."
             )
             return
-        host.put(str(self._BOOTSTRAP_SCRIPT_PATH), self._REMOTE_BOOTSTRAP_PATH)
+        host.put(
+            str(self._BOOTSTRAP_SCRIPT_PATH),
+            self._REMOTE_BOOTSTRAP_PATH,
+            log_file=log_file,
+        )
         r = host.run(
             f"bash {shlex.quote(self._REMOTE_BOOTSTRAP_PATH)} "
             f"{shlex.quote(cfg.remote_platform_path)}",
             warn=True,
+            log_file=log_file,
         )
         if r.return_code != 0:
             warning(
@@ -640,10 +670,18 @@ class BuildHostProvider(abc.ABC):
         return f"{cfg.remote_platform_path}/{self._STAMP_FILENAME}"
 
     def _read_stamp(
-        self, host: BuildHost, cfg: BuildConfig
+        self,
+        host: BuildHost,
+        cfg: BuildConfig,
+        *,
+        log_file: Optional[Union[str, Path]] = None,
     ) -> Optional[dict]:
         path = self._stamp_path(cfg)
-        r = host.run(f"cat {shlex.quote(path)}", warn=True, hide=True)
+        r = host.run(
+            f"cat {shlex.quote(path)}",
+            warn=True, hide=True,
+            log_file=log_file,
+        )
         if r.return_code != 0:
             return None
         try:
@@ -656,7 +694,13 @@ class BuildHostProvider(abc.ABC):
             return None
         return data
 
-    def _write_stamp(self, host: BuildHost, cfg: BuildConfig) -> None:
+    def _write_stamp(
+        self,
+        host: BuildHost,
+        cfg: BuildConfig,
+        *,
+        log_file: Optional[Union[str, Path]] = None,
+    ) -> None:
         """Write a minimal YAML stamp via a base64-encoded heredoc.
 
         Base64 sidesteps shell-quoting concerns for the embedded YAML
@@ -680,7 +724,8 @@ class BuildHostProvider(abc.ABC):
         # earlier in the upload; idempotent anyway.
         host.run(
             f"mkdir -p {shlex.quote(cfg.remote_platform_path)} && "
-            f"echo {b64} | base64 -d > {shlex.quote(path)}"
+            f"echo {b64} | base64 -d > {shlex.quote(path)}",
+            log_file=log_file,
         )
         info(f"Wrote stamp: {path} (aws_fpga_version={expected_ver})")
 
