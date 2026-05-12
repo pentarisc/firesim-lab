@@ -17,6 +17,17 @@
 #  No coordination between the run script and the compose environment block
 #  is required.
 #
+#  AWS configuration mount
+#  ───────────────────────
+#  ${HOST_AWS_DIR} (typically <install-dir>/.aws on the host) is bind-mounted
+#  at /home/firesim-lab/.aws.  No remap step is needed: the host directory is
+#  owned by the host user, bind mounts preserve numeric UID, and the pseudo
+#  user 'firesim-lab-user' is created below with that same UID — so it owns
+#  the mount automatically.  HOME is fixed to /home/firesim-lab for every UID
+#  (set in docker-compose and in the /etc/passwd entry below), so `aws sso
+#  login`, `aws configure`, etc. resolve ~/.aws to the bind mount regardless
+#  of which host UID is running.
+#
 #  Environment variables (from docker-compose / Dockerfile):
 #    CACHE_GID  — GID of the firesim-lab-cache group baked into the image
 #                 (default: 2543; matches the ARG CACHE_GID in the Dockerfile)
@@ -27,7 +38,8 @@
 #    3. Append an /etc/passwd entry for HOST_UID (if absent) with the
 #       pseudo-username 'firesim-lab-user'.  Home directory is set to
 #       /home/firesim-lab so getpwuid() and the HOME env var agree —
-#       keeping SBT, pip, and ccache pointed at the pre-warmed cache paths.
+#       keeping SBT, pip, ccache, and aws-cli pointed at the pre-warmed
+#       cache paths and the bind-mounted .aws directory.
 #       Direct file append is used instead of useradd to avoid shadow-utils
 #       side effects (/etc/shadow, /etc/gshadow) that can produce inconsistent
 #       state in containers and cause whoami/id to fail.
@@ -88,7 +100,9 @@ fi
 # there is no authentication, so a plain passwd entry is all that is needed
 # for whoami, id, ls, and getpwuid() to resolve the numeric UID to a name.
 # Home directory is set to the fixed cache home so that getpwuid() and the
-# HOME env var agree regardless of which UID is running.
+# HOME env var agree regardless of which UID is running.  This is also what
+# makes ~/.aws resolve to the bind-mounted /home/firesim-lab/.aws for any
+# host UID, so AWS SSO and aws configure work without per-user setup.
 # ---------------------------------------------------------------------------
 if ! getent passwd "${HOST_UID}" > /dev/null 2>&1; then
     echo "${PSEUDO_USER}:x:${HOST_UID}:${HOST_GID}:FireSim Lab User:${CACHE_HOME}:/bin/bash" >> /etc/passwd

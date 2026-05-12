@@ -21,25 +21,37 @@ Logging:
     * `run`    — header + teed stdout/stderr + exit footer
     * `put`    — header + transfer ok/FAILED footer (SFTP has no streams)
     * rsync    — handled inside `run_or_die`
+
+Platform-HDK provisioning:
+  `BuildHostProvider.ensure_platform()` is the single decision point for
+  whether the platform HDK needs to be (re)uploaded before a build. It
+  consults a small stamp file at `<remote_platform_path>/.firesim-lab-stamp.yaml`
+  and the provider's `_upload_mode` (set during `request()`) to decide
+  between skip / upload / fail. See the docstring on the method for the
+  policy matrix.
 """
 
 from __future__ import annotations
 
 import abc
+import base64
 import shlex
 import sys
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, IO, List, Optional, Union
+from typing import Any, IO, List, Literal, Optional, Union
 
+import yaml
 from fabric import Connection  # type: ignore[import-not-found]
 from invoke import Result  # type: ignore[import-not-found]
 
-from fslab.schemas.project import BuildHostConfig
+from fslab.schemas.host_model import Ec2LaunchHostConfig, ExternalHostConfig
 from fslab.utils.display import console, error, info, section, success, warning
 from fslab.utils.shell import run_or_die
 from fslab.utils.streams import Tee
 
+from . import aws_fpga
 from .buildconfig import BuildConfig
 
 
@@ -67,6 +79,29 @@ class RsyncFailed(Exception):
     `run_or_die` exception so callers can catch this domain-specific type."""
 
 
+class PlatformVersionMismatch(Exception):
+    """Raised when the remote stamp's aws_fpga_version disagrees with the
+    project's expected version under `reuse_strict` mode (external host)."""
+
+
+# ---------------------------------------------------------------------------
+# Upload-mode literal — used by ensure_platform's decision logic
+# ---------------------------------------------------------------------------
+
+
+# The provider tags each host returned by request() with one of these
+# modes. ensure_platform branches on the value:
+#
+#   reuse_strict  user owns the HDK on this box (external). Stamp mismatch
+#                 is fatal; never auto-upload without --upload-platform.
+#   reuse_soft    fslab manages the HDK on this box (ec2_launch with
+#                 instance_id). Stamp mismatch auto-uploads with a warning;
+#                 missing stamp triggers a first-time upload.
+#   fresh         every build starts from a blank instance (ec2_launch
+#                 ephemeral). Always upload.
+UploadMode = Literal["reuse_strict", "reuse_soft", "fresh"]
+
+
 # ---------------------------------------------------------------------------
 # BuildHost (abstract)
 # ---------------------------------------------------------------------------
@@ -78,6 +113,10 @@ class BuildHost(abc.ABC):
     Concrete implementations decide how the connection is established. Once
     connected, all callers interact with the host through this small API.
     """
+
+    # Set by the provider during request() so ensure_platform can branch
+    # on lifecycle context without re-deriving it from host_model state.
+    _upload_mode: UploadMode = "reuse_strict"
 
     @abc.abstractmethod
     def connect(self) -> None: ...
@@ -176,7 +215,7 @@ class ExternalBuildHost(BuildHost):
     just closes the connection.
     """
 
-    def __init__(self, params: BuildHostConfig):
+    def __init__(self, params: ExternalHostConfig):
         self.params = params
         self._conn: Optional[Connection] = None
 
@@ -416,6 +455,24 @@ class ExternalBuildHost(BuildHost):
 
 
 # ---------------------------------------------------------------------------
+# Ec2LaunchBuildHost — EC2-backed, SSH-reachable
+# ---------------------------------------------------------------------------
+
+
+class Ec2LaunchBuildHost(ExternalBuildHost):
+    """SSH-reachable host backed by an EC2 instance.
+
+    Behaviourally identical to `ExternalBuildHost` for run/put/rsync — the
+    transport is the same. This class only adds the `instance_id` that the
+    provider needs at release time to stop/terminate the right resource.
+    """
+
+    def __init__(self, params: ExternalHostConfig, instance_id: str):
+        super().__init__(params)
+        self.instance_id = instance_id
+
+
+# ---------------------------------------------------------------------------
 # BuildHostProvider
 # ---------------------------------------------------------------------------
 
@@ -424,29 +481,465 @@ class BuildHostProvider(abc.ABC):
     """Manages the lifecycle of build hosts.
 
     Replaces firesim's `BuildFarm`. The contract is intentionally smaller:
-    request a host, release it later. Subclasses can add launch/terminate
-    semantics (e.g. an EC2 provider) without changing this interface.
+    request a host, ensure the platform HDK is present, run a build,
+    release the host.
+
+    Subclasses implement `request` / `release`; `ensure_platform` is
+    shared base-class logic that consults a stamp file and the host's
+    `_upload_mode` to decide between skip / upload / fail.
     """
 
     @abc.abstractmethod
     def request(self, cfg: BuildConfig) -> BuildHost:
-        """Return a BuildHost ready to be `connect()`ed."""
+        """Return a BuildHost ready to be `connect()`ed.
+
+        Concrete implementations must set `host._upload_mode` before
+        returning so `ensure_platform` knows which policy to apply.
+        """
 
     @abc.abstractmethod
     def release(self, host: BuildHost) -> None:
         """Release the host. For external (pre-provisioned) hosts this just
-        closes the connection. For cloud providers, this would terminate the
-        instance."""
+        closes the connection. For ephemeral EC2 hosts this terminates the
+        instance; for managed-reuse EC2 hosts it stops the instance only
+        if the provider started it (initial state was `stopped`)."""
+
+    # ----------------------------------------------------------------------
+    # Platform-HDK provisioning — shared across providers
+    # ----------------------------------------------------------------------
+
+    _STAMP_FILENAME = ".firesim-lab-stamp.yaml"
+
+    def ensure_platform(
+        self,
+        host: BuildHost,
+        cfg: BuildConfig,
+        *,
+        builder: Any,  # BitBuilder; typed `Any` to avoid circular import.
+        force_upload: bool = False,
+    ) -> None:
+        """Decide whether to upload the platform HDK, then do so if needed.
+
+        Policy (consulted via `host._upload_mode`):
+
+          fresh
+              Always upload + (re)write stamp. ec2_launch ephemeral.
+
+          reuse_soft  (ec2_launch with instance_id)
+              Read stamp. Missing → upload (first time on this instance).
+              Mismatched → upload + WARN (refreshing to the expected version).
+              Match → skip.
+
+          reuse_strict  (external)
+              Read stamp purely as a diagnostic. Mismatch → hard error
+              (the user owns this box; never silently clobber GBs of HDK).
+              Missing stamp or no expected version → noop (let the
+              bitbuilder's later prereq check catch a truly missing HDK).
+
+        `force_upload=True` (from `--upload-platform`) overrides everything
+        and forces an upload + restamp.
+        """
+        mode: UploadMode = getattr(host, "_upload_mode", "reuse_strict")
+
+        if force_upload:
+            info("--upload-platform set: forcing HDK upload.")
+            self._do_upload(host, cfg, builder)
+            return
+
+        if mode == "fresh":
+            info("Fresh build host: uploading platform HDK.")
+            self._do_upload(host, cfg, builder)
+            return
+
+        stamp = self._read_stamp(host, cfg)
+        expected_ver = getattr(cfg.host, "aws_fpga_version", None)
+        stamp_ver = stamp.get("aws_fpga_version") if stamp else None
+
+        if mode == "reuse_soft":
+            if stamp is None:
+                info("No stamp on managed instance: uploading platform HDK.")
+                self._do_upload(host, cfg, builder)
+                return
+            if expected_ver and stamp_ver != expected_ver:
+                warning(
+                    f"Stamp version mismatch ({stamp_ver!r} on remote vs "
+                    f"expected {expected_ver!r}); refreshing platform HDK."
+                )
+                self._do_upload(host, cfg, builder)
+                return
+            info(
+                f"Stamp verified (aws_fpga_version={stamp_ver!r}); "
+                f"skipping HDK upload."
+            )
+            return
+
+        # reuse_strict
+        if stamp is None or expected_ver is None:
+            # User-managed host with no version expectation — defer to the
+            # bitbuilder's prereq check for the missing-HDK case.
+            return
+        if stamp_ver != expected_ver:
+            raise PlatformVersionMismatch(
+                f"Remote HDK version mismatch on user-managed host: stamp "
+                f"reports aws_fpga_version={stamp_ver!r}, project expects "
+                f"{expected_ver!r}.\n"
+                f"  -> Pass --upload-platform to refresh the HDK from "
+                f"{cfg.local_platform_path}, or update the remote install "
+                f"to the expected version."
+            )
+
+    # --- stamp + upload internals ----------------------------------------
+
+    # Path to the bootstrap script that runs on the remote after a fresh
+    # HDK upload. Lives outside the python package — under
+    # `fslab-cli/scripts/<platform>/bootstrap.sh` — so it stays editable
+    # without touching the package tree and fits the firesim-lab dev
+    # workflow (source tree is always available inside the container).
+    # Resolved as ../../scripts/ec2_f2/bootstrap.sh relative to this file
+    # (fslab-cli/fslab/bitstream/buildhost.py → fslab-cli/scripts/...).
+    _BOOTSTRAP_SCRIPT_PATH: Path = (
+        Path(__file__).parent.parent.parent
+        / "scripts" / "ec2_f2" / "bootstrap.sh"
+    )
+    _REMOTE_BOOTSTRAP_PATH: str = "/tmp/firesim-lab-bootstrap.sh"
+
+    def _do_upload(self, host: BuildHost, cfg: BuildConfig, builder: Any) -> None:
+        builder.upload_platform(host)
+        self._run_bootstrap(host, cfg)
+        self._write_stamp(host, cfg)
+
+    def _run_bootstrap(self, host: BuildHost, cfg: BuildConfig) -> None:
+        """Push and run the post-upload bootstrap script.
+
+        Soft-fail by design: a non-zero exit logs a warning but does not
+        block the build — the bitbuilder's own prereq + build steps will
+        surface a hard failure with platform-specific context. The
+        bootstrap is a fast sanity probe (HDK sourceable, vivado on
+        PATH); skipping it on a system where it can't run shouldn't gate
+        the user.
+        """
+        if not self._BOOTSTRAP_SCRIPT_PATH.is_file():
+            warning(
+                f"Bootstrap script not found at {self._BOOTSTRAP_SCRIPT_PATH}; "
+                f"skipping post-upload sanity check."
+            )
+            return
+        host.put(str(self._BOOTSTRAP_SCRIPT_PATH), self._REMOTE_BOOTSTRAP_PATH)
+        r = host.run(
+            f"bash {shlex.quote(self._REMOTE_BOOTSTRAP_PATH)} "
+            f"{shlex.quote(cfg.remote_platform_path)}",
+            warn=True,
+        )
+        if r.return_code != 0:
+            warning(
+                f"Bootstrap reported issues (exit {r.return_code}); the build "
+                f"will proceed but may fail at the build-script stage."
+            )
+
+    def _stamp_path(self, cfg: BuildConfig) -> str:
+        return f"{cfg.remote_platform_path}/{self._STAMP_FILENAME}"
+
+    def _read_stamp(
+        self, host: BuildHost, cfg: BuildConfig
+    ) -> Optional[dict]:
+        path = self._stamp_path(cfg)
+        r = host.run(f"cat {shlex.quote(path)}", warn=True, hide=True)
+        if r.return_code != 0:
+            return None
+        try:
+            data = yaml.safe_load(r.stdout) or {}
+        except yaml.YAMLError as e:
+            warning(f"Could not parse stamp file at {path}: {e}; treating as missing.")
+            return None
+        if not isinstance(data, dict):
+            warning(f"Stamp file at {path} is not a mapping; treating as missing.")
+            return None
+        return data
+
+    def _write_stamp(self, host: BuildHost, cfg: BuildConfig) -> None:
+        """Write a minimal YAML stamp via a base64-encoded heredoc.
+
+        Base64 sidesteps shell-quoting concerns for the embedded YAML
+        content. The file is small (a few hundred bytes) so encoding cost
+        is negligible.
+        """
+        path = self._stamp_path(cfg)
+        expected_ver = (
+            getattr(cfg.host, "aws_fpga_version", None) or "unknown"
+        )
+        stamp = {
+            "aws_fpga_version": expected_ver,
+            "platform": cfg.platform_id,
+            "uploaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "uploaded_by_user": getattr(cfg.host, "ssh_user", None)
+                or getattr(cfg.host, "user", "unknown"),
+        }
+        yaml_text = yaml.safe_dump(stamp, default_flow_style=False, sort_keys=True)
+        b64 = base64.b64encode(yaml_text.encode("utf-8")).decode("ascii")
+        # mkdir -p the parent in case the platform path was created
+        # earlier in the upload; idempotent anyway.
+        host.run(
+            f"mkdir -p {shlex.quote(cfg.remote_platform_path)} && "
+            f"echo {b64} | base64 -d > {shlex.quote(path)}"
+        )
+        info(f"Wrote stamp: {path} (aws_fpga_version={expected_ver})")
+
+
+# ---------------------------------------------------------------------------
+# ExternalBuildHostProvider
+# ---------------------------------------------------------------------------
 
 
 class ExternalBuildHostProvider(BuildHostProvider):
     """For pre-provisioned hosts. No launch/terminate, just close on release."""
 
     def request(self, cfg: BuildConfig) -> BuildHost:
-        return ExternalBuildHost(cfg.build_host)
+        host_cfg = cfg.host
+        if not isinstance(host_cfg, ExternalHostConfig):
+            # Should be unreachable: make_build_host_provider only returns
+            # this provider when host.type == "external".
+            raise RuntimeError(
+                f"ExternalBuildHostProvider received host of type "
+                f"{host_cfg.type!r}; expected 'external'."
+            )
+        host = ExternalBuildHost(host_cfg)
+        host._upload_mode = "reuse_strict"
+        return host
 
     def release(self, host: BuildHost) -> None:
         host.close()
+
+
+# ---------------------------------------------------------------------------
+# Ec2LaunchBuildHostProvider
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Ec2Lifecycle:
+    """Records what the provider did at request() time so release() can
+    undo only what it did. Two-axis state:
+
+      action      'launched' | 'started' | 'connected'
+      instance_id the resource to act on at release-time
+    """
+    action: str
+    instance_id: str
+
+
+class Ec2LaunchBuildHostProvider(BuildHostProvider):
+    """Provider for the `ec2_launch` host model.
+
+    Two sub-modes, selected by `host_cfg.instance_id`:
+
+      * instance_id unset → **ephemeral**. RunInstances + wait_running +
+        wait_ssh → use → TerminateInstances on release.
+
+      * instance_id set   → **managed reuse**. DescribeInstances:
+          - stopped  → StartInstances + wait_running + wait_ssh → use →
+                       StopInstances on release.
+          - running  → connect only → leave running on release (do not
+                       touch state of an instance someone else may own).
+          - terminal → fail.
+
+    The provider keeps a single `_lifecycle` record between request() and
+    release(); calling request() twice without an intervening release()
+    is undefined.
+    """
+
+    def __init__(self) -> None:
+        self._lifecycle: Optional[_Ec2Lifecycle] = None
+        self._session: Any = None  # boto3.Session; lazy
+
+    # ----------------------------------------------------------------------
+    # request / release
+    # ----------------------------------------------------------------------
+
+    def request(self, cfg: BuildConfig) -> BuildHost:
+        host_cfg = cfg.host
+        if not isinstance(host_cfg, Ec2LaunchHostConfig):
+            raise RuntimeError(
+                f"Ec2LaunchBuildHostProvider received host of type "
+                f"{host_cfg.type!r}; expected 'ec2_launch'."
+            )
+
+        # Build session + probe creds before any lifecycle mutation, so a
+        # bad profile/SSO state fails before we launch resources.
+        self._session = aws_fpga.make_session(
+            region=host_cfg.region, profile=host_cfg.aws_profile
+        )
+        aws_fpga.check_credentials(self._session, host_cfg.aws_profile)
+
+        if host_cfg.instance_id:
+            return self._acquire_managed(host_cfg)
+        return self._acquire_ephemeral(host_cfg)
+
+    def release(self, host: BuildHost) -> None:
+        try:
+            host.close()
+        finally:
+            lc = self._lifecycle
+            self._lifecycle = None
+            if lc is None:
+                return
+            try:
+                if lc.action == "launched":
+                    info(f"Terminating ephemeral instance {lc.instance_id}")
+                    aws_fpga.terminate_instance(self._session, lc.instance_id)
+                elif lc.action == "started":
+                    info(f"Stopping managed instance {lc.instance_id}")
+                    aws_fpga.stop_instance(self._session, lc.instance_id)
+                # 'connected' (found running) → leave alone
+            except Exception as e:
+                warning(
+                    f"Lifecycle teardown failed for instance "
+                    f"{lc.instance_id} ({lc.action}): {e}"
+                )
+
+    # ----------------------------------------------------------------------
+    # Managed-reuse path
+    # ----------------------------------------------------------------------
+
+    def _acquire_managed(self, host_cfg: Ec2LaunchHostConfig) -> BuildHost:
+        instance_id = host_cfg.instance_id  # type: ignore[assignment]
+        info(f"Looking up managed instance {instance_id} in {host_cfg.region}")
+        inst = aws_fpga.describe_instance(self._session, instance_id)
+        state = inst["State"]["Name"]
+        info(f"Instance {instance_id} state: {state}")
+
+        if state == "stopped":
+            info(f"Starting instance {instance_id}")
+            aws_fpga.start_instance(self._session, instance_id)
+            inst = aws_fpga.wait_until_running(self._session, instance_id)
+            self._lifecycle = _Ec2Lifecycle("started", instance_id)
+        elif state == "running":
+            warning(
+                f"Instance {instance_id} is already running — connecting "
+                f"without changing state; will NOT stop it on release."
+            )
+            self._lifecycle = _Ec2Lifecycle("connected", instance_id)
+        elif state in ("pending", "stopping"):
+            # Transitional states — wait for them to settle then re-check.
+            info(f"Waiting for instance {instance_id} to leave '{state}'")
+            if state == "stopping":
+                aws_fpga.wait_until_stopped(self._session, instance_id)
+                aws_fpga.start_instance(self._session, instance_id)
+                self._lifecycle = _Ec2Lifecycle("started", instance_id)
+            inst = aws_fpga.wait_until_running(self._session, instance_id)
+            if self._lifecycle is None:
+                self._lifecycle = _Ec2Lifecycle("connected", instance_id)
+        else:
+            raise RuntimeError(
+                f"Instance {instance_id} is in unexpected state '{state}'; "
+                f"cannot use for build."
+            )
+
+        public_addr = self._resolve_address(inst)
+        ssh_user = host_cfg.ssh_user
+        info(f"Waiting for SSH on {ssh_user}@{public_addr}:22")
+        aws_fpga.wait_for_ssh(public_addr)
+
+        params = self._build_external_params(host_cfg, public_addr)
+        host = Ec2LaunchBuildHost(params, instance_id=instance_id)
+        host._upload_mode = "reuse_soft"
+        return host
+
+    # ----------------------------------------------------------------------
+    # Ephemeral path
+    # ----------------------------------------------------------------------
+
+    def _acquire_ephemeral(self, host_cfg: Ec2LaunchHostConfig) -> BuildHost:
+        # Required-at-request-time field check (Optional in the schema
+        # because the registry merge populates them; explicit check here
+        # gives a clearer error than letting boto3 fail).
+        missing = [
+            name for name, val in (
+                ("ami_id", host_cfg.ami_id),
+                ("instance_type", host_cfg.instance_type),
+            ) if not val
+        ]
+        if missing:
+            raise RuntimeError(
+                f"ec2_launch (ephemeral) requires {missing} to be set. "
+                f"Supply via fslab.yaml or a custom registry."
+            )
+
+        info(
+            f"Launching ephemeral {host_cfg.lifecycle} instance "
+            f"({host_cfg.instance_type}, ami={host_cfg.ami_id}) "
+            f"in {host_cfg.region}"
+        )
+        instance_id = aws_fpga.launch_instance(
+            self._session,
+            ami_id=host_cfg.ami_id,  # type: ignore[arg-type]
+            instance_type=host_cfg.instance_type,  # type: ignore[arg-type]
+            key_name=host_cfg.key_name,
+            subnet_id=host_cfg.subnet_id,
+            iam_instance_profile=host_cfg.iam_instance_profile,
+            lifecycle=host_cfg.lifecycle,
+            tags={
+                "Name": "firesim-lab-build",
+                "firesim-lab/managed": "true",
+                "firesim-lab/lifecycle": host_cfg.lifecycle,
+            },
+        )
+        self._lifecycle = _Ec2Lifecycle("launched", instance_id)
+
+        inst = aws_fpga.wait_until_running(self._session, instance_id)
+        public_addr = self._resolve_address(inst)
+        ssh_user = host_cfg.ssh_user
+        info(f"Waiting for SSH on {ssh_user}@{public_addr}:22")
+        aws_fpga.wait_for_ssh(public_addr)
+
+        params = self._build_external_params(host_cfg, public_addr)
+        host = Ec2LaunchBuildHost(params, instance_id=instance_id)
+        host._upload_mode = "fresh"
+        return host
+
+    # ----------------------------------------------------------------------
+    # Helpers
+    # ----------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_address(inst: dict) -> str:
+        """Prefer the public DNS name; fall back to public IP. Both can be
+        empty for instances in private subnets, in which case the user is
+        expected to be reachable to the private address (run fslab from
+        inside the same VPC)."""
+        return (
+            inst.get("PublicDnsName")
+            or inst.get("PublicIpAddress")
+            or inst.get("PrivateIpAddress")
+            or ""
+        )
+
+    @staticmethod
+    def _build_external_params(
+        host_cfg: Ec2LaunchHostConfig, address: str
+    ) -> ExternalHostConfig:
+        """Construct an ExternalHostConfig from the resolved EC2 state so
+        ExternalBuildHost's SSH/rsync logic can be reused verbatim. The
+        provider already validated remote_platform_path is set (via the
+        registry merge); a missing value here is a configuration bug."""
+        if not address:
+            raise RuntimeError(
+                "EC2 instance has no reachable public address. If running "
+                "from outside the VPC, ensure the instance has a public IP "
+                "or DNS name."
+            )
+        if not host_cfg.remote_platform_path:
+            raise RuntimeError(
+                "host.remote_platform_path is unset for ec2_launch; the "
+                "registry-default merge step did not populate it. Check "
+                "lib/registry.yaml host_models.ec2_launch.remote_platform_path."
+            )
+        return ExternalHostConfig(
+            type="external",
+            host=address,
+            user=host_cfg.ssh_user,
+            ssh_key=host_cfg.ssh_key,
+            remote_platform_path=host_cfg.remote_platform_path,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -455,9 +948,15 @@ class ExternalBuildHostProvider(BuildHostProvider):
 
 
 def make_build_host_provider(cfg: BuildConfig) -> BuildHostProvider:
-    """Pick a provider for the current build config.
+    """Pick a provider for the current host_model discriminator.
 
-    For now there is only one — pre-provisioned. Cloud-aware providers
-    (EC2, etc.) plug in here once they are needed.
+    Adding a new host_model requires a new branch here in lockstep with a
+    new schema class in fslab.schemas.host_model and an entry in
+    KNOWN_HOST_MODELS.
     """
-    return ExternalBuildHostProvider()
+    host_type = cfg.host.type
+    if host_type == "external":
+        return ExternalBuildHostProvider()
+    if host_type == "ec2_launch":
+        return Ec2LaunchBuildHostProvider()
+    raise NotImplementedError(f"Unknown host_model type: {host_type!r}")

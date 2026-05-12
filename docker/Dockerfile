@@ -139,6 +139,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     vim \
     && rm -rf /var/lib/apt/lists/*
 
+# ── AWS CLI v2 ────────────────────────────────────────────────────────────────
+# Installed from the official binary distribution so users can run
+# `aws configure` / `aws sso login` inside the container without needing aws-cli
+# on the host.  Credentials persist via the ~/.aws bind mount configured in
+# docker-compose.yaml.  Both the downloaded zip and the extracted staging
+# directory are removed after install — the installer copies its payload to
+# /usr/local/aws-cli/ and creates symlinks under /usr/local/bin/.
+RUN cd /tmp \
+ && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip \
+ && unzip -q awscliv2.zip \
+ && ./aws/install \
+ && rm -rf awscliv2.zip aws
+
 # ── SBT ───────────────────────────────────────────────────────────────────────
 RUN curl -fsSL \
     "https://github.com/sbt/sbt/releases/download/v${SBT_VERSION}/sbt-${SBT_VERSION}.tgz" \

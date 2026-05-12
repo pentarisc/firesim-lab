@@ -18,11 +18,6 @@ pyparsing
 # Graphviz binding
 graphviz
 
-# AWS + FS
-awscli
-s3fs==0.4.2
-aiohttp
-
 # Testing
 pytest
 pytest-dependency

@@ -21,21 +21,44 @@ Validation requirements satisfied here:
   PROJ-12   bridge.type must exist in MasterRegistry
   PROJ-13   port_map values must exist in blackbox_ports; port_map keys must
             appear in the correct direction list of the registry bridge
-  PROJ-14   design.sources must be present and contain
-            at least one source file when design.type is 'blackbox'.
+  PROJ-14   design.sources must be present and contain at least one source
+            file when design.type is 'blackbox'.
   PROJ-15   design.top_module must be a valid system/verilog module name.
+  PROJ-16   target.fpga_sim must exist in MasterRegistry.fpgasimulators
+
+  Build-pipeline cross-checks
+  BBA-01    target.build.bitbuilder_args must validate against the platform's
+            bitbuilder.args_schema (resolved via BITBUILDER_ARGS_REGISTRY)
+  BBA-02    target.build requires the platform to have a bitbuilder configured
+            for fpga build operations (warning only — sim/driver still works)
+  HMOD-05   target.build.host.type must be in platform.host_models keys
+  PUB-03    target.build.publish.type must be in platform.publish keys
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any, Optional, Annotated, Dict, Union, List, Any
+from typing import Any, Optional, Annotated, Dict, Union, List
 from pathlib import Path
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, computed_field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+    computed_field,
+)
 import fslab.utils.regexes as rx
 from fslab.utils.display import regex_msg
+
+from fslab.schemas.host_model import HostModelConfig
+from fslab.schemas.publish import PublishConfig
+from fslab.schemas.bitbuilder_args import (
+    BITBUILDER_ARGS_REGISTRY,
+    resolve_args_schema,
+)
 
 # Allowed sets
 _DESIGN_TYPES = {"chisel", "blackbox"}
@@ -202,14 +225,14 @@ class DesignConfig(BaseModel):
 
             if not clock_found:
                 raise ValueError(
-                    f"design.blackbox_ports must contain a clock port "
-                     "defined as 'in clock'."
+                    "design.blackbox_ports must contain a clock port "
+                    "defined as 'in clock'."
                 )
 
             if not reset_found:
                 raise ValueError(
-                    f"design.blackbox_ports must contain a reset port "
-                     "defined as 'in reset'."
+                    "design.blackbox_ports must contain a reset port "
+                    "defined as 'in reset'."
                 )
 
         elif self.type == "chisel":
@@ -239,57 +262,17 @@ class BuildStrategy(str, Enum):
     NORETIMING = "NORETIMING"
     DEFAULT = "DEFAULT"
 
-class BuildHostConfig(BaseModel):
-    """SSH connection params for the remote build host."""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    host: str = Field(..., min_length=1, description="IP or hostname")
-    user: str = Field(..., min_length=1, description="SSH username")
-    ssh_key: Optional[str] = Field(
-        None,
-        description=(
-            "Path to SSH private key (supports `~`). "
-            "Leave null/omit to fall back to ssh-agent or ~/.ssh/config."
-        ),
-    )
-
-    @field_validator("ssh_key", mode="before")
-    @classmethod
-    def _empty_ssh_key_to_none(cls, v: Any) -> Any:
-        """[BHOST-01] An empty/whitespace ssh_key is treated as omission so
-        fabric falls back to ssh-agent rather than choking on a bad path."""
-        if isinstance(v, str) and not v.strip():
-            return None
-        return v
-
-    @model_validator(mode="after")
-    def _validate_host_shape(self) -> "BuildHostConfig":
-        """[BHOST-02] Catch the common 'user@host' mistake in `host`, and
-        URLs ('https://...') being pasted in by accident."""
-        if "@" in self.host:
-            raise ValueError(
-                f"[BHOST-02] build_host.host '{self.host}' contains '@'. "
-                f"Specify the SSH user via build_host.user instead."
-            )
-        if "://" in self.host:
-            raise ValueError(
-                f"[BHOST-02] build_host.host '{self.host}' looks like a URL. "
-                f"Use only the hostname or IP."
-            )
-        return self
-        
 
 class TargetBuildConfig(BaseModel):
     """`target.build:` section of the project YAML.
 
-    Attach to your existing target config, e.g.:
-
-        class TargetConfig(BaseModel):
-            platform: str
-            clock_period: str
-            fpga_sim: str
-            build: TargetBuildConfig    # <-- add this
+    New shape — four orthogonal axes:
+      * fpga_frequency / build_strategy   build-time parameters
+      * bitbuilder_args                   per-bitbuilder user tunables
+      * host                              host-acquisition strategy
+                                          (discriminated union)
+      * publish                           post-build artifact handling
+                                          (discriminated union)
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -304,7 +287,34 @@ class TargetBuildConfig(BaseModel):
         BuildStrategy.TIMING,
         description="Vivado build strategy.",
     )
-    build_host: BuildHostConfig
+
+    bitbuilder_args: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Per-bitbuilder user-tunable args. The pydantic schema for this "
+            "block is selected via the platform's bitbuilder.args_schema and "
+            "validated cross-field in FSLabConfig.cross_validate_with_registry "
+            "(BBA-01, BBA-02)."
+        ),
+    )
+
+    host: HostModelConfig = Field(
+        ...,
+        description=(
+            "Host-acquisition config. Discriminated by `host.type`. "
+            "Defaults from `platforms.<id>.host_models.<type>` are merged "
+            "into the user dict at parse time."
+        ),
+    )
+
+    publish: PublishConfig = Field(
+        ...,
+        description=(
+            "Post-build artifact handling. Discriminated by `publish.type`. "
+            "Defaults from `platforms.<id>.publish.<type>` are merged into "
+            "the user dict at parse time."
+        ),
+    )
 
 
 class TargetConfig(BaseModel):
@@ -342,18 +352,21 @@ class HostConfig(BaseModel):
             )
         return v
 
+
 # ---------------------------------------------------------------------------
 # advanced: block
 # ---------------------------------------------------------------------------
+
 class RegistryEntry(BaseModel):
     path: str
     plugin: Optional[str] = None
+
 
 class AdvancedConfig(BaseModel):
     """Paths and generation parameters."""
 
     default_registry: Optional[str] = None
-    custom_registries: Optional [Union[str, RegistryEntry]] = Field(default_factory=list)
+    custom_registries: Optional[Union[str, RegistryEntry]] = Field(default_factory=list)
     firesim_root: Optional[str] = None
     firesim_lab_root: Optional[str] = None
     platforms_root: Optional[str] = None
@@ -363,9 +376,9 @@ class AdvancedConfig(BaseModel):
     @field_validator("custom_registries", mode="before")
     @classmethod
     def normalize_registries(cls, registries):
-        if self.custom_registries is None:
+        if registries is None:
             return []
-            
+
         normalized = []
         for item in registries:
             if isinstance(item, str):
@@ -376,31 +389,23 @@ class AdvancedConfig(BaseModel):
                 normalized.append(item)
         return normalized
 
+
 # ---------------------------------------------------------------------------
 # Top-level project config with cross-registry validation
 # ---------------------------------------------------------------------------
 
 class FSLabConfig(BaseModel):
-    """
-    Root model for `fslab.yaml`.
+    """Root model for `fslab.yaml`.
 
     The model_validator below performs all cross-registry semantic checks
-    ([PROJ-10] through [PROJ-13]) by reading the `MasterRegistry` from the
-    Pydantic validation *context* dict (key: ``"registry"``).
-
-    Usage::
-
-        config = FSLabConfig.model_validate(
-            raw_yaml_dict,
-            context={"registry": master_registry},
-        )
+    by reading the `MasterRegistry` from the Pydantic validation *context*
+    dict (key: ``"registry"``).
     """
 
     project: ProjectConfig
     design: DesignConfig
     target: TargetConfig
     host: HostConfig
-    # bridges will be overriden by BRIDGE_CFG_REGISTRY in parser.
     bridges: List[Any] = Field(default_factory=list)
     advanced: AdvancedConfig = Field(default_factory=AdvancedConfig)
 
@@ -421,8 +426,14 @@ class FSLabConfig(BaseModel):
                   of the registry bridge.
         [PROJ-16] target.fpga_sim MUST exist as a valid id in the
                   MasterRegistry.fpgasimulators.
+
+        Build-pipeline checks:
+        [BBA-01]  target.build.bitbuilder_args must validate against the
+                  platform's bitbuilder.args_schema. Skipped (warning) when
+                  the platform has no bitbuilder configured.
+        [HMOD-05] target.build.host.type must be in platform.host_models keys.
+        [PUB-03]  target.build.publish.type must be in platform.publish keys.
         """
-        # Validation context may be absent during unit-testing individual models.
         if info is None or info.context is None:
             return self
 
@@ -442,7 +453,8 @@ class FSLabConfig(BaseModel):
             seen_names.add(name)
 
         # --- [PROJ-11] Platform must exist in registry ---
-        if self.target.platform not in registry.platforms:
+        platform_entry = registry.platforms.get(self.target.platform)
+        if platform_entry is None:
             available = sorted(registry.platforms.keys())
             raise ValueError(
                 f"[PROJ-11] target.platform '{self.target.platform}' is not "
@@ -453,8 +465,8 @@ class FSLabConfig(BaseModel):
         if self.target.fpga_sim not in registry.fpgasimulators:
             available = sorted(registry.fpgasimulators.keys())
             raise ValueError(
-                f"[PROJ-11] target.platform '{self.target.fpgasimulators}' is not "
-                f"defined in any loaded registry. Available platforms: {available}"
+                f"[PROJ-16] target.fpga_sim '{self.target.fpga_sim}' is not "
+                f"defined in any loaded registry. Available: {available}"
             )
 
         # --- Per-bridge checks ---
@@ -473,7 +485,6 @@ class FSLabConfig(BaseModel):
 
             required_params = reg_bridge.required_params
             missing_params = set(required_params) - set(bridge_cfg.params)
-
             if missing_params:
                 raise ValueError(
                     f"Missing required parameters: {sorted(missing_params)}. "
@@ -482,7 +493,7 @@ class FSLabConfig(BaseModel):
 
             # --- [PROJ-13] Port-map validation (blackbox designs only) ---
             if self.design.type == "blackbox" and self.design.blackbox_ports:
-                bb_ports = self.design.blackbox_ports  # dict[str, str]
+                bb_ports = self.design.blackbox_ports
 
                 for map_key, map_value in bridge_cfg.port_map.items():
 
@@ -518,32 +529,84 @@ class FSLabConfig(BaseModel):
                                 f"{reg_bridge.output_ports}."
                             )
 
+        # ---------- Build-pipeline cross-checks ----------------------------
+        # These run only when target.build is present, which it always is in
+        # the new schema (TargetConfig.build is required).
+        build = self.target.build
+
+        # [HMOD-05] host.type ∈ platform.host_models
+        host_type = build.host.type
+        if host_type not in platform_entry.host_models:
+            supported = sorted(platform_entry.host_models.keys()) or ["<none>"]
+            raise ValueError(
+                f"[HMOD-05] target.build.host.type='{host_type}' is not in "
+                f"platform '{self.target.platform}'.host_models. "
+                f"Supported: {supported}."
+            )
+
+        # [PUB-03] publish.type ∈ platform.publish
+        pub_type = build.publish.type
+        if pub_type not in platform_entry.publish:
+            supported = sorted(platform_entry.publish.keys()) or ["<none>"]
+            raise ValueError(
+                f"[PUB-03] target.build.publish.type='{pub_type}' is not in "
+                f"platform '{self.target.platform}'.publish. "
+                f"Supported: {supported}."
+            )
+
+        # [BBA-01] bitbuilder_args validates against bitbuilder.args_schema
+        if platform_entry.bitbuilder is None:
+            # Platform has no bitbuilder configured. Skipping silently — this
+            # is acceptable for sim/driver-only flows. fslab build fpga is
+            # responsible for raising a clearer "no bitbuilder" error when
+            # the user actually attempts to build.
+            return self
+
+        bb_entry = registry.bitbuilders.get(platform_entry.bitbuilder)
+        if bb_entry is None:
+            # Already caught at MasterRegistry cross-validation [BB-10],
+            # but defend here in case validation order changes.
+            raise ValueError(
+                f"[BBA-01] platform '{self.target.platform}' references "
+                f"unknown bitbuilder '{platform_entry.bitbuilder}'."
+            )
+
+        try:
+            args_cls = resolve_args_schema(bb_entry.args_schema)
+        except ValueError as e:
+            raise ValueError(f"[BBA-01] {e}") from e
+
+        try:
+            args_cls.model_validate(build.bitbuilder_args or {})
+        except Exception as e:
+            raise ValueError(
+                f"[BBA-01] target.build.bitbuilder_args do not validate "
+                f"against {bb_entry.args_schema}: {e}"
+            ) from e
+
         return self
 
     # ------------------------------------------------------------------
-    # Design source validation as the Design class does not have access to project_dir
+    # Design source validation
     # ------------------------------------------------------------------
     @model_validator(mode="after")
-    def validate_design_sources(self) -> "ProjectConfig":
-        """ [PROJ-14] design.sources must be present and contain
-            at least one source file when design.type is 'blackbox'.
-        """
-        # 1. Check if sources exist
+    def validate_design_sources(self) -> "FSLabConfig":
+        """[PROJ-14] design.sources must be present and contain at least one
+        source file when design.type is 'blackbox'."""
         if self.design and self.design.sources:
             proj_dir = getattr(self.project, "project_dir", None)
             proj_name = getattr(self.project, "name", "design")
             target_dir = Path(str(proj_dir or f"/target/{proj_name}"))
-            
-            # 3. Validate and update in place
+
             for i, f in enumerate(self.design.sources):
                 full_path = target_dir / f
-                
+
                 if not full_path.is_file():
                     raise ValueError(f"Source file '{full_path}' not found.")
-                
+
                 self.design.sources[i] = str(full_path)
-        else :
+        else:
             if self.design.type == "blackbox":
                 raise ValueError("Source files must be provided when design type is 'blackbox'.")
-                
+
         return self

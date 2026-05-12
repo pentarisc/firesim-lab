@@ -70,17 +70,118 @@ project:
   config_class: "NoConfig"
   project_dir: "{{project_dir}}"
 
+# ------------------------------------------------------------------------------
+# target:  FPGA target + build pipeline configuration.
+#
+# build pipeline shape (4 axes, all nested under target.build:)
+#   bitbuilder_args  per-bitbuilder tunables; schema chosen by the platform's
+#                    bitbuilder. Most bitbuilders take {} today.
+#   host             host-acquisition config; discriminated by host.type.
+#                    Today: 'external' (SSH to a pre-provisioned box).
+#                    Reserved: 'ec2_launch' (framework-managed EC2).
+#   publish          post-build artifact handling; discriminated by publish.type.
+#                    Today: 'none', 'local_tarball', 'aws_afi'.
+#
+# Field defaults are layered:
+#   1. fslab framework registry (lib/registry.yaml)
+#   2. team / custom registries (target.advanced.custom_registries)
+#   3. user value below (final override)
+# Required fields with no registry default must be supplied here, or parsing
+# fails with a [BBA-XX] / [HMOD-XX] / [PUB-XX] validation error.
+# ------------------------------------------------------------------------------
 target:
   platform:     "{{ platform }}"
   clock_period: "1.0"
   fpga_sim: "xsim"
+
   build:
     fpga_frequency: 100.0         # MHz, must satisfy 0 < f <= 300
     build_strategy: "TIMING"      # BASIC|AREA|TIMING|EXPLORE|CONGESTION|NORETIMING|DEFAULT
-    build_host:
-      host: "10.0.0.5"            # remote IP or hostname
-      user: "centos"              # set remote user name
-      ssh_key: "~/.ssh/firesim.pem"   # optional; null/omit => use SSH agent / ~/.ssh/config
+
+    # Bitbuilder-specific tunables. The platform selects which bitbuilder
+    # runs; the bitbuilder declares the schema for this block. F2 currently
+    # has no user-tunables, so {} is the right value.
+    bitbuilder_args: {}
+
+    # Host-acquisition config. host.type is the discriminator.
+    host:
+      type: external
+      host: "10.0.0.5"                            # IP or hostname of the build server
+      user: "centos"                              # SSH username
+      ssh_key: "~/.ssh/firesim.pem"               # null/omit => fall back to ssh-agent or ~/.ssh/config
+      remote_platform_path: "/opt/aws-fpga-firesim-f2"   # absolute path to the platform HDK on the build server
+
+    # Post-build artifact handling. publish.type is the discriminator.
+    # 'none' is a valid choice (skip publishing entirely; build artifacts
+    # remain in the local results dir).
+    publish:
+      type: none
+
+    # ------------------------------------------------------------------------
+    # ALTERNATIVE host examples (uncomment one at a time)
+    # ------------------------------------------------------------------------
+
+    # --- AWS-managed EC2 build host (host_model: ec2_launch) ---------------
+    # Two sub-modes selected by the presence of `instance_id`:
+    #
+    #   * instance_id unset → ephemeral. Provider runs RunInstances each
+    #     build, waits for SSH, builds, then terminates on release.
+    #     Requires ami_id (no vetted default ships today) + instance_type
+    #     (defaults via the platform's registry entry).
+    #
+    #   * instance_id set   → managed reuse. Provider starts the named
+    #     instance if stopped, uses it, then stops it on release. If found
+    #     running, connection only (leave running on release). HDK upload
+    #     is skipped after the first build on this instance — the stamp
+    #     file at <remote_platform_path>/.firesim-lab-stamp.yaml tracks
+    #     the platform version.
+    #
+    # aws_profile is the named AWS profile from ~/.aws/config or
+    # ~/.aws/credentials; omit/null to fall back to the AWS_PROFILE env
+    # var or the [default] profile. Inside the firesim-lab container, the
+    # host's ~/.firesim-lab/.aws mounts to ~/.aws — run
+    # `aws sso login --profile <name>` (or `aws configure`) once per
+    # container to populate it.
+    #
+    # host:
+    #   type: ec2_launch
+    #   region: us-west-2
+    #   aws_profile: my-sso-profile                   # optional; null/AWS_PROFILE fallback
+    #   ssh_key: ~/.ssh/firesim.pem                   # local private key path (or omit for ssh-agent)
+    #   ssh_user: centos                              # default; override for custom AMIs
+    #
+    #   # --- managed reuse (set instance_id to opt in) ---
+    #   # instance_id: i-0abc1234                     # start-if-stopped, stop on release
+    #
+    #   # --- ephemeral launch (used when instance_id is omitted) ---
+    #   lifecycle: spot_one_time                      # spot_one_time | on_demand
+    #   ami_id: ami-yyyyyyyy                          # required (no vetted default)
+    #   key_name: my-firesim-keypair                  # EC2 key-pair name installed at launch
+    #   subnet_id: subnet-xxxxxxxx
+    #   # instance_type: f2.2xlarge                   # registry default
+    #   # iam_instance_profile: my-instance-role
+    #   # aws_fpga_version: v1.4.0-firesim            # registry default
+    #   # remote_platform_path: /home/centos/aws-fpga-firesim-f2
+
+    # ------------------------------------------------------------------------
+    # ALTERNATIVE publish examples
+    # ------------------------------------------------------------------------
+
+    # --- Local tarball (Alveo / Vitis / on-prem F2) ------------------------
+    # publish:
+    #   type: local_tarball
+    #   output_subdir: built-artifacts        # relative to project_dir; default ok
+
+    # --- AWS AGFI publish (F2 only) ----------------------------------------
+    # publish:
+    #   type: aws_afi
+    #   s3_bucket_name: my-firesim-builds       # required
+    #   hwdb_entry_name: "{{ project_name }}_v1"  # default: project.name
+    #   # aws_profile: my-sso-profile           # null/AWS_PROFILE fallback; independent of host.aws_profile
+    #   # append_userid_region: true            # registry default; bucket-<userid>-<region>
+    #   # copy_to_regions: [us-east-1, us-west-2]
+    #   # sns_topic_arn: arn:aws:sns:us-west-2:123456789012:firesim-builds
+    #   # post_build_hook: "scripts/notify-team.sh"   # runs with local results dir as $1
 
 ## Add your target's design details here. for non-chisel projects, you need to
 ## specify type as "blackbox" and populate sources and blackbox_ports section.
@@ -120,11 +221,11 @@ design:
 #  sources:
 #    - "user_rtl/my_top.sv"
 #  blackbox_ports:
-#    clk: "in clock"      
-#    rst: "in reset"      
+#    clk: "in clock"
+#    rst: "in reset"
 #    uart_tx: "out 1"
 #    uart_rx: "in 1"
-#    mem_addr: "out AXI_ADDR_WIDTH"  
+#    mem_addr: "out AXI_ADDR_WIDTH"
 
 ## Host side driver that controls the simulation. This is firesim related.
 ## Specifying an emulator as "verilator" or "vcs", "xceleium" will allow you to
@@ -264,21 +365,21 @@ design:
 #  # Registry paths (Last-definition wins if IDs conflict)
 #  default_registry: "/opt/firesim-lab/lib/registry.yaml"
 #
-#  # WARNING: The `plugin` directive will execute arbitrary Python code. 
-#  # Only enable custom plugins if you wrote them yourself or completely 
-#  # trust the source repository. Do not run custom plugins from 
+#  # WARNING: The `plugin` directive will execute arbitrary Python code.
+#  # Only enable custom plugins if you wrote them yourself or completely
+#  # trust the source repository. Do not run custom plugins from
 #  # untrusted third-party projects.
 #  custom_registries:
 #    - path: "lib/custom_ip/registry.yaml"
 #      plugin: "lib/custom_ip/validator.py" # Optional
-#      
+#
 #    - path: "lib/legacy_ip/registry.yaml"
-#  
+#
 #  # Toolchain Paths
 #  firesim_root: "/opt/firesim"
 #  firesim_lab_root: "/opt/firesim-lab"
 #  platforms_root: "/opt/firesim/platforms"
-#  
+#
 #  # Generation parameters
 #  gen_dir: "generated-src"
 #  gen_file_basename: "FPGATop"

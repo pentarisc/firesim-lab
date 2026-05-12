@@ -1,11 +1,12 @@
 # =============================================================================
-#  firesim-lab/targets/common/registry.yaml
+#  firesim-lab/lib/registry.yaml
 #
-#  Central registry of available bridges and platform features.
-#  init-target reads this to discover options, validate CLI input, and
-#  drive code generation.
+#  Central registry of available bridges, platforms, bitbuilders, features,
+#  and simulator tools. Init-target reads this to discover options, validate
+#  CLI input, and drive code generation.
 #
-#  To add a new bridge: append a block following the same schema.
+#  To add a new bridge, platform, bitbuilder, or simulator: append a block
+#  following the same schema.
 # =============================================================================
 
 bridges:
@@ -192,76 +193,154 @@ features:
     requires_bridge: []
 
 # ==============================================================================
+#  bitbuilders section  (catalog of build-recipe classes)
+# ==============================================================================
+#  A bitbuilder describes one silicon-specific *recipe* for turning staged RTL
+#  into a bitstream. Multiple platforms (e.g. xilinx_alveo_u200/u250/u280) can
+#  reference the same bitbuilder and supply per-platform parameters via
+#  `platforms[].bitbuilder_params`.
+#
+#  Schema reference
+#  ----------------
+#    id                     str       Bitbuilder id, referenced by platforms[].bitbuilder.
+#    label                  str       Human-readable label.
+#    description            str       One-paragraph summary.
+#    python_class           str       Class name in fslab.bitstream.bitbuilder. The
+#                                     factory resolves this string to a concrete class.
+#    args_schema            str       Pydantic class name validating the user's
+#                                     `target.build.bitbuilder_args` block. Resolved at
+#                                     parse-time by the bitbuilder-args registry.
+#    params_schema          str       Pydantic class name validating the registry's
+#                                     `platforms[].bitbuilder_params` block.
+#    build_script_basename  str       The build script the bitbuilder uploads + runs on
+#                                     the build host. Found locally at the platform's
+#                                     `local_build_script`.
+#    build_script_flags     list[str] Long-form flags passed to build_script_basename.
+#                                     Validated for set-equality, not order.
+#    template_cl_name       str       Name of the in-tree HDK template directory copied
+#                                     once per build (e.g. `cl_firesim`). Empty for
+#                                     bitbuilders that do not stage from a template.
+#    remote_cl_parent_subdir str      Subpath under the remote platform_path where the
+#                                     per-build cl_<quintuplet> directory lives.
+#    artifact_glob          str       Glob (relative to `local_results_subdir/cl_<q>/`)
+#                                     matching the file(s) the publisher consumes.
+# ==============================================================================
+
+bitbuilders:
+
+  # ----------------------------------------------------------------------------
+  # f2 — AWS F2 (FireSim native) bitstream recipe
+  # ----------------------------------------------------------------------------
+  - id: f2
+    label: "AWS F2 BitBuilder"
+    description: >
+      Builds an AWS F2 DCP tarball using aws-fpga-firesim-f2. Mirrors firesim's
+      F2BitBuilder build-side recipe (rsync HDK + project staging, run
+      build-bitstream.sh, reverse-rsync results). AGFI publication is handled
+      separately by the `aws_afi` publisher — see publish/.
+    python_class: "F2BitBuilder"
+    args_schema:   "F2BitbuilderArgs"
+    params_schema: "F2BitbuilderParams"
+
+    build_script_basename: "build-bitstream.sh"
+    build_script_flags:    ["--cl_dir", "--frequency", "--strategy"]
+    template_cl_name:      "cl_firesim"
+    remote_cl_parent_subdir: "hdk/cl/developer_designs"
+    artifact_glob:         "build/checkpoints/*.tar"
+
+  # ----------------------------------------------------------------------------
+  # TEMPLATE — copy when registering a new bitbuilder.
+  # ----------------------------------------------------------------------------
+  # - id: <bitbuilder_id>
+  #   label: "<Human Readable>"
+  #   description: "<one paragraph>"
+  #   python_class: "<ClassName>"
+  #   args_schema:  "<ClassNameArgs>"
+  #   params_schema: "<ClassNameParams>"
+  #   build_script_basename: "build-bitstream.sh"
+  #   build_script_flags: ["--cl_dir", "--frequency", "--strategy"]
+  #   template_cl_name: ""
+  #   remote_cl_parent_subdir: ""
+  #   artifact_glob: ""
+
+# ==============================================================================
 # platforms section
 # ==============================================================================
 # Schema reference
-# ----------------
+# ----------------------------
 # Each entry under `platforms:` is keyed by the platform ID (matches the value
 # a user selects with `fslab new --platform <id>`).
 #
-# Structured fields (validated by CLI, resolved before Jinja2 rendering)
-# -----------------------------------------------------------------------
-#   rpath_origin        bool       Emit -Wl,-rpath,$ORIGIN on the driver binary.
-#                                  Set true whenever shared libs are co-located
-#                                  with the driver on the run-host.
+# Driver-side cmake fields
+# ---------------------------------------------------------
+#   rpath_origin, required_env_vars, extra_cxx_flags, extra_include_dirs,
+#   extra_link_dirs, extra_libs, extra_link_options, board_dir,
+#   fpga_delivery_exts, cmake_fragment
 #
-#   required_env_vars   list[str]  Environment variables that MUST be set when
-#                                  `cmake` is run. The CLI emits a FATAL_ERROR
-#                                  guard for each one (Decision 3a — $ENV{} is
-#                                  emitted verbatim; CMake resolves at
-#                                  configure-time, NOT at fslab-generate time).
-#                                  Use this for values that are genuinely
-#                                  runtime (EDA license servers, XRT paths…).
+#     See the previous registry.yaml for full descriptions; semantics are
+#     unchanged. These fields configure how the *host driver* is compiled
+#     against the platform's SDK and are independent of bitstream building.
 #
-#   extra_cxx_flags     list[str]  Platform-specific compile flags appended
-#                                  after DRIVER_CXXOPTS.
+# Build-pipeline fields (NEW shape — replaces the old `remote_build:` block)
+# -------------------------------------------------------------------------
+#   bitbuilder        str        Id of an entry in the top-level `bitbuilders:`
+#                                catalog. Selects the build recipe class +
+#                                args_schema + params_schema.
 #
-#   extra_include_dirs  list[str]  Passed to target_include_directories PRIVATE.
-#                                  Supports both ${CMAKE_VAR} and $ENV{VAR}.
+#   bitbuilder_params dict       Per-platform parameters consumed by the
+#                                bitbuilder's params_schema. Validated by the
+#                                referenced pydantic class. Example: Alveo
+#                                bitbuilders take `{board_name: au250}`. F2
+#                                takes `{}`.
 #
-#   extra_link_dirs     list[str]  Passed to target_link_directories PRIVATE.
-#                                  Supports both ${CMAKE_VAR} and $ENV{VAR}.
+#   local_platform_path           str  Local path to the platform HDK. Resolved
+#                                      with `${PLATFORMS_ROOT}` substitution.
+#   local_build_script            str  Local path to build-bitstream.sh. Same
+#                                      substitution rules.
+#   local_project_staging_subdir  str  Project-relative path containing
+#                                      `{quintuplet}` placeholder. The cmake
+#                                      stage outputs each per-build into this
+#                                      directory.
+#   local_results_subdir          str  Project-relative directory where
+#                                      reverse-rsynced build artifacts land.
 #
-#   extra_libs          list[str]  Passed to target_link_libraries PRIVATE.
-#                                  Names only — no -l prefix.
+#   host_models       dict       Keys are host_model ids the platform supports
+#                                (currently `external`, `ec2_launch`). Values
+#                                are per-host-model default dicts merged into
+#                                the user's `target.build.host` block at parse
+#                                time. Empty default dicts are valid.
 #
-#   extra_link_options  list[str]  Passed to target_link_options PRIVATE.
-#                                  Raw linker flags (-Wl,... etc.).
+#   publish           dict       Keys are publish.type ids the platform
+#                                supports (currently `none`, `local_tarball`,
+#                                `aws_afi`). Values are per-type default dicts
+#                                merged into the user's `target.build.publish`
+#                                block at parse time. The `none` entry should
+#                                always be present (empty dict).
 #
-#   cmake_fragment      str        Verbatim CMake injected at the end of
-#                                  section 4b, AFTER all structured fields.
-#                                  This is the escape hatch: use it for any
-#                                  CMake construct the structured fields cannot
-#                                  express (find_package, execute_process, …).
-#                                  When a pattern from cmake_fragment recurs
-#                                  across 2+ platforms, promote it to a
-#                                  structured field in the next CLI release.
-#                                  Leave empty ("") if not needed.
-#
-# Environment variable convention (Decision 3a)
-# ---------------------------------------------
-# Use $ENV{VAR} syntax inside path strings. The CLI emits them verbatim into
-# the rendered CMakeLists.txt; CMake resolves them at configure-time.
-# This is intentional — it preserves runtime flexibility for values that must
-# not be baked in at generation time (license servers, SDK roots set by
-# setup scripts, etc.).
-#
-# CMake cache variables set in section 1 of the template (${PLATFORMS_ROOT},
-# ${MIDAS_DIR}, etc.) can also be referenced directly in path strings.
+# Layered defaults
+# ----------------
+# For host and publish blocks, the user's value (in fslab.yaml) is merged with
+# the platform's default at parse-time:
+#   1. Framework registry default     (e.g. ami_id: ami-xxxxxxxx)
+#   2. Custom registry override       (e.g. team-shared HDK path)
+#   3. User fslab.yaml override       (final value)
+# Pydantic schema validates the merged result. Required fields with no default
+# in any layer must be supplied by the user or parsing fails.
 # ==============================================================================
 
 platforms:
 
   # ----------------------------------------------------------------------------
   # f2  —  AWS FPGA F2 (FireSim native platform)
-  # Mirrors: $(f2): export CXXFLAGS / LDFLAGS block in driver.mk
   # ----------------------------------------------------------------------------
   - id: f2
     label: "AWS F2 FPGA"
+
+    # --- driver-side cmake fields -------------------------------
     config_package: "firesim.midasexamples"
     config_class: "DefaultF2Config"
     rpath_origin: true
-    required_env_vars: []     # PLATFORMS_ROOT is a CMake cache var — no env needed
+    required_env_vars: []
     extra_cxx_flags: []
     extra_include_dirs:
       - "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2/sdk/userspace/include"
@@ -274,28 +353,41 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2/hdk/cl/developer_designs"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
-    remote_build:
-      instance_type: "f2.2xlarge"
-      ami_id: "ami-xxxxxxxx"
-      aws_fpga_version: "v1.4.0-firesim"
-      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
-      build_script: "build-bitstream.sh"
-      remote_cl_parent_subdir: "hdk/cl/developer_designs"
-      template_cl_name: "cl_firesim"
-      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
-      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
-      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
-      local_results_subdir: "build/fpga/results-build"
+
+    # --- build pipeline ----------------------------------------
+    bitbuilder: f2
+    bitbuilder_params: {}            # F2BitbuilderParams has no fields today
+
+    local_platform_path:           "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
+    local_build_script:            "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
+    local_project_staging_subdir:  "build/fpga/cl_{quintuplet}"
+    local_results_subdir:          "build/fpga/results-build"
+
+    host_models:
+      external: {}                  # user supplies host/user/ssh_key/remote_platform_path
+      ec2_launch:
+        # Framework-vetted defaults. The user can override any of these in
+        # fslab.yaml. ami_id is intentionally omitted — there is no vetted
+        # base AMI shipped today; the user must supply one (or set
+        # `instance_id:` in fslab.yaml to opt into managed-reuse mode and
+        # skip the launch path entirely).
+        instance_type:        "f2.2xlarge"
+        aws_fpga_version:     "v1.4.0-firesim"
+        remote_platform_path: "/home/centos/aws-fpga-firesim-f2"
+
+    publish:
+      none: {}
+      aws_afi:
+        append_userid_region: true   # firesim-style: bucket-<userid>-<region>
+        copy_to_regions: []          # opt-in: list of regions to replicate the AFI to
 
   # ----------------------------------------------------------------------------
-  # xilinx_alveo_u250  —  Conda-only build, no extra SDK paths
-  # Mirrors: built_within_conda_only_driver_compilation_rules(xilinx_alveo_u250)
-  #
-  # NOTE: If your Docker image provides an XRT installation for Alveo, add its
-  # paths via extra_include_dirs / extra_link_dirs / extra_libs, or use
-  # cmake_fragment for a find_package(XRT) call. The driver.mk conda-only
-  # rules assume conda supplies XRT implicitly — in a Docker workflow those
-  # paths must be made explicit here.
+  # xilinx_alveo_u250  —  driver-side cmake retained; bitbuilder NOT YET WIRED.
+  # ----------------------------------------------------------------------------
+  # NOTE: `bitbuilder`, `bitbuilder_params`, `host_models`, `publish` are
+  # intentionally omitted. Picking this platform for `fslab build fpga` will
+  # raise a "platform has no bitbuilder configured" validation error. Driver
+  # compilation (cmake) and metasimulation work as before.
   # ----------------------------------------------------------------------------
   - id: xilinx_alveo_u250
     label: "Xilinx Alveo U250"
@@ -311,20 +403,18 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/xilinx_alveo_u250"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
-    remote_build:
-      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
-      build_script: "build-bitstream.sh"
-      remote_cl_parent_subdir: "hdk/cl/developer_designs"
-      template_cl_name: "cl_firesim"
-      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
-      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
-      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
-      local_results_subdir: "build/fpga/results-build"
+    # bitbuilder: TODO — implement xilinx_alveo bitbuilder, then add:
+    #   bitbuilder: xilinx_alveo
+    #   bitbuilder_params: { board_name: au250 }
+    #   local_platform_path: ...
+    #   local_build_script: ...
+    #   local_project_staging_subdir: "build/fpga/cl_{quintuplet}"
+    #   local_results_subdir: "build/fpga/results-build"
+    #   host_models: { external: {} }
+    #   publish: { none: {}, local_tarball: {} }
 
   # ----------------------------------------------------------------------------
-  # xilinx_alveo_u280
-  # Mirrors: built_within_conda_only_driver_compilation_rules(xilinx_alveo_u280)
-  # See note on xilinx_alveo_u250 above.
+  # xilinx_alveo_u280 — bitbuilder NOT YET WIRED (see u250 note).
   # ----------------------------------------------------------------------------
   - id: xilinx_alveo_u280
     label: "Xilinx Alveo U280"
@@ -340,20 +430,9 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/xilinx_alveo_u280"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
-    remote_build:
-      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
-      build_script: "build-bitstream.sh"
-      remote_cl_parent_subdir: "hdk/cl/developer_designs"
-      template_cl_name: "cl_firesim"
-      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
-      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
-      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
-      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
-  # xilinx_alveo_u200
-  # Mirrors: built_within_conda_only_driver_compilation_rules(xilinx_alveo_u200)
-  # See note on xilinx_alveo_u250 above.
+  # xilinx_alveo_u200 — bitbuilder NOT YET WIRED.
   # ----------------------------------------------------------------------------
   - id: xilinx_alveo_u200
     label: "Xilinx Alveo U200"
@@ -369,20 +448,9 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/xilinx_alveo_u200"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
-    remote_build:
-      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
-      build_script: "build-bitstream.sh"
-      remote_cl_parent_subdir: "hdk/cl/developer_designs"
-      template_cl_name: "cl_firesim"
-      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
-      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
-      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
-      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
-  # xilinx_vcu118
-  # Mirrors: built_within_conda_only_driver_compilation_rules(xilinx_vcu118)
-  # See note on xilinx_alveo_u250 above.
+  # xilinx_vcu118 — bitbuilder NOT YET WIRED.
   # ----------------------------------------------------------------------------
   - id: xilinx_vcu118
     label: "Xilinx VCU118"
@@ -398,20 +466,9 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/xilinx_vcu118"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
-    remote_build:
-      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
-      build_script: "build-bitstream.sh"
-      remote_cl_parent_subdir: "hdk/cl/developer_designs"
-      template_cl_name: "cl_firesim"
-      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
-      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
-      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
-      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
-  # rhsresearch_nitefury_ii
-  # Mirrors: built_within_conda_only_driver_compilation_rules(rhsresearch_nitefury_ii)
-  # See note on xilinx_alveo_u250 above.
+  # rhsresearch_nitefury_ii — bitbuilder NOT YET WIRED.
   # ----------------------------------------------------------------------------
   - id: rhsresearch_nitefury_ii
     label: "RHS Research Nitefury II"
@@ -427,32 +484,10 @@ platforms:
     board_dir: "${PLATFORMS_ROOT}/rhsresearch_nitefury_ii"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
-    remote_build:
-      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
-      build_script: "build-bitstream.sh"
-      remote_cl_parent_subdir: "hdk/cl/developer_designs"
-      template_cl_name: "cl_firesim"
-      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
-      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
-      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
-      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
-  # vitis  —  Xilinx Vitis / XRT (experimental, Ubuntu 20.04 / 18.04)
-  # Mirrors: $(vitis): export CXXFLAGS / LDFLAGS block in driver.mk
-  #
-  # Decision 3a rationale: XILINX_XRT is sourced by the XRT setup script
-  # (e.g. /opt/xilinx/xrt/setup.sh) and is legitimately a runtime value —
-  # different Docker images or XRT versions may install to different prefixes.
-  # It is therefore emitted as $ENV{XILINX_XRT} so CMake resolves it at
-  # configure-time rather than baking a path at fslab-generate time.
-  #
-  # CONDA_PREFIX references from the original driver.mk are intentionally
-  # omitted — fslab runs in Docker without conda. If your image installs
-  # additional headers under a non-standard prefix, add them here or in
-  # cmake_fragment.
-  #
-  # -ldl is required on Ubuntu 20.04 (backwards-compatible with 18.04).
+  # vitis  —  Xilinx Vitis / XRT (experimental). Bitbuilder NOT YET WIRED.
+  # Driver-side cmake retained per the previous registry.
   # ----------------------------------------------------------------------------
   - id: vitis
     label: "Vitis"
@@ -460,57 +495,56 @@ platforms:
     config_class: "ChangeThis"
     rpath_origin: true
     required_env_vars:
-      - XILINX_XRT          # sourced by /opt/xilinx/xrt/setup.sh (or equivalent)
+      - XILINX_XRT
     extra_cxx_flags: []
     extra_include_dirs:
       - "$ENV{XILINX_XRT}/include"
-      - "/usr/include"                   # system fallback (-idirafter semantics)
+      - "/usr/include"
     extra_link_dirs:
       - "/usr/lib/x86_64-linux-gnu"
       - "$ENV{XILINX_XRT}/lib"
     extra_libs:
       - uuid
       - xrt_coreutil
-      - dl                               # required on Ubuntu 20.04
+      - dl
       - z
     extra_link_options:
-      # Needed so the linker can resolve indirect deps against system libs
-      # without adding them to the binary's DT_NEEDED.
       - "-Wl,-rpath-link,/usr/lib/x86_64-linux-gnu"
     board_dir: "${PLATFORMS_ROOT}/vitis"
     fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
     cmake_fragment: ""
-    remote_build:
-      platform_path: "/home/praveen/fslab-test/project_data/aws-fpga-firesim-f2"  # remote
-      build_script: "build-bitstream.sh"
-      remote_cl_parent_subdir: "hdk/cl/developer_designs"
-      template_cl_name: "cl_firesim"
-      local_platform_path: "${PLATFORMS_ROOT}/f2/aws-fpga-firesim-f2"
-      local_build_script:  "${PLATFORMS_ROOT}/f2/build-bitstream.sh"
-      local_project_staging_subdir: "build/fpga/cl_{quintuplet}"   # {quintuplet} is a literal placeholder
-      local_results_subdir: "build/fpga/results-build"
 
   # ----------------------------------------------------------------------------
-  # TEMPLATE: copy this block when registering a new platform.
-  # Replace <platform_id> with your platform name, fill in the fields, and
-  # leave cmake_fragment empty unless structured fields are insufficient.
+  # TEMPLATE — copy this block when registering a new platform.
   # ----------------------------------------------------------------------------
-  # <platform_id>:
-  #   rpath_origin: false
+  # - id: <platform_id>
+  #   label: "<Human Readable>"
+  #
+  #   # Driver-side cmake fields:
+  #   config_package: "firesim.midasexamples"
+  #   config_class: "<ConfigClassName>"
+  #   rpath_origin: true
   #   required_env_vars: []
   #   extra_cxx_flags: []
   #   extra_include_dirs: []
   #   extra_link_dirs: []
   #   extra_libs: []
   #   extra_link_options: []
+  #   board_dir: "${PLATFORMS_ROOT}/<platform_id>"
+  #   fpga_delivery_exts: [".sv", ".defines.vh", ".synthesis.xdc", ".implementation.xdc"]
   #   cmake_fragment: ""
   #
-  # cmake_fragment example — using find_package (not expressible as structured fields):
-  #
-  #   cmake_fragment: |
-  #     find_package(SomeSDK REQUIRED COMPONENTS Core)
-  #     target_link_libraries(${DRIVER_TARGET} PRIVATE SomeSDK::Core)
-  #     message(STATUS "[fslab] SomeSDK version: ${SomeSDK_VERSION}")
+  #   # Build pipeline (omit entirely if bitbuilder is not yet implemented):
+  #   bitbuilder: <bitbuilder_id>
+  #   bitbuilder_params: {}
+  #   local_platform_path: "${PLATFORMS_ROOT}/<platform_id>/<hdk-dirname>"
+  #   local_build_script:  "${PLATFORMS_ROOT}/<platform_id>/build-bitstream.sh"
+  #   local_project_staging_subdir: "build/fpga/cl_{quintuplet}"
+  #   local_results_subdir: "build/fpga/results-build"
+  #   host_models:
+  #     external: {}
+  #   publish:
+  #     none: {}
 
 # ==============================================================================
 # metasimulators and fpgasimulators sections

@@ -6,8 +6,12 @@
 # 1. Picks an install directory (~/.firesim-lab or custom)
 # 2. Downloads firesim-lab, docker-compose.yaml, and Dockerfile from the repo
 # 3. Makes firesim-lab executable
-# 4. Adds the install directory to PATH (via ~/.local/bin symlink or shell rc)
-# 5. Prints instructions — then stops (no Docker interaction here)
+# 4. Creates a self-contained .aws directory under the install dir.  This is
+#    bind-mounted into the container as ~/.aws so the user can run
+#    `aws configure` / `aws sso login` inside the container without needing
+#    aws-cli on the host and without colliding with any host-side ~/.aws.
+# 5. Adds the install directory to PATH (via ~/.local/bin symlink or shell rc)
+# 6. Prints instructions — then stops (no Docker interaction here)
 #
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash
@@ -113,6 +117,25 @@ chmod +x "$LAUNCHER_PATH"
 echo ""
 echo "  $(_green "✓") Made executable: $LAUNCHER_PATH"
 
+# ── Create self-contained AWS config directory ───────────────────────────────
+# Bind-mounted into the container as ~/.aws (HOME is fixed to /home/firesim-lab
+# inside the container, so this path is the same for any host UID).  Keeping
+# AWS credentials under the install dir avoids any collision with a host-side
+# ~/.aws and means the user does not need aws-cli installed on the host.
+#
+# Mode 700 matches the standard ~/.aws layout; AWS CLI warns about looser
+# permissions on credentials files.  The directory is created empty on first
+# install and left untouched on subsequent runs so existing credentials are
+# never clobbered.
+AWS_DIR="${INSTALL_DIR}/.aws"
+if [[ ! -d "$AWS_DIR" ]]; then
+  mkdir -p "$AWS_DIR"
+  chmod 700 "$AWS_DIR"
+  echo "  $(_green "✓") Created AWS config dir: $AWS_DIR (mode 700)"
+else
+  echo "  $(_green "✓") AWS config dir already present: $AWS_DIR"
+fi
+
 # ── Add to PATH ───────────────────────────────────────────────────────────────
 # Strategy (in order of preference):
 #   1. ~/.local/bin  — standard XDG user bin dir, already in PATH on most distros
@@ -211,6 +234,11 @@ echo ""
 echo "  On first run in a new directory, firesim-lab will prompt you for"
 echo "  your project name and settings, then start the Docker container"
 echo "  and drop you straight into a shell."
+echo ""
+echo "  $(_bold "AWS credentials:")"
+echo "    Inside the container, run $(_cyan "aws configure sso --use-device-code") or $(_cyan "aws sso login --use-device-code --profile <profile>")."
+echo "    Credentials are persisted to $AWS_DIR on the host."
+echo "    No aws-cli install is needed on the host."
 echo ""
 echo "  $(_bold "If 'firesim-lab' is not found yet, reload your shell first:")"
 echo "    $(_cyan "source $(_detect_shell_rc)")"

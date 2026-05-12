@@ -20,14 +20,23 @@ Pass 2 — Project Validation:
     Parse ``fslab.yaml`` into an ``FSLabConfig``, injecting the
     ``MasterRegistry`` as Pydantic validation context so that all
     cross-registry checks (PROJ-11, PROJ-12, PROJ-13) can run.
+
+    Between reading the raw YAML and Pydantic validation, the
+    ``_merge_target_build_defaults`` step folds the platform-registry's
+    per-host-model and per-publisher defaults into the user-supplied
+    blocks (e.g. ``host_models.ec2_launch.instance_type`` → user's
+    ``target.build.host.instance_type`` when the user did not override).
+    This is the registry-default merge step referenced in the build-
+    pipeline migration handoff.
 """
 
 from __future__ import annotations
 
+import os
 import threading
 import importlib.util
 from pathlib import Path
-from typing import Tuple, Annotated, Dict, Union, List
+from typing import Tuple, Annotated, Dict, Optional, Union, List
 import functools
 import operator
 import yaml
@@ -81,7 +90,7 @@ def _load_user_plugin(plugin_path: Path):
 
     if not plugin_path.exists():
         raise FileNotFoundError(f"Custom plugin not found at: {plugin_path}")
-        
+
     spec = importlib.util.spec_from_file_location(plugin_path.stem, plugin_path)
     module = importlib.util.module_from_spec(spec)
     # Executing this module registers their Pydantic classes into your system
@@ -89,7 +98,7 @@ def _load_user_plugin(plugin_path: Path):
 
 def _sync_bridge_refs(self):
     """
-    This runs AFTER the entire LiveConfig (and all resources) 
+    This runs AFTER the entire LiveConfig (and all resources)
     have been validated and converted to Python types.
     """
     # 1. Access the validated sibling field, e.g. design.parameters
@@ -101,20 +110,20 @@ def _sync_bridge_refs(self):
             # Check if the child has the specific method to handle this
             if hasattr(bridge, "resolve_refs"):
                 bridge.resolve_refs(design_params)
-    
+
     print("sync bridge ref complete.")
     return self
 
 def _get_live_config_model():
     """
-    Creates a 'Specialized' version of FSLabConfig 
+    Creates a 'Specialized' version of FSLabConfig
     that knows about all currently registered plugins.
     """
     # 1. Build the dynamic Union from the current state of BRIDGE_CFG_REGISTRY
     DynamicUnion = functools.reduce(operator.or_, BRIDGE_CFG_REGISTRY)
-    
+
     DiscriminatedBridgeConfig = Annotated[
-        DynamicUnion, 
+        DynamicUnion,
         Field(discriminator='type')
     ]
 
@@ -129,8 +138,67 @@ def _get_live_config_model():
             "sync_logic": model_validator(mode='after')(_sync_bridge_refs)
         }
     )
-    
+
     return LiveConfig
+
+
+def _merge_target_build_defaults(
+    raw_project: dict, master_registry: MasterRegistry
+) -> None:
+    """Fold platform-registry defaults into ``target.build.host`` and
+    ``target.build.publish`` before pydantic validation.
+
+    Layered-defaults policy (user wins on every key):
+        registry.platforms[<id>].host_models[<host.type>]   ⨯  user host dict
+        registry.platforms[<id>].publish[<publish.type>]    ⨯  user publish dict
+
+    The merge is shallow — sufficient for the current flat schemas. If a
+    future host/publish config grows a nested dict the merge can be
+    deepened here without touching the schemas themselves.
+
+    The function mutates ``raw_project`` in place; safe because the dict
+    has already been read from disk and is otherwise local to the parser.
+    Silently noops when the platform has no entry (e.g. user mis-spelled
+    the platform id — pydantic will catch that downstream with PROJ-11).
+    """
+    target = raw_project.get("target") or {}
+    platform_id = target.get("platform")
+    if not platform_id:
+        return  # pydantic will surface "missing platform" with a clearer error
+
+    platform_entry = master_registry.platforms.get(platform_id)
+    if platform_entry is None:
+        return  # PROJ-11 catches the unknown platform downstream
+
+    build = target.get("build") or {}
+
+    # ---- host -------------------------------------------------------------
+    user_host = build.get("host")
+    if isinstance(user_host, dict):
+        host_type = user_host.get("type")
+        host_models = getattr(platform_entry, "host_models", None) or {}
+        defaults = host_models.get(host_type) if host_type else None
+        if isinstance(defaults, dict):
+            merged = {**defaults, **user_host}
+            build["host"] = merged
+
+    # ---- publish ----------------------------------------------------------
+    user_publish = build.get("publish")
+    if isinstance(user_publish, dict):
+        publish_type = user_publish.get("type")
+        publish_defaults_by_type = getattr(platform_entry, "publish", None) or {}
+        defaults = (
+            publish_defaults_by_type.get(publish_type) if publish_type else None
+        )
+        if isinstance(defaults, dict):
+            merged = {**defaults, **user_publish}
+            build["publish"] = merged
+
+    # Make sure the mutations propagate back through the optional .get()s.
+    if "build" not in target:
+        target["build"] = build
+    if "target" not in raw_project:
+        raw_project["target"] = target
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +208,7 @@ def load_and_validate(
     project_yaml_path: str = "fslab.yaml"
 ) -> Tuple[FSLabConfig, MasterRegistry]:
     global _LOADED_PATH, _CACHED_DATA
-    
+
     canonical_path = Path(project_yaml_path).resolve()
 
     # 2. Use the lock to ensure only one thread validates at a time
@@ -156,11 +224,11 @@ def load_and_validate(
 
         # Perform the expensive I/O and validation
         config, registry = _internal_load_and_validate(canonical_path)
-        
+
         # "Lock in" the result
         _LOADED_PATH = canonical_path
         _CACHED_DATA = (config, registry)
-        
+
         return _CACHED_DATA
 
 def _internal_load_and_validate(
@@ -202,6 +270,9 @@ def _internal_load_and_validate(
 
     The project YAML is validated with the ``MasterRegistry`` injected as
     Pydantic context so all cross-reference checks execute (PROJ-11–PROJ-13).
+    A registry-default merge step folds per-platform ``host_models`` and
+    ``publish`` defaults into the user's ``target.build`` block before
+    pydantic validation runs.
     """
     project_path = project_yaml_path.resolve()
 
@@ -236,7 +307,7 @@ def _internal_load_and_validate(
     # 1b. Custom registries (higher priority; loaded in list order — REG-07)
     for custom_entry in advanced.custom_registries:
         # custom_entry is now a RegistryEntry object!
-        
+
         # ---> Load the Python plugin if the user provided one
         if custom_entry.plugin:
             plugin_path = Path(custom_entry.plugin)
@@ -250,6 +321,13 @@ def _internal_load_and_validate(
 
     # 1c. Merge — last-definition-wins (REG-07)
     master_registry = MasterRegistry.from_registry_files(registry_files)
+
+    # ------------------------------------------------------------------
+    # Registry-default merge into the raw project dict (build-pipeline
+    # migration task 4b). Must run before pydantic validation so that
+    # registry-supplied required fields satisfy the schema.
+    # ------------------------------------------------------------------
+    _merge_target_build_defaults(raw_project, master_registry)
 
     # ------------------------------------------------------------------
     # PASS 2 — Validate the project with MasterRegistry as context

@@ -63,6 +63,17 @@ _resolve_script_dir() {
 }
 INSTALL_DIR="$(_resolve_script_dir)"
 
+# AWS config directory — created by install.sh, bind-mounted into the container
+# as ~/.aws.  Path is anchored to the install directory so it follows custom
+# INSTALL_DIR values (e.g. /opt/firesim-lab) and never collides with the host's
+# own ~/.aws.  The launcher ensures the directory exists with mode 700 in case
+# it was removed or the user is upgrading from a version that did not create it.
+HOST_AWS_DIR="${INSTALL_DIR}/.aws"
+if [[ ! -d "$HOST_AWS_DIR" ]]; then
+  mkdir -p "$HOST_AWS_DIR"
+  chmod 700 "$HOST_AWS_DIR"
+fi
+
 # ── Workspace is always the current working directory ─────────────────────────
 WORKSPACE_DIR="$(pwd)"
 WORKSPACE_BASENAME="$(basename "$WORKSPACE_DIR")"
@@ -393,6 +404,13 @@ CONTAINER_NAME=${CONTAINER_NAME}
 # All subdirectories (projects, build outputs) are persisted automatically.
 HOST_WORKSPACE_DIR=${WORKSPACE_DIR}
 
+# ── AWS configuration ───────────────────────────────────────────────────────
+# Bind-mounted into the container as ~/.aws (HOME is fixed to /home/firesim-lab
+# inside the container, so this path is the same for any host UID).  Anchored
+# to the install dir so it never collides with the host's own ~/.aws and so
+# the user does not need aws-cli installed on the host.
+HOST_AWS_DIR=${HOST_AWS_DIR}
+
 # ── Host user mapping ───────────────────────────────────────────────────────
 HOST_UID=${HOST_UID}
 HOST_GID=${HOST_GID}
@@ -436,6 +454,7 @@ echo "  Workspace      : $WORKSPACE_DIR  →  /target"
 if [[ -n "$PROJECT_NAME" ]]; then
 echo "  Project        : $PROJECT_NAME   →  /target/$PROJECT_NAME"
 fi
+echo "  AWS config     : $HOST_AWS_DIR  →  ~/.aws"
 echo "  Host UID:GID   : $HOST_UID:$HOST_GID"
 echo "  Cache GID      : $CACHE_GID  (firesim-lab-cache, baked into image)"
 echo "  Verilator jobs : $VERILATOR_THREADS"
@@ -536,6 +555,8 @@ _enter_shell() {
     echo "printf '%b\n' '    fslab generate                                   — generate sim sources'"
     echo "printf '%b\n' '    fslab sim                                        — run simulation'"
     echo "printf '%b\n' '    fslab --help                                     — Show help'"
+    echo "printf '%b\n' ''"
+    echo "printf '%b\n' '  \033[1mAWS:\033[0m run \033[36maws configure\033[0m or \033[36maws sso login\033[0m — credentials persist to ${HOST_AWS_DIR} on the host.'"
     echo "printf '%b\n' ''"
     echo "printf '%b\n' '  \033[2mType exit to return to host shell.\033[0m'"
     echo "printf '%b\n' ''"

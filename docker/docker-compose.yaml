@@ -36,8 +36,20 @@
 #  files created at runtime by the host user inherit GID 2543, keeping them
 #  writable by future container runs — with no per-start chown required.
 #
+#  AWS configuration
+#  ─────────────────
+#  ${HOST_AWS_DIR} on the host is bind-mounted to /home/firesim-lab/.aws
+#  inside the container so that `aws configure`, `aws sso login`, etc. run
+#  inside the container persist their state to the host (no aws-cli install
+#  required on the host).  HOST_AWS_DIR is set by the firesim-lab launcher
+#  to <install-dir>/.aws — keeping AWS state under the firesim-lab install
+#  directory and away from any host-side ~/.aws.  The fallback default
+#  ${HOME}/.firesim-lab/.aws preserves behaviour for older .firesim-lab.env
+#  files that pre-date this variable.
+#
 #  Required .env variables (written by run.sh into .firesim-lab.env):
 #    HOST_WORKSPACE_DIR  — absolute host path to the user's target project
+#    HOST_AWS_DIR        — absolute host path to the AWS config directory
 #    HOST_UID            — host user's numeric UID
 #    HOST_GID            — host user's numeric primary GID
 #    FIRESIM_IMAGE       — image name:tag  (e.g. pentarisc/firesim-lab:latest)
@@ -111,6 +123,14 @@ services:
       - type: bind
         source: ${HOST_WORKSPACE_DIR}
         target: /target
+
+      # ── AWS configuration (bind mount) ────────────────────────────────────
+      # Mounted at ~/.aws so `aws configure` / `aws sso login` run inside the
+      # container persist credentials to the host.  Fallback default covers
+      # older .firesim-lab.env files that pre-date HOST_AWS_DIR.
+      - type: bind
+        source: ${HOST_AWS_DIR:-${HOME}/.firesim-lab/.aws}
+        target: /home/firesim-lab/.aws
 
       # ── SBT / Ivy artifact cache ──────────────────────────────────────────
       # Pre-warmed during image build; persisted across container restarts.
