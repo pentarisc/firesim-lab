@@ -377,7 +377,7 @@ platforms:
         # f2.6xlarge - for fpga simulation. (24 vcpu, 256gb ram), 1 FPGA slot. 
         instance_type:        "m4.4xlarge"  
         aws_fpga_version:     "v0.1-firesim-lab"
-        remote_platform_path: "/home/ubuntu/aws-fpga-firesim-f2"
+        remote_platform_path: "/home/ubuntu/src/project_data/aws-fpga-firesim-f2"
 
     publish:
       none: {}

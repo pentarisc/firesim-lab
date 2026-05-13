@@ -47,9 +47,22 @@
 #  ${HOME}/.firesim-lab/.aws preserves behaviour for older .firesim-lab.env
 #  files that pre-date this variable.
 #
+#  SSH key directory
+#  ─────────────────
+#  ${HOST_SSH_DIR} on the host is bind-mounted to /home/firesim-lab/.ssh so
+#  SSH-aware tools (ssh, scp, git, rsync, ansible, ec2-instance-connect, ...)
+#  find keys at the conventional location.  HOST_SSH_DIR is set by the
+#  firesim-lab launcher to <install-dir>/.ssh — keeping keys under the
+#  firesim-lab install directory and away from any host-side ~/.ssh.  Mount
+#  is read-write so ssh can update ~/.ssh/known_hosts on first connect to a
+#  new host; key files remain protected by their own 600 permissions.  The
+#  fallback default ${HOME}/.firesim-lab/.ssh preserves behaviour for older
+#  .firesim-lab.env files that pre-date this variable.
+#
 #  Required .env variables (written by run.sh into .firesim-lab.env):
 #    HOST_WORKSPACE_DIR  — absolute host path to the user's target project
 #    HOST_AWS_DIR        — absolute host path to the AWS config directory
+#    HOST_SSH_DIR        — absolute host path to the SSH key directory
 #    HOST_UID            — host user's numeric UID
 #    HOST_GID            — host user's numeric primary GID
 #    FIRESIM_IMAGE       — image name:tag  (e.g. pentarisc/firesim-lab:latest)
@@ -131,6 +144,16 @@ services:
       - type: bind
         source: ${HOST_AWS_DIR:-${HOME}/.firesim-lab/.aws}
         target: /home/firesim-lab/.aws
+
+      # ── SSH keys (bind mount) ─────────────────────────────────────────────
+      # Mounted at ~/.ssh so ssh, scp, git, rsync, etc. discover keys at the
+      # conventional location.  Read-write so ssh can update known_hosts and
+      # so ssh-keygen can be run from inside the container; key files are
+      # still protected by their own 600 permissions.  Fallback default
+      # covers older .firesim-lab.env files that pre-date HOST_SSH_DIR.
+      - type: bind
+        source: ${HOST_SSH_DIR:-${HOME}/.firesim-lab/.ssh}
+        target: /home/firesim-lab/.ssh
 
       # ── SBT / Ivy artifact cache ──────────────────────────────────────────
       # Pre-warmed during image build; persisted across container restarts.

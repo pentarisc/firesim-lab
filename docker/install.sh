@@ -10,8 +10,12 @@
 #    bind-mounted into the container as ~/.aws so the user can run
 #    `aws configure` / `aws sso login` inside the container without needing
 #    aws-cli on the host and without colliding with any host-side ~/.aws.
-# 5. Adds the install directory to PATH (via ~/.local/bin symlink or shell rc)
-# 6. Prints instructions — then stops (no Docker interaction here)
+# 5. Creates a self-contained .ssh directory under the install dir.  This is
+#    bind-mounted into the container as ~/.ssh so SSH-aware tools (ssh, scp,
+#    git, rsync, ...) discover keys at the conventional location without
+#    colliding with any host-side ~/.ssh.
+# 6. Adds the install directory to PATH (via ~/.local/bin symlink or shell rc)
+# 7. Prints instructions — then stops (no Docker interaction here)
 #
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash
@@ -136,6 +140,26 @@ else
   echo "  $(_green "✓") AWS config dir already present: $AWS_DIR"
 fi
 
+# ── Create self-contained SSH key directory ──────────────────────────────────
+# Bind-mounted into the container as ~/.ssh so SSH-aware tools (ssh, scp,
+# git, rsync, ansible, ec2-instance-connect, ...) discover keys at the
+# conventional location.  Kept separate from .aws because SSH keys and AWS
+# credentials have different lifecycles, and because OpenSSH refuses to use
+# keys whose directory or file permissions are too loose — easier to enforce
+# on a dedicated directory than a subdirectory of something else.
+#
+# Mode 700 satisfies OpenSSH's directory permission requirement.  Individual
+# private keys placed here must be chmod 600.  Created empty on first install
+# and left untouched on subsequent runs so existing keys are never clobbered.
+SSH_DIR="${INSTALL_DIR}/.ssh"
+if [[ ! -d "$SSH_DIR" ]]; then
+  mkdir -p "$SSH_DIR"
+  chmod 700 "$SSH_DIR"
+  echo "  $(_green "✓") Created SSH key dir: $SSH_DIR (mode 700)"
+else
+  echo "  $(_green "✓") SSH key dir already present: $SSH_DIR"
+fi
+
 # ── Add to PATH ───────────────────────────────────────────────────────────────
 # Strategy (in order of preference):
 #   1. ~/.local/bin  — standard XDG user bin dir, already in PATH on most distros
@@ -239,6 +263,11 @@ echo "  $(_bold "AWS credentials:")"
 echo "    Inside the container, run $(_cyan "aws configure sso --use-device-code") or $(_cyan "aws sso login --use-device-code --profile <profile>")."
 echo "    Credentials are persisted to $AWS_DIR on the host."
 echo "    No aws-cli install is needed on the host."
+echo ""
+echo "  $(_bold "SSH keys:")"
+echo "    Place private keys (e.g. AWS .pem files) in $SSH_DIR on the host."
+echo "    They appear as ~/.ssh inside the container."
+echo "    Set permissions with $(_cyan "chmod 600 $SSH_DIR/<keyfile>") so OpenSSH accepts them."
 echo ""
 echo "  $(_bold "If 'firesim-lab' is not found yet, reload your shell first:")"
 echo "    $(_cyan "source $(_detect_shell_rc)")"

@@ -146,22 +146,22 @@ target:
     # host:
     #   type: ec2_launch
     #   region: us-west-2
-    #   aws_profile: my-sso-profile                   # optional; null/AWS_PROFILE fallback
-    #   ssh_key: ~/.ssh/firesim.pem                   # local private key path (or omit for ssh-agent)
-    #   ssh_user: centos                              # default; override for custom AMIs
+    #   aws_profile: fslab-build                      # optional; null/AWS_PROFILE fallback
+    #   ssh_key: ~/.ssh/fslab_ed25519                 # local private key path (or omit for ssh-agent)
+    #   ssh_user: ubuntu                              # default; override for custom AMIs
     #
     #   # --- managed reuse (set instance_id to opt in) ---
     #   # instance_id: i-0abc1234                     # start-if-stopped, stop on release
     #
     #   # --- ephemeral launch (used when instance_id is omitted) ---
     #   lifecycle: spot_one_time                      # spot_one_time | on_demand
-    #   ami_id: ami-yyyyyyyy                          # required (no vetted default)
-    #   key_name: my-firesim-keypair                  # EC2 key-pair name installed at launch
-    #   subnet_id: subnet-xxxxxxxx
-    #   # instance_type: f2.2xlarge                   # registry default
+    #   ami_id: ami-082c5db2375456e1a                 # required (no vetted default)
+    #   key_name: firesim-lab                  # EC2 key-pair name installed at launch
+    #   # subnet_id: subnet-xxxxxxxx
+    #   # instance_type: m4.4xlarge                   # registry default
     #   # iam_instance_profile: my-instance-role
     #   # aws_fpga_version: v1.4.0-firesim            # registry default
-    #   # remote_platform_path: /home/centos/aws-fpga-firesim-f2
+    #   # remote_platform_path: /home/ubuntu/src/project_data/aws-fpga-firesim-f2
 
     # ------------------------------------------------------------------------
     # ALTERNATIVE publish examples
@@ -175,10 +175,10 @@ target:
     # --- AWS AGFI publish (F2 only) ----------------------------------------
     # publish:
     #   type: aws_afi
-    #   s3_bucket_name: my-firesim-builds       # required
+    #   s3_bucket_name: my-firesim-builds         # required
     #   hwdb_entry_name: "{{ project_name }}_v1"  # default: project.name
-    #   # aws_profile: my-sso-profile           # null/AWS_PROFILE fallback; independent of host.aws_profile
-    #   # append_userid_region: true            # registry default; bucket-<userid>-<region>
+    #   # aws_profile: fslab-build                # null/AWS_PROFILE fallback; independent of host.aws_profile
+    #   # append_userid_region: true              # registry default; bucket-<userid>-<region>
     #   # copy_to_regions: [us-east-1, us-west-2]
     #   # sns_topic_arn: arn:aws:sns:us-west-2:123456789012:firesim-builds
     #   # post_build_hook: "scripts/notify-team.sh"   # runs with local results dir as $1

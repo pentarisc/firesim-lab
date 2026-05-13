@@ -100,11 +100,18 @@ class PlatformVersionMismatch(Exception):
 #
 #   reuse_strict  user owns the HDK on this box (external). Stamp mismatch
 #                 is fatal; never auto-upload without --upload-platform.
-#   reuse_soft    fslab manages the HDK on this box (ec2_launch with
-#                 instance_id). Stamp mismatch auto-uploads with a warning;
-#                 missing stamp triggers a first-time upload.
-#   fresh         every build starts from a blank instance (ec2_launch
-#                 ephemeral). Always upload.
+#   reuse_soft    fslab manages the HDK on this box. Stamp mismatch
+#                 auto-uploads with a warning; missing stamp triggers a
+#                 first-time upload; match → skip. Used for both
+#                 ec2_launch managed-reuse and ec2_launch ephemeral —
+#                 the latter so that pre-baked AMIs (HDK + stamp baked
+#                 in) can skip the multi-hour upload while stock AMIs
+#                 still get a first-time upload via the missing-stamp
+#                 path.
+#   fresh         every build unconditionally re-uploads. Currently no
+#                 provider sets this; kept in the enum for explicit
+#                 force-upload semantics (--upload-platform achieves the
+#                 same effect at the CLI level).
 UploadMode = Literal["reuse_strict", "reuse_soft", "fresh"]
 
 
@@ -530,12 +537,16 @@ class BuildHostProvider(abc.ABC):
         Policy (consulted via `host._upload_mode`):
 
           fresh
-              Always upload + (re)write stamp. ec2_launch ephemeral.
+              Always upload + (re)write stamp. No provider currently sets
+              this; the mode is retained for explicit force-upload semantics.
 
-          reuse_soft  (ec2_launch with instance_id)
-              Read stamp. Missing → upload (first time on this instance).
-              Mismatched → upload + WARN (refreshing to the expected version).
-              Match → skip.
+          reuse_soft  (ec2_launch — both managed-reuse and ephemeral)
+              Read stamp. Missing → upload (first time on this instance,
+              or a stock AMI with no HDK baked in). Mismatched → upload +
+              WARN (refreshing to the expected version). Match → skip.
+              For ephemeral instances this is what lets a pre-baked AMI
+              (with HDK installed and stamp file present) skip the
+              multi-hour upload on every launch.
 
           reuse_strict  (external)
               Read stamp purely as a diagnostic. Mismatch → hard error
@@ -654,9 +665,18 @@ class BuildHostProvider(abc.ABC):
             self._REMOTE_BOOTSTRAP_PATH,
             log_file=log_file,
         )
-        r = host.run(
+        # Wrap in `bash -lc` so the bootstrap (and the hdk_setup.sh it
+        # sources) runs under a login shell. Fabric's `exec_command`
+        # gives us a non-login, non-interactive shell by default, which
+        # on the FPGA Developer AMI means /etc/profile.d/* and ~/.profile
+        # are not sourced and `vivado` is not on PATH — making
+        # hdk_setup.sh fail its `type vivado` check.
+        bootstrap_cmd = (
             f"bash {shlex.quote(self._REMOTE_BOOTSTRAP_PATH)} "
-            f"{shlex.quote(cfg.remote_platform_path)}",
+            f"{shlex.quote(cfg.remote_platform_path)}"
+        )
+        r = host.run(
+            f"bash -lc {shlex.quote(bootstrap_cmd)}",
             warn=True,
             log_file=log_file,
         )
@@ -938,7 +958,16 @@ class Ec2LaunchBuildHostProvider(BuildHostProvider):
 
         params = self._build_external_params(host_cfg, public_addr)
         host = Ec2LaunchBuildHost(params, instance_id=instance_id)
-        host._upload_mode = "fresh"
+        # reuse_soft (not fresh) so a pre-baked AMI that already contains
+        # the platform HDK and a matching stamp file at
+        # `<remote_platform_path>/.firesim-lab-stamp.yaml` can skip the
+        # multi-hour upload. A stock AMI with no stamp still gets a
+        # first-time upload via reuse_soft's missing-stamp path; a stale
+        # AMI (version mismatch) auto-refreshes with a warning. To bake
+        # such an AMI: run one normal build to completion on a fresh
+        # instance (which writes the stamp as the final step of upload),
+        # then snapshot that instance into an AMI.
+        host._upload_mode = "reuse_soft"
         return host
 
     # ----------------------------------------------------------------------

@@ -404,12 +404,19 @@ class F2BitBuilder(BitBuilder):
     def _run_build_script(self, host: BuildHost) -> int:
         cfg = self.cfg
         remote_script = f"{cfg.remote_cl_dir}/{cfg.remote_build_script_name}"
-        cmd = (
+        inner_cmd = (
             f"{shlex.quote(remote_script)} "
             f"--cl_dir {shlex.quote(cfg.remote_cl_dir)} "
             f"--frequency {cfg.fpga_frequency} "
             f"--strategy {cfg.build_strategy.name}"
         )
+        # Wrap in `bash -lc` so the build script (which sources
+        # hdk_setup.sh) inherits the FPGA Dev AMI's login-shell PATH/env
+        # — vivado, XILINX_*, AWS_FPGA_REPO_DIR. Fabric's exec_command
+        # defaults to a non-login, non-interactive shell, in which those
+        # are absent and the build fails its prereq checks. Mirrors
+        # _run_bootstrap in buildhost.py.
+        cmd = f"bash -lc {shlex.quote(inner_cmd)}"
         info(f"Running build script on remote: {cmd}")
         # warn=True so we can still pull results on failure.
         # pty=True so Vivado output streams in real-time.

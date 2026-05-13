@@ -74,6 +74,18 @@ if [[ ! -d "$HOST_AWS_DIR" ]]; then
   chmod 700 "$HOST_AWS_DIR"
 fi
 
+# SSH key directory — created by install.sh, bind-mounted into the container
+# as ~/.ssh.  Same anchoring strategy as HOST_AWS_DIR: lives under the install
+# directory so it follows custom INSTALL_DIR values and never collides with
+# the host's own ~/.ssh.  Mode 700 is required by OpenSSH; individual private
+# keys placed here must be chmod 600.  Created defensively here in case the
+# user is upgrading from a version that did not create it.
+HOST_SSH_DIR="${INSTALL_DIR}/.ssh"
+if [[ ! -d "$HOST_SSH_DIR" ]]; then
+  mkdir -p "$HOST_SSH_DIR"
+  chmod 700 "$HOST_SSH_DIR"
+fi
+
 # ── Workspace is always the current working directory ─────────────────────────
 WORKSPACE_DIR="$(pwd)"
 WORKSPACE_BASENAME="$(basename "$WORKSPACE_DIR")"
@@ -411,6 +423,12 @@ HOST_WORKSPACE_DIR=${WORKSPACE_DIR}
 # the user does not need aws-cli installed on the host.
 HOST_AWS_DIR=${HOST_AWS_DIR}
 
+# ── SSH key directory ───────────────────────────────────────────────────────
+# Bind-mounted into the container as ~/.ssh so SSH-aware tools (ssh, scp,
+# git, rsync, ...) discover keys at the conventional location.  Anchored to
+# the install dir so it never collides with the host's own ~/.ssh.
+HOST_SSH_DIR=${HOST_SSH_DIR}
+
 # ── Host user mapping ───────────────────────────────────────────────────────
 HOST_UID=${HOST_UID}
 HOST_GID=${HOST_GID}
@@ -455,6 +473,7 @@ if [[ -n "$PROJECT_NAME" ]]; then
 echo "  Project        : $PROJECT_NAME   →  /target/$PROJECT_NAME"
 fi
 echo "  AWS config     : $HOST_AWS_DIR  →  ~/.aws"
+echo "  SSH keys       : $HOST_SSH_DIR  →  ~/.ssh"
 echo "  Host UID:GID   : $HOST_UID:$HOST_GID"
 echo "  Cache GID      : $CACHE_GID  (firesim-lab-cache, baked into image)"
 echo "  Verilator jobs : $VERILATOR_THREADS"
@@ -557,6 +576,7 @@ _enter_shell() {
     echo "printf '%b\n' '    fslab --help                                     — Show help'"
     echo "printf '%b\n' ''"
     echo "printf '%b\n' '  \033[1mAWS:\033[0m run \033[36maws configure sso --use-device-code\033[0m or \033[36aws sso login --use-device-code --profile <profile>\033[0m — credentials persist to ${HOST_AWS_DIR} on the host.'"
+    echo "printf '%b\n' '  \033[1mSSH:\033[0m place private keys (e.g. .pem) under ${HOST_SSH_DIR} on the host (chmod 600) — they appear as \033[36m~/.ssh\033[0m in the container.'"
     echo "printf '%b\n' ''"
     echo "printf '%b\n' '  \033[2mType exit to return to host shell.\033[0m'"
     echo "printf '%b\n' ''"
