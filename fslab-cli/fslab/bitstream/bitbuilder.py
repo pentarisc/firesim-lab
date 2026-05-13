@@ -19,6 +19,9 @@ by the provider's `ensure_platform` only when needed.
 `--upload-platform` is now a force-override flag rather than a literal
 "do the upload" switch — the provider decides by default. The user
 still passes it when refreshing the HDK during HDK development work.
+It also bypasses the registry-default conflict check (see
+`ensure_platform`) for the rare case where installing a second HDK at
+a custom override path is actually desired.
 
 Post-build artifact handling (S3 upload, AGFI submission, etc.) lives in
 `publisher.py` and is dispatched off `cfg.publish.type`.
@@ -506,16 +509,20 @@ def build_bitstream(
     run the build, release the host, then run the configured publisher.
 
     `upload_platform` is a force-override: when True the provider's
-    `ensure_platform` will rsync the HDK regardless of stamp state. When
-    False, the provider decides:
+    `ensure_platform` will rsync the HDK regardless of stamp state, AND
+    will bypass the registry-default conflict check that normally aborts
+    when the user's override path differs from a registry-default path
+    that already has a baked-in HDK stamp on the remote. When False, the
+    provider decides:
       * external (user-managed)       — never auto-upload; mismatch is fatal.
       * ec2_launch + instance_id      — upload on missing/mismatched stamp.
       * ec2_launch ephemeral          — always upload (fresh instance).
 
     Returns True on a successful build (including a successful publish),
     False on build-script failure. Raises `BitstreamBuildFailed` /
-    `InvalidBuildConfig` for setup errors, and propagates publisher
-    exceptions (S3 / create-fpga-image / poll failures) verbatim.
+    `InvalidBuildConfig` / `RegistryDefaultPathConflict` for setup errors,
+    and propagates publisher exceptions (S3 / create-fpga-image / poll
+    failures) verbatim.
 
     The publisher runs *after* the build host is released so that long
     S3 uploads / AFI polls don't keep an EC2 instance billing.

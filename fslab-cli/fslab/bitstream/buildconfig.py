@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fslab.schemas.host_model import HostModelConfig
 from fslab.schemas.project import BuildStrategy
@@ -71,6 +71,17 @@ class BuildConfig:
     remote_cl_parent_subdir: str
     template_cl_name: str
     remote_build_script_name: str
+
+    # The registry-default remote_platform_path for this platform +
+    # host_model (read from `platforms.<id>.host_models.<type>.remote_platform_path`
+    # *before* the user override is merged in). `None` when the registry
+    # supplies no default — today that is the case for `external`, which
+    # ships `host_models.external: {}`. When set AND different from the
+    # effective `remote_platform_path`, `ensure_platform` probes this path
+    # on the remote for a baked-in HDK stamp and aborts the build if one
+    # is found, to prevent silently provisioning a second HDK at the
+    # user's override location.
+    registry_default_remote_platform_path: Optional[str]
 
     # --- build params ------------------------------------------------------
     fpga_frequency: float
@@ -216,6 +227,19 @@ class BuildConfig:
                 f"for the registry-default merge step (parser task 4b)."
             )
 
+        # --- registry-default remote_platform_path (pre-merge value) ------
+        # Looked up from the same place the parser reads when merging
+        # host-model defaults (see parser.py: host_models.get(host_type)).
+        # Defensive .get() chain so the lookup degrades to None rather than
+        # raising when a platform's registry entry lacks host_models for
+        # this discriminator — that case is already covered by [HMOD-05]
+        # at parse time, but a stale call path could still arrive here.
+        host_models = getattr(platform_entry, "host_models", None) or {}
+        registry_defaults = host_models.get(build.host.type) or {}
+        registry_default_remote_platform_path = registry_defaults.get(
+            "remote_platform_path"
+        )
+
         return cls(
             project_name=project_name,
             platform_id=platform_id,
@@ -231,6 +255,7 @@ class BuildConfig:
             remote_cl_parent_subdir=bb_entry.remote_cl_parent_subdir,
             template_cl_name=bb_entry.template_cl_name,
             remote_build_script_name=bb_entry.build_script_basename,
+            registry_default_remote_platform_path=registry_default_remote_platform_path,
             fpga_frequency=float(build.fpga_frequency),
             build_strategy=BuildStrategy(build.build_strategy),
             host=build.host,

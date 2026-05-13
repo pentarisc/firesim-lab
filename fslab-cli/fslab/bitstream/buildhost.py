@@ -35,6 +35,14 @@ Platform-HDK provisioning:
   and the provider's `_upload_mode` (set during `request()`) to decide
   between skip / upload / fail. See the docstring on the method for the
   policy matrix.
+
+  Before any of that, `ensure_platform` also runs a divergence check:
+  if the user has overridden `remote_platform_path` in fslab.yaml to a
+  path different from the platform's registry default, and the registry
+  default already has an HDK stamp on the remote (e.g. baked into the
+  AMI), the build aborts with `RegistryDefaultPathConflict` — uploading
+  to the override path would leave the remote with two HDK installations.
+  `--upload-platform` bypasses this check.
 """
 
 from __future__ import annotations
@@ -88,6 +96,20 @@ class RsyncFailed(Exception):
 class PlatformVersionMismatch(Exception):
     """Raised when the remote stamp's aws_fpga_version disagrees with the
     project's expected version under `reuse_strict` mode (external host)."""
+
+
+class RegistryDefaultPathConflict(Exception):
+    """Raised when the user's `remote_platform_path` override differs from
+    the platform's registry default AND the registry-default path already
+    contains an HDK stamp on the remote.
+
+    Proceeding with the build would upload a second copy of the HDK to the
+    user's override location, leaving the remote with two parallel
+    installations. The user almost certainly intended to use the existing
+    HDK at the registry-default path — typically the fix is to remove the
+    override from fslab.yaml. `--upload-platform` bypasses the check for
+    cases where the duplicate is actually wanted (e.g. HDK-development
+    refresh into a custom location)."""
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +556,17 @@ class BuildHostProvider(abc.ABC):
     ) -> None:
         """Decide whether to upload the platform HDK, then do so if needed.
 
+        Before consulting `_upload_mode`, runs a registry-default conflict
+        check: if the user overrode `remote_platform_path` in fslab.yaml
+        and the registry-default path already carries an HDK stamp on the
+        remote (e.g. baked into the AMI), abort with
+        `RegistryDefaultPathConflict`. This prevents silently provisioning
+        a second HDK at the user's override location. Skipped when
+        `force_upload=True`, when there is no registry default (e.g.
+        `external` host_model), or when the user's value matches the
+        registry default. Uniform across host_models — for `external` the
+        registry ships no default so the check naturally no-ops.
+
         Policy (consulted via `host._upload_mode`):
 
           fresh
@@ -555,7 +588,8 @@ class BuildHostProvider(abc.ABC):
               bitbuilder's later prereq check catch a truly missing HDK).
 
         `force_upload=True` (from `--upload-platform`) overrides everything
-        and forces an upload + restamp.
+        — both the registry-default conflict check and the stamp-based
+        policy — and forces an upload + restamp.
 
         `log_file`, when set, is threaded into every host call this method
         and its helpers make (stamp read/write, bootstrap, and the
@@ -569,14 +603,19 @@ class BuildHostProvider(abc.ABC):
             self._do_upload(host, cfg, builder, log_file=log_file)
             return
 
-        if mode == "fresh":
-            info("Fresh build host: uploading platform HDK.")
-            self._do_upload(host, cfg, builder, log_file=log_file)
-            return
+        # Registry-default conflict check. Runs uniformly across host_models;
+        # naturally a no-op for `external` (registry ships no default there)
+        # and for any user whose effective path matches the registry default.
+        self._check_registry_default_conflict(host, cfg, log_file=log_file)
 
         stamp = self._read_stamp(host, cfg, log_file=log_file)
         expected_ver = getattr(cfg.host, "aws_fpga_version", None)
         stamp_ver = stamp.get("aws_fpga_version") if stamp else None
+
+        if mode == "fresh":
+            info("Fresh build host: uploading platform HDK.")
+            self._do_upload(host, cfg, builder, log_file=log_file)
+            return
 
         if mode == "reuse_soft":
             if stamp is None:
@@ -688,6 +727,64 @@ class BuildHostProvider(abc.ABC):
 
     def _stamp_path(self, cfg: BuildConfig) -> str:
         return f"{cfg.remote_platform_path}/{self._STAMP_FILENAME}"
+
+    def _stamp_path_for(self, remote_platform_path: str) -> str:
+        """Variant of `_stamp_path` that takes the platform path directly.
+
+        Used by `_check_registry_default_conflict` to probe the
+        registry-default path (which differs from `cfg.remote_platform_path`
+        when the user has supplied an override)."""
+        return f"{remote_platform_path}/{self._STAMP_FILENAME}"
+
+    def _check_registry_default_conflict(
+        self,
+        host: BuildHost,
+        cfg: BuildConfig,
+        *,
+        log_file: Optional[Union[str, Path]] = None,
+    ) -> None:
+        """Abort if the user's override path differs from the registry
+        default AND the registry default already carries a stamp file.
+
+        Three early-exit conditions:
+          1. No registry default available (e.g. `external` host_model,
+             whose registry entry ships `host_models.external: {}`).
+          2. Registry default equals the effective path — no override in
+             play, nothing to conflict with.
+          3. Registry-default path has no stamp file — nothing baked in,
+             upload to override path is safe.
+
+        The probe runs a single `test -f` on the remote; cheap enough to
+        do on every build."""
+        reg_default = cfg.registry_default_remote_platform_path
+        if not reg_default:
+            return
+        if reg_default == cfg.remote_platform_path:
+            return
+
+        reg_stamp_path = self._stamp_path_for(reg_default)
+        r = host.run(
+            f"test -f {shlex.quote(reg_stamp_path)}",
+            warn=True, hide=True,
+            log_file=log_file,
+        )
+        if r.return_code != 0:
+            # No stamp at registry-default path → no baked-in HDK to clash
+            # with. Fall through and let the normal mode-based policy run.
+            return
+
+        raise RegistryDefaultPathConflict(
+            f"Registry-default platform path already contains an HDK on "
+            f"the remote, but the project's effective remote_platform_path "
+            f"is set to a different location.\n"
+            f"  registry default: {reg_default}\n"
+            f"  effective path:   {cfg.remote_platform_path}\n"
+            f"  -> Likely fix: remove the `remote_platform_path:` override "
+            f"from your fslab.yaml so the registry default is used and the "
+            f"baked-in HDK can be reused.\n"
+            f"  -> To install a second HDK at the override path anyway "
+            f"(e.g. during HDK development), pass --upload-platform."
+        )
 
     def _read_stamp(
         self,
