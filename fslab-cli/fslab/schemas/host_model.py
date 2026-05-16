@@ -35,6 +35,7 @@ Validation requirements
   HMOD-03  external.host must not contain '@' or '://' (BHOST-02 reuse)
   HMOD-04  remote_platform_path must be Unix-absolute when set
   HMOD-06  ec2_launch.lifecycle ∈ {spot_one_time, on_demand}
+  HMOD-07  ec2_launch.iam_instance_profile is required and non-empty
   AWS-01   ec2_launch.ami_id matches `ami-XXXX...` format (when set)
   AWS-02   ec2_launch.region is a valid AWS region code
   AWS-03   ec2_launch.instance_type matches AWS naming (when set)
@@ -225,7 +226,20 @@ class Ec2LaunchHostConfig(HostModelConfigBase):
             "is supplied via `ssh_key` below."
         ),
     )
-    iam_instance_profile: Optional[str] = Field(None)
+    iam_instance_profile: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "[HMOD-07] Name of the IAM instance profile attached to the "
+            "build host. The remote build wrapper authenticates to AWS "
+            "(S3 upload + create-fpga-image) via this profile, which "
+            "eliminates the local SSO-expiry failure mode that bit long-"
+            "running builds. Required even for managed-reuse mode so the "
+            "expected profile name is recorded in the project. See "
+            "docs/aws-setup.md for one-time IAM role + instance profile "
+            "creation steps."
+        ),
+    )
 
     ssh_key: Optional[str] = Field(
         None,

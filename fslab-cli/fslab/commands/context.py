@@ -191,6 +191,41 @@ def _build_template_context(
     fpgasim_cfg       = registry.fpgasimulators.get(config.target.fpga_sim)
     quintuplet        = f"{project_name}-{platform}"
 
+    # ── Wrapper-template fields (remote_build/<platform>.sh.j2) ──────────
+    # Project-static config the F2 wrapper bakes in at `fslab generate`
+    # time. BuildConfig-derived remote paths (cl_dir, build script, log
+    # paths) are passed as env vars at invocation rather than rendered
+    # here — they're not resolvable from FSLabConfig alone.
+    from fslab.schemas.publish import AwsAfiPublishConfig
+    from fslab.schemas.host_model import Ec2LaunchHostConfig
+
+    build_cfg          = config.target.build
+    fpga_frequency     = getattr(build_cfg, "fpga_frequency", None)
+    _strategy          = getattr(build_cfg, "build_strategy", None)
+    build_strategy     = getattr(_strategy, "name", _strategy) if _strategy else None
+
+    # publish fields only meaningful for aws_afi; None elsewhere keeps the
+    # wrapper render harmless when platform=f2 + publish=none (the rendered
+    # script will fail at S3 upload if actually invoked, which is the
+    # right failure mode for that misconfiguration).
+    _publish           = getattr(build_cfg, "publish", None)
+    if isinstance(_publish, AwsAfiPublishConfig):
+        s3_bucket_base      = _publish.s3_bucket_name
+        append_userid_region = _publish.append_userid_region
+        dcp_glob            = _publish.dcp_tar_glob
+    else:
+        s3_bucket_base      = None
+        append_userid_region = False
+        dcp_glob            = None
+
+    # region: ec2_launch carries it explicitly; external/other host
+    # models leave AWS region to the local boto3 session at invocation.
+    _host_cfg          = getattr(build_cfg, "host", None)
+    if isinstance(_host_cfg, Ec2LaunchHostConfig):
+        aws_region = _host_cfg.region
+    else:
+        aws_region = None
+
     # ── Derived from design.blackbox_ports ────────────────────────────────
     # Scan for the key whose port definition is "in clock" or "in reset".
     clock_port:   str | None = None
@@ -322,5 +357,12 @@ def _build_template_context(
         "platform_cfg":      platform_cfg,
         "metasim_cfg":       metasim_cfg,
         "fpgasim_cfg":       fpgasim_cfg,
-        "quintuplet":        quintuplet
+        "quintuplet":        quintuplet,
+        # remote_build/<platform>.sh.j2 (background-build wrapper)
+        "fpga_frequency":       fpga_frequency,
+        "build_strategy":       build_strategy,
+        "s3_bucket_base":       s3_bucket_base,
+        "append_userid_region": append_userid_region,
+        "dcp_glob":             dcp_glob,
+        "aws_region":           aws_region,
     }

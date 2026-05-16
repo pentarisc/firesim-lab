@@ -43,6 +43,25 @@ Platform-HDK provisioning:
   AMI), the build aborts with `RegistryDefaultPathConflict` — uploading
   to the override path would leave the remote with two HDK installations.
   `--upload-platform` bypasses this check.
+
+Cleanup decoupling (background-build support):
+  In addition to the in-memory `release(host)` path used by the original
+  synchronous build, each provider exposes a pair of methods that let a
+  later process (e.g. `fslab monitor build`, `fslab abandon build`)
+  perform cleanup without any live config or in-memory provider state:
+
+    serialize_cleanup_state(host, cfg) -> dict
+        Capture, at launch time, everything cleanup_from_state needs.
+        The result is persisted in the local stamp file.
+    cleanup_from_state(state) classmethod
+        Execute provider-appropriate cleanup using ONLY the captured
+        state. Idempotent.
+
+  Dispatch is registry-based, mirroring the BITBUILDER_CLASS_REGISTRY
+  pattern: each concrete provider is `@register_provider(<name>)`-decorated
+  with the same string that appears in `cfg.host.type` and in the stamp's
+  `cleanup.provider` field. The top-level `cleanup_remote(stamp)` helper
+  looks the class up and invokes its classmethod.
 """
 
 from __future__ import annotations
@@ -54,7 +73,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, IO, List, Literal, Optional, Union
+from typing import Any, Callable, IO, List, Literal, Optional, Type, Union
 
 import yaml
 from fabric import Connection  # type: ignore[import-not-found]
@@ -110,6 +129,15 @@ class RegistryDefaultPathConflict(Exception):
     override from fslab.yaml. `--upload-platform` bypasses the check for
     cases where the duplicate is actually wanted (e.g. HDK-development
     refresh into a custom location)."""
+
+
+class UnknownProviderError(Exception):
+    """Raised when `cleanup_remote` is handed a stamp whose
+    `cleanup.provider` value does not match any registered provider.
+
+    Most likely cause: the stamp was written by a newer fslab version
+    that knows a provider this code doesn't, or the stamp file has been
+    edited by hand and the discriminator no longer matches."""
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +536,63 @@ class Ec2LaunchBuildHost(ExternalBuildHost):
 
 
 # ---------------------------------------------------------------------------
+# Provider registry — for stamp-driven cleanup dispatch
+# ---------------------------------------------------------------------------
+
+
+PROVIDER_REGISTRY: dict[str, Type["BuildHostProvider"]] = {}
+
+
+def register_provider(
+    name: str,
+) -> Callable[[Type["BuildHostProvider"]], Type["BuildHostProvider"]]:
+    """Register a BuildHostProvider subclass under `name`.
+
+    The registered name is what appears in the stamp file's
+    `cleanup.provider` field and is the discriminator `cleanup_remote`
+    uses to look the class back up. By convention the registered name
+    matches the host_model type discriminator in fslab.yaml
+    (`ec2_launch`, `external`, …), so the same string flows from user
+    config → cleanup state → cleanup dispatch with no remapping.
+    """
+    def decorator(
+        cls: Type["BuildHostProvider"],
+    ) -> Type["BuildHostProvider"]:
+        PROVIDER_REGISTRY[name] = cls
+        return cls
+    return decorator
+
+
+def cleanup_remote(stamp: dict) -> None:
+    """Top-level cleanup helper, driven entirely by a stamp file.
+
+    Pulls the `cleanup` block out of the stamp, looks up the provider by
+    its `provider` discriminator, and delegates to the class's
+    `cleanup_from_state` classmethod. Idempotent — running this twice on
+    already-released resources must succeed (each provider's
+    implementation guarantees this).
+    """
+    cleanup_state = stamp.get("cleanup")
+    if not isinstance(cleanup_state, dict):
+        raise ValueError(
+            "stamp is missing a valid 'cleanup' block; cannot dispatch "
+            "cleanup_remote."
+        )
+    provider_name = cleanup_state.get("provider")
+    if not provider_name:
+        raise ValueError(
+            "stamp.cleanup is missing the 'provider' discriminator."
+        )
+    cls = PROVIDER_REGISTRY.get(provider_name)
+    if cls is None:
+        raise UnknownProviderError(
+            f"No provider registered under name {provider_name!r}. "
+            f"Known providers: {sorted(PROVIDER_REGISTRY)}"
+        )
+    cls.cleanup_from_state(cleanup_state)
+
+
+# ---------------------------------------------------------------------------
 # BuildHostProvider
 # ---------------------------------------------------------------------------
 
@@ -522,6 +607,14 @@ class BuildHostProvider(abc.ABC):
     Subclasses implement `request` / `release`; `ensure_platform` is
     shared base-class logic that consults a stamp file and the host's
     `_upload_mode` to decide between skip / upload / fail.
+
+    For background builds (where the local process that launched the
+    build is not the one that will eventually release the host),
+    subclasses also implement `serialize_cleanup_state` and
+    `cleanup_from_state`. These let a later process clean up using only
+    the state persisted in the local stamp file — no live cfg, no live
+    provider instance. `release()` is unchanged and still used by the
+    synchronous build path.
     """
 
     @abc.abstractmethod
@@ -538,6 +631,38 @@ class BuildHostProvider(abc.ABC):
         closes the connection. For ephemeral EC2 hosts this terminates the
         instance; for managed-reuse EC2 hosts it stops the instance only
         if the provider started it (initial state was `stopped`)."""
+
+    # ----------------------------------------------------------------------
+    # Cleanup-state serialization (for background-build / stamp-driven flow)
+    # ----------------------------------------------------------------------
+
+    @abc.abstractmethod
+    def serialize_cleanup_state(
+        self, host: BuildHost, cfg: BuildConfig
+    ) -> dict:
+        """Capture everything `cleanup_from_state` will need to release this
+        host without access to live config or in-memory provider state.
+
+        Called once, immediately after `request()` succeeds — the returned
+        dict is persisted in the local stamp file and never re-derived
+        from `cfg` afterward. This makes cleanup robust to later changes
+        in fslab.yaml or to running cleanup from a separate process.
+
+        The returned dict MUST include a `'provider'` key matching the
+        provider's registered name (see `register_provider`); the
+        remaining fields are provider-specific.
+        """
+
+    @classmethod
+    @abc.abstractmethod
+    def cleanup_from_state(cls, state: dict) -> None:
+        """Execute provider-appropriate cleanup using ONLY the captured
+        state. No live cfg, no live host, no instance attributes.
+
+        Must be idempotent — running this twice on resources already
+        released must succeed (e.g. terminating an already-terminated
+        EC2 instance is a no-op for AWS, just surface that gracefully).
+        """
 
     # ----------------------------------------------------------------------
     # Platform-HDK provisioning — shared across providers
@@ -852,6 +977,7 @@ class BuildHostProvider(abc.ABC):
 # ---------------------------------------------------------------------------
 
 
+@register_provider("external")
 class ExternalBuildHostProvider(BuildHostProvider):
     """For pre-provisioned hosts. No launch/terminate, just close on release."""
 
@@ -871,6 +997,27 @@ class ExternalBuildHostProvider(BuildHostProvider):
     def release(self, host: BuildHost) -> None:
         host.close()
 
+    # ----------------------------------------------------------------------
+    # Stamp-driven cleanup
+    # ----------------------------------------------------------------------
+
+    def serialize_cleanup_state(
+        self, host: BuildHost, cfg: BuildConfig
+    ) -> dict:
+        host_cfg = cfg.host
+        assert isinstance(host_cfg, ExternalHostConfig)
+        return {
+            "provider": "external",
+            "host": host_cfg.host,
+        }
+
+    @classmethod
+    def cleanup_from_state(cls, state: dict) -> None:
+        info(
+            f"External host {state.get('host', '?')!r} is user-managed; "
+            f"nothing to clean up."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Ec2LaunchBuildHostProvider
@@ -889,6 +1036,7 @@ class _Ec2Lifecycle:
     instance_id: str
 
 
+@register_provider("ec2_launch")
 class Ec2LaunchBuildHostProvider(BuildHostProvider):
     """Provider for the `ec2_launch` host model.
 
@@ -957,6 +1105,73 @@ class Ec2LaunchBuildHostProvider(BuildHostProvider):
                     f"Lifecycle teardown failed for instance "
                     f"{lc.instance_id} ({lc.action}): {e}"
                 )
+
+    # ----------------------------------------------------------------------
+    # Stamp-driven cleanup
+    # ----------------------------------------------------------------------
+
+    def serialize_cleanup_state(
+        self, host: BuildHost, cfg: BuildConfig
+    ) -> dict:
+        """Snapshot the request()-time `_lifecycle` plus enough config to
+        rebuild a boto3 session later. Must be called between a successful
+        `request()` and the corresponding `release()`."""
+        if self._lifecycle is None:
+            raise RuntimeError(
+                "serialize_cleanup_state called with no live _lifecycle; "
+                "request() must have succeeded first and release() must "
+                "not have run yet."
+            )
+        host_cfg = cfg.host
+        if not isinstance(host_cfg, Ec2LaunchHostConfig):
+            raise RuntimeError(
+                f"serialize_cleanup_state received host of type "
+                f"{host_cfg.type!r}; expected 'ec2_launch'."
+            )
+        return {
+            "provider": "ec2_launch",
+            "aws_profile": host_cfg.aws_profile,
+            "region": host_cfg.region,
+            "instance_id": self._lifecycle.instance_id,
+            # 'action' mirrors _Ec2Lifecycle.action so the cleanup branch
+            # set is the same as in release(): launched → terminate,
+            # started → stop, connected → leave alone.
+            "action": self._lifecycle.action,
+        }
+
+    @classmethod
+    def cleanup_from_state(cls, state: dict) -> None:
+        """Mirror of `release()`'s teardown branches, but driven purely by
+        the captured state dict. Idempotent: terminating an already-
+        terminated instance and stopping an already-stopped instance both
+        return cleanly on AWS's side."""
+        action = state["action"]
+        instance_id = state["instance_id"]
+        if action == "connected":
+            info(
+                f"Instance {instance_id} was already running when fslab "
+                f"connected; leaving alone."
+            )
+            return
+
+        session = aws_fpga.make_session(
+            region=state["region"], profile=state.get("aws_profile")
+        )
+        aws_fpga.check_credentials(session, state.get("aws_profile"))
+
+        if action == "launched":
+            info(f"Terminating ephemeral instance {instance_id}")
+            aws_fpga.terminate_instance(session, instance_id)
+        elif action == "started":
+            info(
+                f"Stopping managed instance {instance_id} "
+                f"(was 'stopped' before fslab started it)"
+            )
+            aws_fpga.stop_instance(session, instance_id)
+        else:
+            raise ValueError(
+                f"Unknown ec2_launch cleanup action: {action!r}"
+            )
 
     # ----------------------------------------------------------------------
     # Managed-reuse path

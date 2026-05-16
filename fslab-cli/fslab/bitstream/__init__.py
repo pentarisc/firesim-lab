@@ -8,6 +8,7 @@ from .bitbuilder import (
     BitstreamBuildFailed,
     F2BitBuilder,
     build_bitstream,
+    check_no_existing_build,
     make_bitbuilder,
 )
 from .buildconfig import BuildConfig, InvalidBuildConfig
@@ -38,5 +39,6 @@ __all__ = [
     "F2BitBuilder",
     "BitstreamBuildFailed",
     "build_bitstream",
+    "check_no_existing_build",
     "make_bitbuilder",
 ]

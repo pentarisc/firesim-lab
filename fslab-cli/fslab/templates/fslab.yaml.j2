@@ -143,10 +143,17 @@ target:
     # `aws sso login --profile <name>` (or `aws configure`) once per
     # container to populate it.
     #
+    # iam_instance_profile is REQUIRED. The remote build wrapper
+    # authenticates to AWS (S3 upload + create-fpga-image) via this EC2
+    # instance profile, so hours-long builds are immune to local SSO
+    # session expiry. Create the IAM role + instance profile once per
+    # AWS account — see docs/aws-setup.md for the exact CLI commands.
+    #
     # host:
     #   type: ec2_launch
     #   region: us-west-2
     #   aws_profile: fslab-build                      # optional; null/AWS_PROFILE fallback
+    #   iam_instance_profile: fslab-fpga-builder      # REQUIRED — see docs/aws-setup.md
     #   ssh_key: ~/.ssh/fslab_ed25519                 # local private key path (or omit for ssh-agent)
     #   ssh_user: ubuntu                              # default; override for custom AMIs
     #
@@ -159,7 +166,6 @@ target:
     #   key_name: firesim-lab                  # EC2 key-pair name installed at launch
     #   # subnet_id: subnet-xxxxxxxx
     #   # instance_type: m4.4xlarge                   # registry default
-    #   # iam_instance_profile: my-instance-role
     #   # aws_fpga_version: v1.4.0-firesim            # registry default
     #   # remote_platform_path: /home/ubuntu/src/project_data/aws-fpga-firesim-f2
 

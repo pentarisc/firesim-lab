@@ -81,6 +81,16 @@ from fslab.commands.fpga import app as fpga_app  # noqa: E402
 
 app.add_typer(fpga_app)  # 'build' and 'archive' live here
 
+# Background-build monitor (`fslab monitor build`)
+from fslab.commands.monitor import app as monitor_top_app  # noqa: E402
+
+app.add_typer(monitor_top_app)
+
+# Background-build abandon (`fslab abandon build`)
+from fslab.commands.abandon import app as abandon_top_app  # noqa: E402
+
+app.add_typer(abandon_top_app)
+
 
 # ---------------------------------------------------------------------------
 # [CLI-17] fslab clean – simple enough to live in cli.py directly

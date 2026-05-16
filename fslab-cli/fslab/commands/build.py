@@ -48,7 +48,13 @@ from fslab.utils.display import console, error, info, section, success, warning
 from fslab.utils.shell import run_or_die
 from fslab.utils.state import StateManager, check_and_maybe_skip_generation
 from fslab.schemas.parser import load_and_validate
-from fslab.bitstream import BitstreamBuildFailed, InvalidBuildConfig, build_bitstream
+from fslab.bitstream import (
+    BitstreamBuildFailed,
+    InvalidBuildConfig,
+    build_bitstream,
+    check_no_existing_build,
+)
+from fslab.bitstream.build_stamp import read_stamp, stamp_path_for
 
 class BuildType(str, Enum):
     METASIM = "metasim"
@@ -188,13 +194,13 @@ def _run_generate(
         file_details = []
         for filepath, info_dict in changes_dict.items():
             status = info_dict["status"]
-            
+
             # Color-code the status text (e.g., yellow for modified, red for missing)
             status_color = "yellow" if status == "modified" else "red"
-            
+
             # Formats like: "  • [yellow]modified[/]: [path]/full/path/to/build.sbt[/]"
             file_details.append(f"  • [{status_color}]{status}[/]: [path]{filepath}[/]")
-            
+
         files_str = "\n".join(file_details)
 
         # Output the formatted error and exit
@@ -204,6 +210,10 @@ def _run_generate(
             f"{files_str}\n\n"
             "Please review these changes or run with [bold]--force[/] to overwrite.\n"
         )
+        raise typer.Exit(code=1)
+
+    if not is_rendered:
+        error("Error while rendering one or more templates. Check preivous logs for details.")
         raise typer.Exit(code=1)
 
     # ------------------------------------------------------------------
@@ -241,6 +251,8 @@ JobsOpt = Annotated[int, typer.Option("--jobs", "-j", min=1, help="Parallel make
 ExtraMakeArgs = Annotated[str, typer.Option("--extra-args", "-e", help="Extra arguments to make e.g. VM_PARALLEL_BUILDS=1")]
 DoDebug = Annotated[bool, typer.Option("--debug", "-d", help="Enable build debug.")] # TODO: Enable debug for java and sbt. Currently enabled only for Make.
 UploadPlatform = Annotated[bool, typer.Option("--upload-platform", "-u", help="Upload the platform's HDK / board support files to remote host.")]
+DetachOpt = Annotated[bool, typer.Option("--detach", help="Launch the background build and exit immediately, without attaching the monitor. CI-friendly; pair with `fslab monitor build` later.")]
+SkipCompileOpt = Annotated[bool, typer.Option("--skip-compile", help="Skip the local compile (sbt/chisel/golden-gate/cmake) and jump straight to the FPGA bitstream build. Requires a prior successful `fslab build fpga` for this project, plus a clean remote-build slate (run `fslab abandon build` first if a previous remote build exists).")]
 
 def build_options(func):
     @wraps(func)
@@ -303,7 +315,7 @@ def build_options(func):
             **kwargs,
         )
 
-    wrapper.__signature__ = inspect.signature(wrapper) 
+    wrapper.__signature__ = inspect.signature(wrapper)
     return wrapper
 
 @build_app.callback(invoke_without_command=True)
@@ -407,21 +419,137 @@ def build_fpga(
     jobs: JobsOpt = 4,
     extra_args: ExtraMakeArgs = "",
     debug: DoDebug = False,
-    upload_platform: UploadPlatform = False
+    upload_platform: UploadPlatform = False,
+    detach: DetachOpt = False,
+    skip_compile: SkipCompileOpt = False,
 ) -> None:
     """Build the project with C++ FPGA target driver and generate FPGA bitstream."""
-    
-    cmd_compile(
-        skip_rtl=skip_rtl,
-        skip_driver=skip_driver,
-        force_gen=force_gen,
-        yaml_path=yaml_path,
-        jobs=jobs,
-        extra_args=extra_args,
-        debug=debug,
-        build_type=BuildType.FPGA,
-        upload_platform=upload_platform
+
+    project_root = yaml_path.parent
+    sm = StateManager(project_root)
+
+    if skip_compile:
+        # --skip-compile reuses compile-layer artefacts (generated-src/,
+        # build/, build/fpga/cl_<q>/) from a prior successful FPGA compile,
+        # so we don't re-run cmd_compile. Two preconditions must hold:
+        #   (1) state.json reports a successful FPGA compile.
+        #   (2) The remote-build slate is clean (no stamp, no pulled
+        #       wrapper artefacts, no fpga-build logs). `fslab abandon
+        #       build` is the single remediation — it terminates any
+        #       remote resource and wipes the local remote-build layer
+        #       without touching compile artefacts.
+        state = sm.load()
+        if (
+            state.get("compile_status") != "success"
+            or state.get("last_build_type") != BuildType.FPGA.value
+        ):
+            error(
+                "`--skip-compile` requires a prior successful `fslab build fpga` "
+                "for this project, but state.json reports no such compile.\n"
+                "  -> Run `fslab build fpga` once without --skip-compile, "
+                "then retry."
+            )
+            raise typer.Exit(code=1)
+
+        try:
+            existing = read_stamp(project_root)
+        except Exception as exc:  # noqa: BLE001
+            error(
+                f"Local stamp at {stamp_path_for(project_root)} could not be "
+                f"parsed ({exc}).\n"
+                f"  -> Run `fslab abandon build` to clear it, then retry with "
+                f"--skip-compile."
+            )
+            raise typer.Exit(code=1) from exc
+
+        artefacts_present = _remote_build_artefacts_present(project_root)
+        if existing is not None or artefacts_present:
+            if existing is not None and not existing.status.is_terminal:
+                # Non-terminal stamp: the prior build may still be live on
+                # the remote. Direct the user to monitor first; abandon
+                # remains the kill-and-restart path.
+                error(
+                    f"A previous build {existing.build_id} is recorded as "
+                    f"{existing.status.value} (non-terminal); it may still "
+                    f"be in flight on the remote.\n"
+                    f"  -> Use `fslab monitor build` to attach, or "
+                    f"`fslab abandon build` to discard it and retry with "
+                    f"--skip-compile."
+                )
+            else:
+                error(
+                    "Prior remote-build artefacts are present.\n"
+                    "  -> Run `fslab abandon build` to clean them up, "
+                    "then retry with --skip-compile."
+                )
+            raise typer.Exit(code=1)
+    else:
+        # Non-skip path: keep the existing in-flight guard so the user
+        # doesn't burn time on sbt/cmake/make only to be blocked at the
+        # bitstream launch. The same check runs again inside
+        # build_bitstream() as defense-in-depth.
+        try:
+            check_no_existing_build(project_root)
+        except BitstreamBuildFailed as exc:
+            error(f"Cannot start a new FPGA build:\n  {exc}")
+            raise typer.Exit(code=1) from exc
+
+        cmd_compile(
+            skip_rtl=skip_rtl,
+            skip_driver=skip_driver,
+            force_gen=force_gen,
+            yaml_path=yaml_path,
+            jobs=jobs,
+            extra_args=extra_args,
+            debug=debug,
+            build_type=BuildType.FPGA,
+        )
+
+    # ------------------------------------------------------------------
+    # Bitstream build phase. Decoupled from cmd_compile so --detach and
+    # --skip-compile semantics live cleanly here.
+    # ------------------------------------------------------------------
+    config, registry = load_and_validate(str(yaml_path))
+    log = sm.log_file("fpga-build")
+
+    try:
+        build_id = build_bitstream(
+            project=config, registry=registry,
+            upload_platform=upload_platform, log_file=log,
+        )
+    except InvalidBuildConfig as exc:
+        error(f"Build config error:\n  {exc}")
+        raise typer.Exit(code=1) from exc
+    except BitstreamBuildFailed as exc:
+        error(f"Build aborted:\n  {exc}")
+        raise typer.Exit(code=1) from exc
+
+    info(f"[bold]Background build {build_id} launched.[/]")
+
+    if detach:
+        info(
+            "Detached (--detach). Build continues on the remote. "
+            "Run `fslab monitor build` to attach later."
+        )
+        return
+
+    # Auto-attach to the monitor (default). Mirrors `docker run`
+    # semantics: the launch is always background-on-the-remote, but
+    # the local CLI attaches by default so the interactive UX
+    # matches the legacy synchronous flow. Ctrl+C detaches cleanly
+    # without killing the remote wrapper.
+    from fslab.bitstream.monitor import (
+        MonitorAborted,
+        MonitorDetached,
+        monitor_build,
     )
+    try:
+        monitor_build(config, registry)
+    except MonitorAborted as exc:
+        error(str(exc))
+        raise typer.Exit(code=1) from exc
+    except MonitorDetached:
+        raise typer.Exit(code=0)
 
 def cmd_compile(
     skip_rtl: bool,
@@ -432,7 +560,6 @@ def cmd_compile(
     extra_args: str,
     debug: bool,
     build_type: BuildType = BuildType.METASIM,
-    upload_platform: bool = False
 ) -> None:
     """
     Full compile pipeline.
@@ -496,37 +623,18 @@ def cmd_compile(
                         extra_args=extra_args, debug=debug,
                         sm=sm, build_type=build_type)
 
-    # Since FPGA build is run on remote, we invoke it only if asked for.
-    if build_type == BuildType.FPGA:
-        log = sm.log_file("fpga-build")
-
-        # Run the bitstream build.
-        try:
-            ok = build_bitstream(project=config, registry=registry,
-                                 upload_platform=upload_platform, log_file=log)
-        except InvalidBuildConfig as exc:
-            error(f"Build config error:\n  {exc}")
-            raise typer.Exit(code=1) from exc
-        except BitstreamBuildFailed as exc:
-            error(f"Build aborted:\n  {exc}")
-            raise typer.Exit(code=1) from exc
-
-        if not ok:
-            # build-bitstream.sh exited non-zero; results were already pulled back.
-            error(
-                "build-bitstream.sh reported failure. Check the results dir for logs."
-            )
-            raise typer.Exit(code=1)
-
-        info("[bold]Bitstream build complete.[/]")
-
     # ------------------------------------------------------------------
-    # Persist updated state (mark last successful compile)
+    # Persist updated state (mark last successful compile). `compile_status`
+    # + `last_build_type` gate `fslab build fpga --skip-compile` — the
+    # bitstream build phase reads them to confirm a usable FPGA driver
+    # tree is in place before jumping straight to the bitstream build.
     # ------------------------------------------------------------------
     sm.save(
         config_hash=_hash,
         extra={
             "last_compile": _timestamp(),
+            "compile_status": "success",
+            "last_build_type": build_type.value,
             "skip_rtl": skip_rtl,
             "skip_driver": skip_driver,
         },
@@ -745,7 +853,9 @@ def _render_templates(
       • CMakeLists.txt.j2  → CMakeLists.txt  (or build/CMakeLists.txt)
     """
     from jinja2 import Environment, PackageLoader, select_autoescape  # type: ignore
+    from jinja2.exceptions import TemplateNotFound, TemplateSyntaxError
     from fslab.commands.context import _build_template_context
+    import traceback
 
     info("Rendering Jinja2 templates…")
 
@@ -779,7 +889,21 @@ def _render_templates(
         "user_rtl_readme.md.j2": project_root / "user_rtl" / "README.md"
     }
 
+    # Per-platform background-build wrapper. Rendered only for platforms
+    # that ship a wrapper template — F2 today; future platforms register
+    # their own here. Lives under `scripts/` (outside `build/`) so it
+    # survives `fslab clean` and is checked-in alongside the project's
+    # other source artifacts; `fslab build fpga` uploads it to the remote
+    # on every invocation, so template updates take effect without an
+    # extra step.
+    platform_id = getattr(config.target, "platform", None)
+    if platform_id == "f2":
+        render_plan["remote_build/f2.sh.j2"] = (
+            project_root / "scripts" / "remote_build_f2.sh"
+        )
+
     has_changes, changes_dict = sm.check_user_modifications(render_plan)
+    render_success = True
 
     if(has_changes and not force):
         #Rendered file(s) modified by user, and force is false, so wont be generated.
@@ -788,16 +912,29 @@ def _render_templates(
     for template_name, output_path in render_plan.items():
         try:
             tmpl = env.get_template(template_name)
-        except Exception:  # noqa: BLE001
+        except TemplateNotFound:
+            # We ONLY skip if the file literally doesn't exist
             warning(f"Template [italic]{template_name}[/] not found – skipping.")
+            render_success = False
+            continue
+        except TemplateSyntaxError as e:
+            # The file exists, but your Jinja code inside it has a typo!
+            warning(f"Syntax error in [italic]{template_name}[/] at line {e.lineno}: {e.message}")
+            render_success = False
+            continue
+        except Exception as e:
+            # Something completely unexpected happened (e.g. permission denied)
+            warning(f"Unexpected error with [italic]{template_name}[/]: {type(e).__name__}: {e}")
+            traceback.print_exc()
+            render_success = False
             continue
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(tmpl.render(**ctx), encoding="utf-8")
         console.print(f"  [dim]wrote[/] [path]{output_path.relative_to(project_root)}[/]")
-    
+
     generated_file_state = sm.compute_generated_files_state(render_plan)
-    return [True, True, generated_file_state]
+    return [False, render_success, generated_file_state]
 
 
 # ===========================================================================
@@ -831,6 +968,29 @@ def _collect_registry_paths(registry: object) -> list[Path]:
         "Hash will be computed from fslab.yaml only."
     )
     return []
+
+
+def _remote_build_artefacts_present(project_root: Path) -> bool:
+    """True iff any local remote-build-layer artefact exists.
+
+    The remote-build layer is everything produced *by `build_bitstream`
+    and the monitor* — distinct from compile-layer artefacts which
+    `cmd_compile` produces and `--skip-compile` is designed to reuse.
+    Kept in sync with the cleanup scope of `fslab abandon build`.
+    """
+    candidates = [
+        project_root / "build" / "fpga" / ".fslab",
+        project_root / "build" / "fpga" / "reports",
+        project_root / "build" / "fpga" / "results-build",
+    ]
+    if any(p.is_dir() for p in candidates):
+        return True
+
+    logs_dir = project_root / ".fslab" / "logs"
+    if logs_dir.is_dir() and any(logs_dir.glob("fpga-build-*.log")):
+        return True
+
+    return False
 
 
 def _timestamp() -> str:
