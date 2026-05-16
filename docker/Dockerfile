@@ -271,6 +271,23 @@ RUN chown -R firesim-lab:firesim-lab-cache /opt/firesim-venv \
  && find /opt/firesim-venv -type d -exec chmod 2775 {} \; \
  && find /opt/firesim-venv/bin -type f -exec chmod 775 {} \;
 
+# ── Shell completion for fslab ────────────────────────────────────────────────
+# Generated once at image-build time. The destination /etc/bash_completion.d/
+# is auto-sourced by the bash-completion package for every interactive bash
+# shell and every host UID, so dropping the script there makes completion
+# system-wide — no ~/.bashrc edits, no need to exit and re-enter the container.
+#
+# We bypass Typer's `--show-completion` CLI flag entirely because it relies on
+# shellingham to detect the parent shell, which sees /bin/sh under `docker
+# build` and bails out. Calling Typer's internal completion-script generator
+# from Python lets us pass shell="bash" explicitly, with no process-tree
+# inspection involved. Typer is pinned to >=0.12.3 (see fslab-cli/setup.py),
+# where this helper lives at typer._completion_shared.get_completion_script.
+RUN python3 -c 'from typer._completion_shared import get_completion_script; \
+print(get_completion_script(prog_name="fslab", complete_var="_FSLAB_COMPLETE", shell="bash"))' \
+    > /etc/bash_completion.d/fslab \
+ && chmod 644 /etc/bash_completion.d/fslab
+
 ENV FIRESIM_LAB_ROOT=/opt/firesim-lab
 
 # ── Source tree ownership ─────────────────────────────────────────────────────
