@@ -3,9 +3,9 @@
 A single stamp lives at `<project>/build/fpga/.fslab/build.yaml` and
 tracks the lifecycle of one background build. Schema is platform-generic;
 the `cleanup` block is provider-discriminated (see
-`buildhost.PROVIDER_REGISTRY`) and the `result` block is platform-
-discriminated (the BitBuilder's `check_post_wrapper_status` reads whatever
-shape its wrapper script produces).
+`fslab.pipeline.host.PROVIDER_REGISTRY`) and the `result` block is
+platform-discriminated (the BitBuilder's `check_post_wrapper_status`
+reads whatever shape its wrapper script produces).
 
 The stamp is read+written by:
 
@@ -40,6 +40,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+
+from fslab.pipeline.stamp import utc_now_iso
 
 
 # Relative path under the project root. Fixed by D2: one in-flight build
@@ -149,9 +151,9 @@ class BuildStamp:
     """All persisted state for one in-flight build.
 
     `cleanup` is provider-discriminated — its `provider` key matches a
-    name in `buildhost.PROVIDER_REGISTRY`. The orchestrator never reads
-    inside `cleanup` beyond that discriminator; it hands the whole dict
-    to `cleanup_remote()`.
+    name in `fslab.pipeline.host.PROVIDER_REGISTRY`. The orchestrator
+    never reads inside `cleanup` beyond that discriminator; it hands the
+    whole dict to `cleanup_remote()`.
 
     `result` is platform-discriminated — populated by `result.yaml`
     pulled from the remote after wrapper exit. The orchestrator reads
@@ -342,15 +344,20 @@ def _stamp_from_dict(data: dict) -> BuildStamp:
     )
 
 
-# ---------------------------------------------------------------------------
-# Utility: ISO8601-UTC timestamp string
-# ---------------------------------------------------------------------------
-
-
-def utc_now_iso() -> str:
-    """ISO8601 UTC timestamp string (seconds precision, `Z` suffix).
-
-    Shared helper so every stamp-touching code path produces identical
-    timestamp formatting — easy to grep, easy to compare lexically.
-    """
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+# `utc_now_iso` is re-exported above (via `from fslab.pipeline.stamp …`)
+# so existing call sites (`from .build_stamp import utc_now_iso`) keep
+# working without touch.
+__all__ = [
+    "STAMP_REL_PATH",
+    "BuildStatus",
+    "RemoteInfo",
+    "BuildInfo",
+    "PostWrapper",
+    "BuildStamp",
+    "make_build_id",
+    "stamp_path_for",
+    "read_stamp",
+    "write_stamp",
+    "wipe_stamp",
+    "utc_now_iso",
+]

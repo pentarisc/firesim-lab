@@ -33,6 +33,14 @@ Validation requirements satisfied here:
             for fpga build operations (warning only — sim/driver still works)
   HMOD-05   target.build.host.type must be in platform.host_models keys
   PUB-03    target.build.publish.type must be in platform.publish keys
+
+  Run-pipeline cross-checks (gated on target.run being supplied)
+  RUN-20    target.run requires the platform to have a runner configured
+  RUNA-01   target.run.runner_args must validate against the platform's
+            runner.args_schema (resolved via RUNNER_ARGS_REGISTRY)
+  HMOD-06   target.run.host.type must be in platform.host_models keys
+  ARTSRC-01 target.run.artifact_source.type must be in
+            platform.run_artifact_sources keys
 """
 
 from __future__ import annotations
@@ -53,11 +61,16 @@ from pydantic import (
 import fslab.utils.regexes as rx
 from fslab.utils.display import regex_msg
 
+from fslab.schemas.artifact_source import ArtifactSourceConfig
 from fslab.schemas.host_model import HostModelConfig
 from fslab.schemas.publish import PublishConfig
 from fslab.schemas.bitbuilder_args import (
     BITBUILDER_ARGS_REGISTRY,
     resolve_args_schema,
+)
+from fslab.schemas.runner_args import (
+    RUNNER_ARGS_REGISTRY,
+    resolve_args_schema as resolve_runner_args_schema,
 )
 
 # Allowed sets
@@ -317,6 +330,52 @@ class TargetBuildConfig(BaseModel):
     )
 
 
+class TargetRunConfig(BaseModel):
+    """`target.run:` section of the project YAML.
+
+    Run-side counterpart to `target.build`. Three orthogonal axes:
+      * runner_args        per-runner user tunables (max_cycles, tracing, …)
+      * host               host-acquisition strategy (HostModelConfig —
+                           same discriminated union as build.host)
+      * artifact_source    where the bitstream comes from (today: aws_afi)
+
+    Optional at the `TargetConfig` level — a project that only builds
+    (no `fslab sim fpga`) doesn't have to populate this.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    runner_args: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Per-runner user-tunable args. The pydantic schema for this "
+            "block is selected via the platform's runner.args_schema and "
+            "validated cross-field in FSLabConfig.cross_validate_with_registry "
+            "[RUNA-01]."
+        ),
+    )
+
+    host: HostModelConfig = Field(
+        ...,
+        description=(
+            "Run-host acquisition config. Discriminated by `host.type`. "
+            "Same schema as target.build.host — assigned verbatim here. "
+            "Defaults from `platforms.<id>.host_models.<type>` are merged "
+            "into the user dict at parse time."
+        ),
+    )
+
+    artifact_source: ArtifactSourceConfig = Field(
+        ...,
+        description=(
+            "Where the bitstream the runner loads comes from. Discriminated "
+            "by `artifact_source.type`. Defaults from "
+            "`platforms.<id>.run_artifact_sources.<type>` are merged into "
+            "the user dict at parse time."
+        ),
+    )
+
+
 class TargetConfig(BaseModel):
     """FPGA target configuration."""
 
@@ -324,6 +383,14 @@ class TargetConfig(BaseModel):
     clock_period: str
     fpga_sim: str
     build: TargetBuildConfig
+    run: Optional[TargetRunConfig] = Field(
+        None,
+        description=(
+            "Run-side config for `fslab sim fpga`. Optional — projects "
+            "that only build (no FPGA-accelerated simulation) leave it "
+            "unset and the run-pipeline cross-checks are skipped."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +649,67 @@ class FSLabConfig(BaseModel):
             raise ValueError(
                 f"[BBA-01] target.build.bitbuilder_args do not validate "
                 f"against {bb_entry.args_schema}: {e}"
+            ) from e
+
+        # ---------- Run-pipeline cross-checks ------------------------------
+        # Gated on target.run being supplied — projects without an FPGA run
+        # (build-only / metasim-only) skip the entire block.
+        run = self.target.run
+        if run is None:
+            return self
+
+        # [HMOD-06] host.type ∈ platform.host_models
+        run_host_type = run.host.type
+        if run_host_type not in platform_entry.host_models:
+            supported = sorted(platform_entry.host_models.keys()) or ["<none>"]
+            raise ValueError(
+                f"[HMOD-06] target.run.host.type='{run_host_type}' is not in "
+                f"platform '{self.target.platform}'.host_models. "
+                f"Supported: {supported}."
+            )
+
+        # [ARTSRC-01] artifact_source.type ∈ platform.run_artifact_sources
+        art_type = run.artifact_source.type
+        if art_type not in platform_entry.run_artifact_sources:
+            supported = (
+                sorted(platform_entry.run_artifact_sources.keys()) or ["<none>"]
+            )
+            raise ValueError(
+                f"[ARTSRC-01] target.run.artifact_source.type='{art_type}' is "
+                f"not in platform '{self.target.platform}'.run_artifact_sources. "
+                f"Supported: {supported}."
+            )
+
+        # [RUN-20] target.run requires platform.runner
+        if platform_entry.runner is None:
+            raise ValueError(
+                f"[RUN-20] target.run is set but platform "
+                f"'{self.target.platform}' has no runner configured. "
+                f"Either remove target.run from fslab.yaml or extend the "
+                f"platform's registry entry with `runner:` + `run_artifact_sources:`."
+            )
+
+        # [RUNA-01] runner_args validates against runner.args_schema
+        runner_entry = registry.runners.get(platform_entry.runner)
+        if runner_entry is None:
+            # Already caught at MasterRegistry cross-validation [RUN-10],
+            # but defend here in case validation order changes.
+            raise ValueError(
+                f"[RUNA-01] platform '{self.target.platform}' references "
+                f"unknown runner '{platform_entry.runner}'."
+            )
+
+        try:
+            run_args_cls = resolve_runner_args_schema(runner_entry.args_schema)
+        except ValueError as e:
+            raise ValueError(f"[RUNA-01] {e}") from e
+
+        try:
+            run_args_cls.model_validate(run.runner_args or {})
+        except Exception as e:
+            raise ValueError(
+                f"[RUNA-01] target.run.runner_args do not validate against "
+                f"{runner_entry.args_schema}: {e}"
             ) from e
 
         return self

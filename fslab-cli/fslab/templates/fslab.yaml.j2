@@ -189,6 +189,48 @@ target:
     #   # sns_topic_arn: arn:aws:sns:us-west-2:123456789012:firesim-builds
     #   # post_build_hook: "scripts/notify-team.sh"   # runs with local results dir as $1
 
+  # ----------------------------------------------------------------------------
+  # target.run — config for `fslab sim fpga` (FPGA-accelerated simulation).
+  # Optional. Omit this block if the project only builds bitstreams.
+  #
+  # Three orthogonal axes (parallel to target.build):
+  #   runner_args      per-runner user tunables (max_cycles, tracing, ...)
+  #   host             run-host acquisition; same HostModelConfig as build.host
+  #                    (typically an f2.* instance instead of z1d/m4)
+  #   artifact_source  where the bitstream comes from (today: aws_afi)
+  #
+  # IAM note for ec2_launch run hosts: the run host needs a much smaller
+  # IAM policy than the build host — only DescribeFpgaImages +
+  # AssociateFpgaImage are required so `fpga-load-local-image` can fetch
+  # the AGFI manifest and verify entitlement. No S3 write, no
+  # CreateFpgaImage. See docs/aws-setup.md for the policy snippet.
+  # ----------------------------------------------------------------------------
+  # run:
+  #   runner_args:
+  #     # max_cycles: 1000000                     # optional cycle cap
+  #     tracing: false
+  #     autocounter: false
+  #     # workload_bin: path/to/workload.riscv
+  #     extra_driver_flags: []                    # escape hatch for raw +flags
+  #
+  #   host:
+  #     type: ec2_launch
+  #     region: us-west-2
+  #     aws_profile: fslab-run                    # optional; null/AWS_PROFILE fallback
+  #     iam_instance_profile: fslab-fpga-runner   # smaller IAM than build role
+  #     ssh_key: ~/.ssh/fslab_ed25519
+  #     ssh_user: ubuntu
+  #     lifecycle: spot_one_time                  # spot_one_time | on_demand
+  #     ami_id: ami-0c0b7a80d5725c332             # FPGA Developer AMI or your own
+  #     instance_type: f2.2xlarge                 # FPGA-attached
+  #     key_name: firesim-lab
+  #     # subnet_id: subnet-xxxxxxxx
+  #     # instance_id: i-0abc1234                 # managed reuse instead of ephemeral
+  #
+  #   artifact_source:
+  #     type: aws_afi
+  #     agfi: agfi-0123456789abcdef0              # 17 hex chars; from build publish output
+
 ## Add your target's design details here. for non-chisel projects, you need to
 ## specify type as "blackbox" and populate sources and blackbox_ports section.
 ## The values in the blackbox_ports must match with the port names in your

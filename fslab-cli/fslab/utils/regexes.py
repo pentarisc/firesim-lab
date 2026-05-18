@@ -81,3 +81,7 @@ AWS_PROFILE_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]*$")
 # [AWS-07] EC2 instance id (e.g. i-0abc1234, i-0abcdef0123456789).
 # Modern ids are 17 hex chars; older 8-char ids still resolve, so accept both.
 EC2_INSTANCE_ID_RE = re.compile(r"^i-[0-9a-f]{8,17}$")
+
+# [AWS-08] AGFI id (Amazon FPGA Global Image). Always 17 lowercase hex
+# characters; AWS has not used short-form AGFIs.
+AGFI_RE = re.compile(r"^agfi-[0-9a-f]{17}$")

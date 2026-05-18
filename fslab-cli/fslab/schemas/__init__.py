@@ -10,6 +10,7 @@ from .registry import (
     MasterRegistry,
     PlatformEntry,
     RegistryFile,
+    RunnerEntry,
     RuntimePlusarg,
     ScalaTemplates,
     MetaSimEntry,
@@ -22,6 +23,7 @@ from .project import (
     HostConfig,
     ProjectConfig,
     TargetConfig,
+    TargetRunConfig,
 )
 from .resolvers import (
     BridgeConfig,
@@ -37,6 +39,7 @@ __all__ = [
     "MasterRegistry",
     "PlatformEntry",
     "RegistryFile",
+    "RunnerEntry",
     "RuntimePlusarg",
     "ScalaTemplates",
     "MetaSimEntry",
@@ -48,6 +51,7 @@ __all__ = [
     "HostConfig",
     "ProjectConfig",
     "TargetConfig",
+    "TargetRunConfig",
     # resolvers
     "BridgeConfig",
     "BridgeParam",

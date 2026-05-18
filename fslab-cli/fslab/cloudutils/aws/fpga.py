@@ -1,10 +1,10 @@
-"""Thin boto3 helpers used by the AWS publisher and the ec2_launch
-build-host provider.
+"""Thin boto3 helpers used by AWS-related fslab subsystems
+(publisher, EC2-backed host providers).
 
 All public helpers take a `boto3.Session` as the first argument so callers
 own the credential context (profile / region). Constructing the session
 in one place per pipeline keeps the named-profile + SSO story consistent
-across publish and build-host axes — see `make_session` /
+across publish, build-host, and run-host axes — see `make_session` /
 `check_credentials` for the entry-point pattern.
 
 Region selection follows the standard boto3 credential chain: explicit
@@ -279,6 +279,17 @@ class InstanceUnusable(Exception):
     terminated, shutting-down)."""
 
 
+# AWS error codes that mean "the instance is already in (or past) the
+# cleanup-target state". Cleanup paths swallow these and continue — the
+# goal of stop/terminate during cleanup is "the resource is no longer
+# running on our account", which is satisfied whether we did it or AWS
+# (or the user) already did.
+_ALREADY_GONE_CODES = frozenset({
+    "InvalidInstanceID.NotFound",
+    "InvalidInstanceID.Malformed",
+})
+
+
 def describe_instance(session: boto3.Session, instance_id: str) -> dict:
     """Return the first matching reservation's first instance.
 
@@ -292,7 +303,7 @@ def describe_instance(session: boto3.Session, instance_id: str) -> dict:
         resp = ec2.describe_instances(InstanceIds=[instance_id])
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code", "")
-        if code in ("InvalidInstanceID.NotFound", "InvalidInstanceID.Malformed"):
+        if code in _ALREADY_GONE_CODES:
             raise InstanceNotFound(
                 f"EC2 instance '{instance_id}' not found in this region."
             ) from e
@@ -319,15 +330,66 @@ def start_instance(session: boto3.Session, instance_id: str) -> None:
 
 
 def stop_instance(session: boto3.Session, instance_id: str) -> None:
-    """Stop a running instance. Idempotent — already-stopped is fine."""
+    """Stop a running instance, idempotently from a cleanup caller's view.
+
+    Used on the managed-reuse cleanup path (lifecycle 'started'): we want
+    the instance to end up not-running. Cases swallowed:
+
+      * `InvalidInstanceID.NotFound` / `.Malformed` — AWS has already
+        purged the instance record; nothing to stop.
+      * `IncorrectInstanceState` — most commonly fires when the instance
+        is already terminated or shutting-down (a state past 'stopped'
+        from the cleanup perspective), or stopping/stopped (already at
+        target). Either way, the desired post-condition is satisfied.
+
+    Any other ClientError propagates — those are real problems (perms,
+    throttling, region mismatch) the user needs to see.
+    """
     ec2 = session.client("ec2")
-    ec2.stop_instances(InstanceIds=[instance_id])
+    try:
+        ec2.stop_instances(InstanceIds=[instance_id])
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in _ALREADY_GONE_CODES:
+            info(
+                f"Instance {instance_id} not found in AWS — already gone, "
+                f"treating as cleaned."
+            )
+            return
+        if code == "IncorrectInstanceState":
+            info(
+                f"Instance {instance_id} cannot be stopped from its current "
+                f"state ({e}) — treating as already cleaned."
+            )
+            return
+        raise
 
 
 def terminate_instance(session: boto3.Session, instance_id: str) -> None:
-    """Terminate an instance. Used only for ephemeral-launch teardown."""
+    """Terminate an instance, idempotently from a cleanup caller's view.
+
+    Used on the ephemeral-launch cleanup path (lifecycle 'launched').
+    AWS treats `terminate_instances` on an already-terminated instance as
+    a no-op as long as the instance record still exists, but once AWS
+    purges the record the same call raises `InvalidInstanceID.NotFound`.
+    Swallow that here so cleanup is properly idempotent across the purge
+    boundary.
+
+    Any other ClientError propagates — those are real problems (perms,
+    throttling, region mismatch) the user needs to see.
+    """
     ec2 = session.client("ec2")
-    ec2.terminate_instances(InstanceIds=[instance_id])
+    try:
+        ec2.terminate_instances(InstanceIds=[instance_id])
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in _ALREADY_GONE_CODES:
+            info(
+                f"Instance {instance_id} not found in AWS — already gone, "
+                f"treating as cleaned."
+            )
+            return
+        raise
 
 
 def wait_until_running(
@@ -405,7 +467,7 @@ def launch_instance(
     sg_name = "fslab-ssh-access-sg"
     vpc_id = None
     security_group_id = None
-    
+
     # If a subnet is provided, we must find its VPC to create the SG in the right place
     if subnet_id:
         subnet_info = ec2.describe_subnets(SubnetIds=[subnet_id])
@@ -415,7 +477,7 @@ def launch_instance(
     filters = [{"Name": "group-name", "Values": [sg_name]}]
     if vpc_id:
         filters.append({"Name": "vpc-id", "Values": [vpc_id]})
-        
+
     existing_sgs = ec2.describe_security_groups(Filters=filters).get("SecurityGroups", [])
 
     if existing_sgs:
@@ -430,11 +492,11 @@ def launch_instance(
         }
         if vpc_id:
             sg_params["VpcId"] = vpc_id
-            
+
         sg_resp = ec2.create_security_group(**sg_params)
         security_group_id = sg_resp["GroupId"]
         info(f"Created new Security Group: {security_group_id}")
-        
+
         # 3. Authorize Ingress for Port 22 (SSH)
         ec2.authorize_security_group_ingress(
             GroupId=security_group_id,
@@ -457,7 +519,7 @@ def launch_instance(
         "MinCount": 1,
         "MaxCount": 1,
     }
-    
+
     if key_name:
         params["KeyName"] = key_name
     if iam_instance_profile:
@@ -500,7 +562,7 @@ def launch_instance(
     resp = ec2.run_instances(**params)
     instance_id = resp["Instances"][0]["InstanceId"]
     info(f"Launched EC2 instance {instance_id} ({lifecycle}, {instance_type})")
-    
+
     return instance_id
 
 

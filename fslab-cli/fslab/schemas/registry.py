@@ -50,6 +50,17 @@ Validation requirements
           must resolve via BITBUILDER_ARGS_REGISTRY / BITBUILDER_PARAMS_REGISTRY
   BB-12   MasterRegistry cross-check: platform.bitbuilder_params must validate
           against the resolved params_schema class
+
+  Run-pipeline fields
+  RUN-01  RunnerEntry.id format
+  RUN-02  RunnerEntry.python_class / args_schema / params_schema must be
+          CamelCase identifiers
+  RUN-04  PlatformEntry.run_artifact_sources keys must be registered in
+          KNOWN_ARTIFACT_SOURCE_TYPES
+  RUN-10  MasterRegistry cross-check: each platform.runner (when set) must
+          reference an existing runner entry
+  RUN-11  MasterRegistry cross-check: runner.args_schema and params_schema
+          must resolve via RUNNER_ARGS_REGISTRY / RUNNER_PARAMS_REGISTRY
 """
 
 from __future__ import annotations
@@ -61,6 +72,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 import fslab.utils.regexes as rx
 from fslab.utils.display import regex_msg
 
+from fslab.schemas.artifact_source import KNOWN_ARTIFACT_SOURCE_TYPES
 from fslab.schemas.bitbuilder_args import (
     BITBUILDER_ARGS_REGISTRY,
     BITBUILDER_PARAMS_REGISTRY,
@@ -69,6 +81,10 @@ from fslab.schemas.bitbuilder_args import (
 )
 from fslab.schemas.host_model import KNOWN_HOST_MODELS
 from fslab.schemas.publish import KNOWN_PUBLISH_TYPES
+from fslab.schemas.runner_args import (
+    RUNNER_ARGS_REGISTRY,
+    RUNNER_PARAMS_REGISTRY,
+)
 
 _ORIGINS = {"firesim", "fslab", "custom"}
 
@@ -368,6 +384,70 @@ class BitbuilderEntry(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# RunnerEntry
+# ---------------------------------------------------------------------------
+
+class RunnerEntry(BaseModel):
+    """Catalog entry for a runner (silicon-specific FPGA-run recipe).
+
+    Parallel to `BitbuilderEntry`. Multiple platforms may reference the
+    same runner; per-recipe parameter dicts are validated via the
+    `params_schema` field (currently always empty for F2).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    label: str
+    description: str
+
+    python_class: str
+    """Class name in fslab.runtime.runner (to be added in Phase 3). The
+    factory resolves this string to a concrete class at run time."""
+
+    args_schema: str
+    """Pydantic class name (under fslab.schemas.runner_args) validating
+    target.run.runner_args. Resolved via RUNNER_ARGS_REGISTRY."""
+
+    params_schema: str
+    """Pydantic class name validating per-runner static params. Resolved
+    via RUNNER_PARAMS_REGISTRY. Reserved for future runner variants;
+    today's F2RunnerParams is empty."""
+
+    remote_slot_parent_subdir: str = Field(
+        "",
+        description=(
+            "Subpath under the platform's remote_platform_path where the "
+            "per-slot run dir lives. Empty means 'at the root of "
+            "remote_platform_path'."
+        ),
+    )
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def validate_id(cls, v: str) -> str:
+        """[RUN-01]"""
+        return _validate_alpha_num(v, "id", "Runner")
+
+    @field_validator("python_class", "args_schema", "params_schema", mode="before")
+    @classmethod
+    def validate_class_name(cls, v: str, info) -> str:
+        """[RUN-02] Class names must be CamelCase identifiers."""
+        if not rx.PY_CLASS_NAME_RE.match(v):
+            raise ValueError(
+                f"[RUN-02] {info.field_name} '{v}' is invalid. "
+                + regex_msg(rx.PY_CLASS_NAME_RE)
+            )
+        return v
+
+    @field_validator("remote_slot_parent_subdir", mode="after")
+    @classmethod
+    def _strip_trailing_slash(cls, v: str) -> str:
+        """Path concatenation downstream assumes no trailing slash."""
+        return v.rstrip("/") if v else v
+
+
+# ---------------------------------------------------------------------------
 # PlatformEntry  (MODIFIED — replaces the old `remote_build` block with the
 # new build-pipeline shape; cmake fields preserved verbatim)
 # ---------------------------------------------------------------------------
@@ -455,7 +535,9 @@ class PlatformEntry(BaseModel):
         description=(
             "Keys are host_model ids the platform supports; values are "
             "per-host-model default dicts merged into the user's "
-            "target.build.host block at parse time."
+            "target.build.host AND target.run.host blocks at parse time. "
+            "Same set governs both pipelines — a platform that supports "
+            "ec2_launch for builds also supports it for runs."
         ),
     )
     publish: dict[str, dict[str, Any]] = Field(
@@ -464,6 +546,25 @@ class PlatformEntry(BaseModel):
             "Keys are publish.type ids the platform supports; values are "
             "per-type default dicts merged into the user's "
             "target.build.publish block at parse time."
+        ),
+    )
+
+    # --- run pipeline ------------------------------------------
+    runner: Optional[str] = Field(
+        None,
+        description=(
+            "Id of an entry in the top-level runners catalog. "
+            "None => this platform does not support `fslab sim fpga`; "
+            "the user gets a clear error if they try."
+        ),
+    )
+    run_artifact_sources: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description=(
+            "Keys are artifact_source.type ids the platform supports for "
+            "`target.run.artifact_source` (currently `aws_afi`). Values are "
+            "per-type default dicts merged into the user's "
+            "target.run.artifact_source block at parse time."
         ),
     )
 
@@ -579,6 +680,28 @@ class PlatformEntry(BaseModel):
             raise ValueError(
                 f"[BB-09] publish keys {sorted(unknown)} are not registered. "
                 f"Known: {sorted(KNOWN_PUBLISH_TYPES)}."
+            )
+        return v
+
+    @field_validator("runner", mode="before")
+    @classmethod
+    def _validate_runner_id(cls, v: Optional[str]) -> Optional[str]:
+        """[REG-01] (cross-existence enforced at MasterRegistry level via RUN-10)"""
+        if v is None:
+            return v
+        return _validate_alpha_num(v, "runner", "Platform")
+
+    @field_validator("run_artifact_sources", mode="after")
+    @classmethod
+    def _validate_run_artifact_source_keys(
+        cls, v: dict[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """[RUN-04] Every key must be a registered artifact_source type."""
+        unknown = set(v.keys()) - KNOWN_ARTIFACT_SOURCE_TYPES
+        if unknown:
+            raise ValueError(
+                f"[RUN-04] run_artifact_sources keys {sorted(unknown)} are not "
+                f"registered. Known: {sorted(KNOWN_ARTIFACT_SOURCE_TYPES)}."
             )
         return v
 
@@ -947,6 +1070,7 @@ class RegistryFile(BaseModel):
 
     bridges: list[BridgeEntry] = Field(default_factory=list)
     bitbuilders: list[BitbuilderEntry] = Field(default_factory=list)
+    runners: list[RunnerEntry] = Field(default_factory=list)
     platforms: list[PlatformEntry] = Field(default_factory=list)
     features: list[FeatureEntry] = Field(default_factory=list)
     metasimulators: list[MetaSimEntry] = Field(default_factory=list)
@@ -957,6 +1081,7 @@ class RegistryFile(BaseModel):
         """[REG-06] IDs must be unique within each category in a single file."""
         self._check_unique([b.id for b in self.bridges],        "bridges")
         self._check_unique([b.id for b in self.bitbuilders],    "bitbuilders")
+        self._check_unique([r.id for r in self.runners],        "runners")
         self._check_unique([p.id for p in self.platforms],      "platforms")
         self._check_unique([f.id for f in self.features],       "features")
         self._check_unique([m.id for m in self.metasimulators], "metasimulators")
@@ -987,6 +1112,7 @@ class MasterRegistry(BaseModel):
 
     bridges: dict[str, BridgeEntry] = Field(default_factory=dict)
     bitbuilders: dict[str, BitbuilderEntry] = Field(default_factory=dict)
+    runners: dict[str, RunnerEntry] = Field(default_factory=dict)
     platforms: dict[str, PlatformEntry] = Field(default_factory=dict)
     features: dict[str, FeatureEntry] = Field(default_factory=dict)
     metasimulators: dict[str, MetaSimEntry] = Field(default_factory=dict)
@@ -1003,6 +1129,8 @@ class MasterRegistry(BaseModel):
                 master.bridges[entry.id] = entry
             for entry in reg_file.bitbuilders:
                 master.bitbuilders[entry.id] = entry
+            for entry in reg_file.runners:
+                master.runners[entry.id] = entry
             for entry in reg_file.platforms:
                 master.platforms[entry.id] = entry
             for entry in reg_file.features:
@@ -1013,6 +1141,7 @@ class MasterRegistry(BaseModel):
                 master.fpgasimulators[entry.id] = entry
 
         master._cross_validate_bitbuilders()
+        master._cross_validate_runners()
         return master
 
     # ----------------------------------------------------------------------
@@ -1065,3 +1194,36 @@ class MasterRegistry(BaseModel):
                     f"[BB-12] platform '{p_id}' bitbuilder_params do not "
                     f"validate against {bb.params_schema}: {e}"
                 ) from e
+
+    def _cross_validate_runners(self) -> None:
+        """[RUN-10..RUN-11] Cross-checks that span platforms + runners.
+
+        Runs once after merging. Validates:
+          * each platform.runner (when set) references a known runner entry
+          * each runner.args_schema / params_schema resolve via the
+            python-side registries
+        """
+        # [RUN-11] Schemas resolvable
+        for r_id, r in self.runners.items():
+            if r.args_schema not in RUNNER_ARGS_REGISTRY:
+                raise ValueError(
+                    f"[RUN-11] runner '{r_id}' references unknown "
+                    f"args_schema '{r.args_schema}'. Known: "
+                    f"{sorted(RUNNER_ARGS_REGISTRY)}."
+                )
+            if r.params_schema not in RUNNER_PARAMS_REGISTRY:
+                raise ValueError(
+                    f"[RUN-11] runner '{r_id}' references unknown "
+                    f"params_schema '{r.params_schema}'. Known: "
+                    f"{sorted(RUNNER_PARAMS_REGISTRY)}."
+                )
+
+        # [RUN-10] Per-platform check
+        for p_id, p in self.platforms.items():
+            if p.runner is None:
+                continue
+            if p.runner not in self.runners:
+                raise ValueError(
+                    f"[RUN-10] platform '{p_id}' references unknown "
+                    f"runner '{p.runner}'. Known: {sorted(self.runners)}."
+                )

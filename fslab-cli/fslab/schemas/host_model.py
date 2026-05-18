@@ -16,7 +16,7 @@ acquisition strategies are tied to fslab-internal provider implementations.
 Currently registered types
 --------------------------
   external      Pre-provisioned host reachable via SSH. Implementation:
-                ExternalBuildHost in fslab.bitstream.buildhost.
+                ExternalHost in fslab.pipeline.host.
   ec2_launch    Framework-managed EC2 build host. Two sub-modes selected
                 by the presence of `instance_id`:
 

@@ -58,7 +58,9 @@ import yaml
 from fslab.schemas.publish import AwsAfiPublishConfig
 from fslab.utils.display import console, error, info, section, success, warning
 
-from . import aws_fpga
+from fslab.cloudutils.aws import fpga as aws_fpga
+from fslab.pipeline.host import Host, cleanup_remote
+
 from .build_stamp import (
     BuildInfo,
     BuildStamp,
@@ -71,11 +73,7 @@ from .build_stamp import (
     write_stamp,
 )
 from .buildconfig import BuildConfig, InvalidBuildConfig
-from .buildhost import (
-    BuildHost,
-    cleanup_remote,
-    make_build_host_provider,
-)
+from .buildhost import make_build_host_provider
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +161,7 @@ class BitBuilder(abc.ABC):
     @abc.abstractmethod
     def upload_platform(
         self,
-        host: BuildHost,
+        host: Host,
         *,
         log_file: Optional[Union[str, Path]] = None,
     ) -> None:
@@ -182,7 +180,7 @@ class BitBuilder(abc.ABC):
     @abc.abstractmethod
     def stage_for_remote_build(
         self,
-        host: BuildHost,
+        host: Host,
         *,
         log_file: Optional[Union[str, Path]] = None,
     ) -> None:
@@ -198,7 +196,7 @@ class BitBuilder(abc.ABC):
     @abc.abstractmethod
     def launch_remote_wrapper(
         self,
-        host: BuildHost,
+        host: Host,
         *,
         env: dict,
         log_file: Optional[Union[str, Path]] = None,
@@ -216,7 +214,7 @@ class BitBuilder(abc.ABC):
     # Remote-auth sanity probe (default no-op)
     # ----------------------------------------------------------------------
 
-    def validate_remote_auth(self, host: BuildHost) -> None:
+    def validate_remote_auth(self, host: Host) -> None:
         """Best-effort probe that the remote host has the credentials the
         wrapper script will need. Raises `BitstreamBuildFailed` if not.
 
@@ -319,7 +317,7 @@ class F2BitBuilder(BitBuilder):
 
     def upload_platform(
         self,
-        host: BuildHost,
+        host: Host,
         *,
         log_file: Optional[Union[str, Path]] = None,
     ) -> None:
@@ -375,7 +373,7 @@ class F2BitBuilder(BitBuilder):
 
     def stage_for_remote_build(
         self,
-        host: BuildHost,
+        host: Host,
         *,
         log_file: Optional[Union[str, Path]] = None,
     ) -> None:
@@ -406,7 +404,7 @@ class F2BitBuilder(BitBuilder):
 
     def launch_remote_wrapper(
         self,
-        host: BuildHost,
+        host: Host,
         *,
         env: dict,
         log_file: Optional[Union[str, Path]] = None,
@@ -472,7 +470,7 @@ class F2BitBuilder(BitBuilder):
     # Remote-auth probe
     # ----------------------------------------------------------------------
 
-    def validate_remote_auth(self, host: BuildHost) -> None:
+    def validate_remote_auth(self, host: Host) -> None:
         """F2 wrapper needs AWS credentials on the remote for S3 upload +
         create-fpga-image. Probe via `aws sts get-caller-identity`.
 
@@ -502,24 +500,24 @@ class F2BitBuilder(BitBuilder):
             )
 
     # ----------------------------------------------------------------------
-    # Internal: thin wrappers around BuildHost methods. Each auto-applies
+    # Internal: thin wrappers around Host methods. Each auto-applies
     # this build's log_file, so the step methods stay readable. Callers can
     # still override log_file per-call by passing it explicitly.
     # ----------------------------------------------------------------------
 
-    def _run(self, host: BuildHost, cmd: str, **kwargs: Any) -> Any:
+    def _run(self, host: Host, cmd: str, **kwargs: Any) -> Any:
         kwargs.setdefault("log_file", self._log_file)
         return host.run(cmd, **kwargs)
 
-    def _put(self, host: BuildHost, local: str, remote: str, **kwargs: Any) -> None:
+    def _put(self, host: Host, local: str, remote: str, **kwargs: Any) -> None:
         kwargs.setdefault("log_file", self._log_file)
         host.put(local, remote, **kwargs)
 
-    def _rsync_to(self, host: BuildHost, local: str, remote: str, **kwargs: Any) -> None:
+    def _rsync_to(self, host: Host, local: str, remote: str, **kwargs: Any) -> None:
         kwargs.setdefault("log_file", self._log_file)
         host.rsync_to(local, remote, **kwargs)
 
-    def _rsync_from(self, host: BuildHost, remote: str, local: str, **kwargs: Any) -> None:
+    def _rsync_from(self, host: Host, remote: str, local: str, **kwargs: Any) -> None:
         kwargs.setdefault("log_file", self._log_file)
         host.rsync_from(remote, local, **kwargs)
 
@@ -527,7 +525,7 @@ class F2BitBuilder(BitBuilder):
     # Steps
     # ----------------------------------------------------------------------
 
-    def _validate_remote_prereqs(self, host: BuildHost) -> None:
+    def _validate_remote_prereqs(self, host: Host) -> None:
         cfg = self.cfg
         r = self._run(
             host,
@@ -541,7 +539,7 @@ class F2BitBuilder(BitBuilder):
                 f"--upload-platform to push it from {cfg.local_platform_path}."
             )
 
-    def _stage_template(self, host: BuildHost) -> None:
+    def _stage_template(self, host: Host) -> None:
         """cp -rf <template> -T <cl_dir>. The -T flag forces the destination
         to be the cl_dir itself (not nested), and we wipe any prior attempt
         first so re-runs are deterministic."""
@@ -555,7 +553,7 @@ class F2BitBuilder(BitBuilder):
         )
         info(f"Staged template at {cfg.remote_cl_dir}")
 
-    def _create_synth_symlink(self, host: BuildHost) -> None:
+    def _create_synth_symlink(self, host: Host) -> None:
         """F2's build_all.tcl sources synth_${CL}.tcl, where ${CL} is the cl
         directory name. Create a symlink so it finds the firesim synth script."""
         cfg = self.cfg
@@ -568,7 +566,7 @@ class F2BitBuilder(BitBuilder):
         )
         info(f"Created {symlink_name} -> synth_cl_firesim.tcl")
 
-    def _overlay_project_staging(self, host: BuildHost) -> None:
+    def _overlay_project_staging(self, host: Host) -> None:
         """Rsync local build/fpga/cl_<q>/ onto remote cl_dir/. This drops the
         generated design/* files and the compiled driver into place.
         Trailing slashes matter: copy contents, not the directory itself."""
@@ -582,13 +580,13 @@ class F2BitBuilder(BitBuilder):
         )
         info(f"Overlaid project staging onto {cfg.remote_cl_dir}")
 
-    def _upload_build_script(self, host: BuildHost) -> None:
+    def _upload_build_script(self, host: Host) -> None:
         cfg = self.cfg
         remote_path = f"{cfg.remote_cl_dir}/{cfg.remote_build_script_name}"
         self._put(host, str(cfg.local_build_script), remote_path)
         self._run(host, f"chmod +x {shlex.quote(remote_path)}")
 
-    def _upload_wrapper_script(self, host: BuildHost) -> None:
+    def _upload_wrapper_script(self, host: Host) -> None:
         """Upload the rendered remote_build_f2.sh wrapper to the remote
         cl_dir. The local file is produced by `fslab generate` (see the
         `remote_build/f2.sh.j2` entry in render_plan); we re-upload on
@@ -606,7 +604,7 @@ class F2BitBuilder(BitBuilder):
         self._run(host, f"chmod +x {shlex.quote(remote_path)}")
         info(f"Uploaded wrapper -> {remote_path}")
 
-    def _prepare_remote_fslab_dir(self, host: BuildHost) -> None:
+    def _prepare_remote_fslab_dir(self, host: Host) -> None:
         """Pre-create `${remote_cl_dir}/.fslab/` so the wrapper's startup
         steps (writing remote_stamp.yaml, build.log, pid, result.yaml)
         don't race against directory creation."""
@@ -934,7 +932,7 @@ def _is_remote_wrapper_alive(stamp: BuildStamp) -> bool:
     """SSH to the recorded remote, `kill -0 <pid>`. Returns False on any
     error (unreachable, no such PID, etc.) — caller treats False as
     'safe to assume the build is no longer in flight'."""
-    from .buildhost import ExternalBuildHost
+    from fslab.pipeline.host import ExternalHost
     from fslab.schemas.host_model import ExternalHostConfig
     try:
         params = ExternalHostConfig(
@@ -946,7 +944,7 @@ def _is_remote_wrapper_alive(stamp: BuildStamp) -> bool:
             # absolute path to satisfy schema validation.
             remote_platform_path="/tmp",
         )
-        probe_host = ExternalBuildHost(params)
+        probe_host = ExternalHost(params)
         probe_host.connect()
         try:
             # Read the pid file and check the process.
@@ -998,7 +996,7 @@ def _compose_wrapper_env(cfg: BuildConfig, build_id: str) -> dict:
 def _initial_local_stamp(
     cfg: BuildConfig,
     build_id: str,
-    host: BuildHost,
+    host: Host,
     cleanup_state: dict,
     env: dict,
 ) -> BuildStamp:
@@ -1035,7 +1033,7 @@ def _initial_local_stamp(
 
 
 def _verify_wrapper_started(
-    host: BuildHost,
+    host: Host,
     build_id: str,
     remote_stamp_path: str,
     *,
@@ -1079,7 +1077,7 @@ def _verify_wrapper_started(
 # ---------------------------------------------------------------------------
 
 
-def _host_label(host: BuildHost) -> str:
+def _host_label(host: Host) -> str:
     """Best-effort label for log messages."""
     params = getattr(host, "params", None)
     if params is not None and hasattr(params, "host"):

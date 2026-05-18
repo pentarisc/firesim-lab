@@ -14,6 +14,12 @@ State machine (driven by `stamp.status`):
                        DONE/FAILED.
   terminal           → print summary and exit immediately.
 
+Generic monitor primitives (SSH connect, remote-id verification,
+tail-until-result, interruptible sleep, MonitorAborted / MonitorDetached)
+live in `fslab.pipeline.monitor` so the upcoming run pipeline can reuse
+them. This module owns only the build-specific state-machine glue and
+the artifact-pull layout.
+
 Ctrl+C semantics
 ----------------
 In the tail phase, Ctrl+C closes the SSH session; the wrapper keeps
@@ -34,13 +40,20 @@ cost penalty even if the user stays attached.
 from __future__ import annotations
 
 import shlex
-import time
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from fslab.schemas.host_model import ExternalHostConfig
+from fslab.pipeline.host import Host, RsyncFailed, cleanup_remote
+from fslab.pipeline.monitor import (
+    MonitorAborted,
+    MonitorDetached,
+    connect_external,
+    interruptible_sleep,
+    tail_remote_log_until_result,
+    verify_remote_id,
+)
 from fslab.utils.display import error, info, section, success, warning
 
 from .bitbuilder import PostStatus, make_bitbuilder
@@ -54,30 +67,6 @@ from .build_stamp import (
     write_stamp,
 )
 from .buildconfig import BuildConfig
-from .buildhost import (
-    BuildHost,
-    ExternalBuildHost,
-    RemoteCommandFailed,
-    RsyncFailed,
-    cleanup_remote,
-)
-
-
-# ---------------------------------------------------------------------------
-# Exceptions
-# ---------------------------------------------------------------------------
-
-
-class MonitorAborted(Exception):
-    """Raised when monitor cannot proceed — no stamp, build_id mismatch,
-    or other unrecoverable state. The CLI surfaces this as a non-zero
-    exit with the message."""
-
-
-class MonitorDetached(Exception):
-    """Raised on Ctrl+C / clean detach. The CLI prints a friendly
-    "detached" message and exits zero; the build continues on the
-    remote, ready to be re-attached via another `fslab monitor build`."""
 
 
 # Default cadence for the finalize-phase poll. AWS AFI builds typically
@@ -114,9 +103,18 @@ def monitor_build(project: Any, registry: Any) -> None:
         _print_summary(stamp)
         return
 
-    host = _connect_to_remote_from_stamp(stamp)
+    host = connect_external(
+        host=stamp.remote.host,
+        user=stamp.remote.user,
+        ssh_key_path=stamp.remote.ssh_key_path,
+    )
     try:
-        _verify_remote_build_id(host, stamp)
+        verify_remote_id(
+            host,
+            stamp.remote.remote_stamp_path,
+            stamp.build_id,
+            id_field="build_id",
+        )
 
         # If the wrapper is still alive on the remote, tail its log.
         if stamp.status in (BuildStatus.LAUNCHING, BuildStatus.RUNNING):
@@ -146,85 +144,23 @@ def monitor_build(project: Any, registry: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Connection + build_id verification
-# ---------------------------------------------------------------------------
-
-
-def _connect_to_remote_from_stamp(stamp: BuildStamp) -> BuildHost:
-    """Open an SSH connection using the host info recorded in the stamp.
-
-    Uses ExternalBuildHost regardless of the original host_model — the
-    monitor only needs SSH/run/rsync; it never launches or terminates
-    the host (cleanup goes through `cleanup_remote` once the wrapper
-    has exited)."""
-    params = ExternalHostConfig(
-        type="external",
-        host=stamp.remote.host,
-        user=stamp.remote.user,
-        ssh_key=stamp.remote.ssh_key_path,
-        # remote_platform_path is irrelevant for monitor probes; pass a
-        # dummy absolute path to satisfy ExternalHostConfig validation.
-        remote_platform_path="/tmp",
-    )
-    host = ExternalBuildHost(params)
-    host.connect()
-    return host
-
-
-def _verify_remote_build_id(host: BuildHost, stamp: BuildStamp) -> None:
-    """Cross-check the remote stamp's build_id against the local one.
-
-    Mismatch typically means the remote build dir was reused by another
-    project, or someone manually changed state. Abort cleanly rather
-    than streaming someone else's log lines.
-    """
-    r = host.run(
-        f"cat {shlex.quote(stamp.remote.remote_stamp_path)}",
-        warn=True, hide=True,
-    )
-    if r.return_code != 0:
-        raise MonitorAborted(
-            f"Remote stamp not found at {stamp.remote.remote_stamp_path}. "
-            f"The build may have been cleaned up out of band, or the host "
-            f"may have been re-provisioned. Run `fslab abandon build` to "
-            f"discard the local stamp."
-        )
-    try:
-        data = yaml.safe_load(r.stdout) or {}
-    except yaml.YAMLError as e:
-        raise MonitorAborted(f"Could not parse remote stamp: {e}") from e
-    remote_bid = data.get("build_id") if isinstance(data, dict) else None
-    if remote_bid != stamp.build_id:
-        raise MonitorAborted(
-            f"Remote build_id ({remote_bid!r}) does not match local "
-            f"({stamp.build_id!r}). The remote build dir may have been "
-            f"reused by another project. Run `fslab abandon build` to "
-            f"clean up and start fresh."
-        )
-
-
-# ---------------------------------------------------------------------------
 # Tail-and-wait (launching/running phase)
 # ---------------------------------------------------------------------------
 
 
 def _attach_to_running(
-    host: BuildHost, stamp: BuildStamp, project_dir: Path,
+    host: Host, stamp: BuildStamp, project_dir: Path,
 ) -> None:
     """Tail the wrapper's log on the remote until result.yaml appears.
 
-    Implementation: one combined remote command tails the log in the
-    background while a polling loop waits for result.yaml to appear.
-    Once it does, the loop kills tail and the command exits, returning
-    control to us so we can transition the stamp and pull artifacts.
-
-    Ctrl+C closes the SSH channel — the wrapper continues running on
-    the remote (nohup). We re-raise as `MonitorDetached` so the CLI
-    handler can exit zero with a friendly message.
+    Delegates the SSH tail/poll-loop mechanic to
+    `fslab.pipeline.monitor.tail_remote_log_until_result`; this function
+    owns the surrounding stamp transitions and the post-exit artifact
+    pull + cleanup transition.
     """
     if stamp.status == BuildStatus.LAUNCHING:
         # Promote to running so any concurrent monitor probe sees a
-        # consistent state. We landed here past `_verify_remote_build_id`,
+        # consistent state. We landed here past `verify_remote_id`,
         # so the wrapper is genuinely alive.
         stamp.status = BuildStatus.RUNNING
         write_stamp(project_dir, stamp)
@@ -232,44 +168,18 @@ def _attach_to_running(
     section(f"Attached to build {stamp.build_id} on {stamp.remote.host}")
     info(f"Streaming {stamp.remote.remote_log_path} — Ctrl+C to detach.")
 
-    log_path = shlex.quote(stamp.remote.remote_log_path)
-    result_path = shlex.quote(stamp.remote.remote_result_yaml_path)
-    # If result.yaml already exists, we missed the live tail — just cat
-    # the log to give the user the full record before transitioning.
-    # Otherwise tail -F (capital F so it follows file recreation) while
-    # polling for result.yaml; kill tail when it appears.
-    cmd = (
-        f"if [ -f {result_path} ]; then "
-        f"cat {log_path}; "
-        f"else "
-        f"tail -F {log_path} & TAIL_PID=$!; "
-        f"while [ ! -f {result_path} ]; do sleep 2; done; "
-        f"sleep 1; "
-        f"kill $TAIL_PID 2>/dev/null; "
-        f"wait $TAIL_PID 2>/dev/null; "
-        f"true; "
-        f"fi"
+    tail_remote_log_until_result(
+        host,
+        log_path=stamp.remote.remote_log_path,
+        result_path=stamp.remote.remote_result_yaml_path,
     )
-
-    try:
-        host.run(cmd, pty=True)
-    except (KeyboardInterrupt, RemoteCommandFailed):
-        # With pty=True, Fabric forwards Ctrl+C to the remote pty rather
-        # than re-raising it locally — the remote tail/poll loop dies by
-        # signal and surfaces as RemoteCommandFailed. Treat that as a
-        # detach: the wrapper is nohup'd, so it keeps running.
-        info(
-            "Detached. Build continues on remote. "
-            "Re-attach with `fslab monitor build`."
-        )
-        raise MonitorDetached() from None
 
     info("Wrapper exited — pulling artifacts and running cleanup…")
     _on_wrapper_exit(host, stamp, project_dir)
 
 
 def _on_wrapper_exit(
-    host: BuildHost, stamp: BuildStamp, project_dir: Path,
+    host: Host, stamp: BuildStamp, project_dir: Path,
 ) -> None:
     """Called once monitor detects the wrapper has exited. Pulls
     artifacts, runs cleanup, updates the stamp's status / finished_at /
@@ -304,7 +214,7 @@ def _on_wrapper_exit(
     write_stamp(project_dir, stamp)
 
 
-def _pull_result_yaml(host: BuildHost, stamp: BuildStamp) -> dict:
+def _pull_result_yaml(host: Host, stamp: BuildStamp) -> dict:
     """Read result.yaml from the remote into a dict. Tolerant of an
     unreadable/missing file (synthesizes a failure marker so the rest
     of the flow can still update the stamp consistently)."""
@@ -336,7 +246,7 @@ def _pull_result_yaml(host: BuildHost, stamp: BuildStamp) -> dict:
     }
 
 
-def _remote_dir_exists(host: BuildHost, remote_path: str) -> bool:
+def _remote_dir_exists(host: Host, remote_path: str) -> bool:
     """Return True iff `remote_path` exists and is a directory on the
     remote. Uses `test -d` so a missing path is just rc!=0, not an SSH
     error."""
@@ -347,7 +257,7 @@ def _remote_dir_exists(host: BuildHost, remote_path: str) -> bool:
 
 
 def _pull_artifacts(
-    host: BuildHost, stamp: BuildStamp, project_dir: Path,
+    host: Host, stamp: BuildStamp, project_dir: Path,
 ) -> None:
     """Rsync the wrapper's `.fslab/` dir and the build's `reports/` back
     to the project. Best-effort — failures here are logged but don't
@@ -427,7 +337,7 @@ def _finalize_poll_loop(
                 f"Post-wrapper status check raised: {e} — retrying in "
                 f"{_FINALIZE_POLL_SECONDS}s."
             )
-            if _interruptible_sleep(_FINALIZE_POLL_SECONDS):
+            if interruptible_sleep(_FINALIZE_POLL_SECONDS):
                 raise MonitorDetached() from None
             continue
 
@@ -450,25 +360,12 @@ def _finalize_poll_loop(
             f"  post_wrapper.state={post_info.get('state', '?')!r} "
             f"{post_info.get('message', '')}"
         )
-        if _interruptible_sleep(_FINALIZE_POLL_SECONDS):
+        if interruptible_sleep(_FINALIZE_POLL_SECONDS):
             info(
                 "Detached during finalize. The post-wrapper phase continues "
                 "on AWS-managed infra. Re-attach: `fslab monitor build`."
             )
             raise MonitorDetached() from None
-
-
-def _interruptible_sleep(seconds: int) -> bool:
-    """Sleep `seconds` seconds; return True if interrupted by Ctrl+C.
-
-    Plain `time.sleep` would propagate the KeyboardInterrupt as an
-    exception; using a sentinel return lets the caller decide whether
-    to raise `MonitorDetached` with proper messaging."""
-    try:
-        time.sleep(seconds)
-        return False
-    except KeyboardInterrupt:
-        return True
 
 
 # ---------------------------------------------------------------------------

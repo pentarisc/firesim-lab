@@ -22,12 +22,13 @@ Pass 2 — Project Validation:
     cross-registry checks (PROJ-11, PROJ-12, PROJ-13) can run.
 
     Between reading the raw YAML and Pydantic validation, the
-    ``_merge_target_build_defaults`` step folds the platform-registry's
-    per-host-model and per-publisher defaults into the user-supplied
-    blocks (e.g. ``host_models.ec2_launch.instance_type`` → user's
-    ``target.build.host.instance_type`` when the user did not override).
-    This is the registry-default merge step referenced in the build-
-    pipeline migration handoff.
+    ``_merge_target_defaults`` step folds the platform-registry's
+    per-host-model, per-publisher, and per-artifact-source defaults into
+    the user-supplied blocks (e.g. ``host_models.ec2_launch.instance_type``
+    → user's ``target.build.host.instance_type`` when the user did not
+    override). Covers both ``target.build`` and ``target.run`` — the
+    registry-default merge step referenced in the build-pipeline and
+    run-pipeline handoff documents.
 """
 
 from __future__ import annotations
@@ -142,24 +143,30 @@ def _get_live_config_model():
     return LiveConfig
 
 
-def _merge_target_build_defaults(
+def _merge_target_defaults(
     raw_project: dict, master_registry: MasterRegistry
 ) -> None:
-    """Fold platform-registry defaults into ``target.build.host`` and
-    ``target.build.publish`` before pydantic validation.
+    """Fold platform-registry defaults into the user's target.* blocks
+    before pydantic validation.
 
     Layered-defaults policy (user wins on every key):
-        registry.platforms[<id>].host_models[<host.type>]   ⨯  user host dict
-        registry.platforms[<id>].publish[<publish.type>]    ⨯  user publish dict
+        registry.platforms[<id>].host_models[<host.type>]
+            ⨯  user target.build.host dict
+            ⨯  user target.run.host   dict
+        registry.platforms[<id>].publish[<publish.type>]
+            ⨯  user target.build.publish dict
+        registry.platforms[<id>].run_artifact_sources[<artifact_source.type>]
+            ⨯  user target.run.artifact_source dict
 
     The merge is shallow — sufficient for the current flat schemas. If a
-    future host/publish config grows a nested dict the merge can be
-    deepened here without touching the schemas themselves.
+    future block grows a nested dict the merge can be deepened here
+    without touching the schemas themselves.
 
     The function mutates ``raw_project`` in place; safe because the dict
     has already been read from disk and is otherwise local to the parser.
     Silently noops when the platform has no entry (e.g. user mis-spelled
-    the platform id — pydantic will catch that downstream with PROJ-11).
+    the platform id — pydantic will catch that downstream with PROJ-11)
+    or when target.run is absent.
     """
     target = raw_project.get("target") or {}
     platform_id = target.get("platform")
@@ -170,19 +177,18 @@ def _merge_target_build_defaults(
     if platform_entry is None:
         return  # PROJ-11 catches the unknown platform downstream
 
+    host_models = getattr(platform_entry, "host_models", None) or {}
+
+    # ---- build axes -----------------------------------------------------
     build = target.get("build") or {}
 
-    # ---- host -------------------------------------------------------------
     user_host = build.get("host")
     if isinstance(user_host, dict):
         host_type = user_host.get("type")
-        host_models = getattr(platform_entry, "host_models", None) or {}
         defaults = host_models.get(host_type) if host_type else None
         if isinstance(defaults, dict):
-            merged = {**defaults, **user_host}
-            build["host"] = merged
+            build["host"] = {**defaults, **user_host}
 
-    # ---- publish ----------------------------------------------------------
     user_publish = build.get("publish")
     if isinstance(user_publish, dict):
         publish_type = user_publish.get("type")
@@ -191,12 +197,36 @@ def _merge_target_build_defaults(
             publish_defaults_by_type.get(publish_type) if publish_type else None
         )
         if isinstance(defaults, dict):
-            merged = {**defaults, **user_publish}
-            build["publish"] = merged
+            build["publish"] = {**defaults, **user_publish}
 
-    # Make sure the mutations propagate back through the optional .get()s.
     if "build" not in target:
         target["build"] = build
+
+    # ---- run axes -------------------------------------------------------
+    run = target.get("run")
+    if isinstance(run, dict):
+        user_run_host = run.get("host")
+        if isinstance(user_run_host, dict):
+            host_type = user_run_host.get("type")
+            defaults = host_models.get(host_type) if host_type else None
+            if isinstance(defaults, dict):
+                run["host"] = {**defaults, **user_run_host}
+
+        user_artifact = run.get("artifact_source")
+        if isinstance(user_artifact, dict):
+            art_type = user_artifact.get("type")
+            art_defaults_by_type = (
+                getattr(platform_entry, "run_artifact_sources", None) or {}
+            )
+            defaults = (
+                art_defaults_by_type.get(art_type) if art_type else None
+            )
+            if isinstance(defaults, dict):
+                run["artifact_source"] = {**defaults, **user_artifact}
+
+        target["run"] = run
+
+    # Make sure the mutations propagate back through the optional .get()s.
     if "target" not in raw_project:
         raw_project["target"] = target
 
@@ -327,7 +357,7 @@ def _internal_load_and_validate(
     # migration task 4b). Must run before pydantic validation so that
     # registry-supplied required fields satisfy the schema.
     # ------------------------------------------------------------------
-    _merge_target_build_defaults(raw_project, master_registry)
+    _merge_target_defaults(raw_project, master_registry)
 
     # ------------------------------------------------------------------
     # PASS 2 — Validate the project with MasterRegistry as context

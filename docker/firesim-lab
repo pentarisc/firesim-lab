@@ -575,7 +575,7 @@ _enter_shell() {
     echo "printf '%b\n' '    fslab sim                                        — run simulation'"
     echo "printf '%b\n' '    fslab --help                                     — Show help'"
     echo "printf '%b\n' ''"
-    echo "printf '%b\n' '  \033[1mAWS:\033[0m run \033[36maws configure sso --use-device-code\033[0m or \033[36aws sso login --use-device-code --profile <profile>\033[0m — credentials persist to ${HOST_AWS_DIR} on the host.'"
+    echo "printf '%b\n' '  \033[1mAWS:\033[0m run \033[36maws configure sso --use-device-code\033[0m or \033[36maws sso login --use-device-code --profile <profile>\033[0m — credentials persist to ${HOST_AWS_DIR} on the host.'"
     echo "printf '%b\n' '  \033[1mSSH:\033[0m place private keys (e.g. .pem) under ${HOST_SSH_DIR} on the host (chmod 600) — they appear as \033[36m~/.ssh\033[0m in the container.'"
     echo "printf '%b\n' ''"
     echo "printf '%b\n' '  \033[2mType exit to return to host shell.\033[0m'"

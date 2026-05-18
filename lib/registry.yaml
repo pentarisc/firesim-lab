@@ -264,6 +264,60 @@ bitbuilders:
   #   artifact_glob: ""
 
 # ==============================================================================
+#  runners section  (catalog of FPGA-run recipe classes)
+# ==============================================================================
+#  A runner describes one silicon-specific *recipe* for executing a built
+#  bitstream on an FPGA host. Parallel to bitbuilders. Multiple platforms can
+#  reference the same runner.
+#
+#  Fields
+#  ------
+#    id                Unique id; matches `platforms[].runner` references.
+#    label/description Human-facing strings.
+#    python_class      Class name in fslab.runtime.runner (Phase 3+).
+#    args_schema       Pydantic class validating `target.run.runner_args`
+#                      (resolved via RUNNER_ARGS_REGISTRY).
+#    params_schema     Pydantic class validating per-recipe params
+#                      (resolved via RUNNER_PARAMS_REGISTRY). Reserved
+#                      for future runner variants; today's classes are empty.
+#    remote_slot_parent_subdir
+#                      Subpath under the platform's remote_platform_path
+#                      where the per-slot run dir lives. Empty means root.
+#
+#  Note: the driver binary filename is NOT specified here. It is derived
+#  per-project as `<host.driver_name>-<platform_id>` (e.g. `MyDriver-f2`)
+#  to match the build pipeline's CMake output naming.
+# ==============================================================================
+
+runners:
+
+  # ----------------------------------------------------------------------------
+  # f2 — AWS F2 (FireSim native) FPGA-run recipe
+  # ----------------------------------------------------------------------------
+  - id: f2
+    label: "AWS F2 Runner"
+    description: >
+      Executes a built F2 bitstream on an AWS F2 host: clear FPGA slot,
+      load AGFI via `fpga-load-local-image`, exec the driver, collect
+      uartlog + driver.log + optional tracerv/autocounter artifacts.
+    python_class: "F2Runner"
+    args_schema:   "F2RunnerArgs"
+    params_schema: "F2RunnerParams"
+
+    remote_slot_parent_subdir: "sim_slot_0"
+
+  # ----------------------------------------------------------------------------
+  # TEMPLATE — copy when registering a new runner.
+  # ----------------------------------------------------------------------------
+  # - id: <runner_id>
+  #   label: "<Human Readable>"
+  #   description: "<one paragraph>"
+  #   python_class: "<ClassName>"
+  #   args_schema:  "<ClassNameArgs>"
+  #   params_schema: "<ClassNameParams>"
+  #   remote_slot_parent_subdir: ""
+
+# ==============================================================================
 # platforms section
 # ==============================================================================
 # Schema reference
@@ -307,8 +361,10 @@ bitbuilders:
 #   host_models       dict       Keys are host_model ids the platform supports
 #                                (currently `external`, `ec2_launch`). Values
 #                                are per-host-model default dicts merged into
-#                                the user's `target.build.host` block at parse
-#                                time. Empty default dicts are valid.
+#                                the user's `target.build.host` AND
+#                                `target.run.host` blocks at parse time. Same
+#                                set governs both pipelines. Empty default
+#                                dicts are valid.
 #
 #   publish           dict       Keys are publish.type ids the platform
 #                                supports (currently `none`, `local_tarball`,
@@ -317,10 +373,23 @@ bitbuilders:
 #                                block at parse time. The `none` entry should
 #                                always be present (empty dict).
 #
+# Run-pipeline fields
+# -------------------
+#   runner                str    Id of an entry in the top-level `runners:`
+#                                catalog. None => this platform does not
+#                                support `fslab sim fpga`.
+#
+#   run_artifact_sources  dict   Keys are artifact_source.type ids the
+#                                platform supports for `target.run.artifact_source`
+#                                (currently `aws_afi`). Values are per-type
+#                                default dicts merged into the user's
+#                                `target.run.artifact_source` block at
+#                                parse time.
+#
 # Layered defaults
 # ----------------
-# For host and publish blocks, the user's value (in fslab.yaml) is merged with
-# the platform's default at parse-time:
+# For host, publish, and run-side artifact_source blocks, the user's value
+# (in fslab.yaml) is merged with the platform's default at parse-time:
 #   1. Framework registry default     (e.g. ami_id: ami-xxxxxxxx)
 #   2. Custom registry override       (e.g. team-shared HDK path)
 #   3. User fslab.yaml override       (final value)
@@ -384,6 +453,11 @@ platforms:
       aws_afi:
         append_userid_region: true   # firesim-style: bucket-<userid>-<region>
         copy_to_regions: []          # opt-in: list of regions to replicate the AFI to
+
+    # --- run pipeline ----------------------------------------
+    runner: f2
+    run_artifact_sources:
+      aws_afi: {}                    # user supplies agfi: in fslab.yaml
 
   # ----------------------------------------------------------------------------
   # xilinx_alveo_u250  —  driver-side cmake retained; bitbuilder NOT YET WIRED.

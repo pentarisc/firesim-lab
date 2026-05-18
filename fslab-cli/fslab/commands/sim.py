@@ -144,15 +144,73 @@ def sim_fpgasim(
 ) -> None:
     success("FPGA Simulation not yet implemented.")
 
+DetachOpt = Annotated[bool, typer.Option(
+    "--detach",
+    help=(
+        "Launch the run in the background on the remote and exit "
+        "immediately. Reattach with `fslab monitor run`. Use this for "
+        "long workloads that need to survive a laptop sleep."
+    ),
+)]
+
+
 @sim_app.command("fpga")
-def sim_fpgasim(
-    sim_args: SimArgsOpt = None,
-    skip_rtl: SkipRtlOpt = False,
-    skip_driver: SkipDriverOpt = False,
-    force_gen: ForceGenOpt = False,
+def sim_fpga(
     yaml_path: YamlPathOpt = _FSLAB_YAML,
+    detach: DetachOpt = False,
 ) -> None:
-    success("FPGA hardware simulation not yet implemented.")
+    """Run a real-hardware FPGA simulation.
+
+    Foreground (default): resolves `target.run` from fslab.yaml,
+    requests a run host (per `target.run.host`), uploads the local
+    driver binary, loads the AGFI onto the FPGA, and execs the driver
+    over SSH with a pty so the local terminal becomes the simulated
+    UART. Results are pulled back into `run/fpga/results/<timestamp>/`
+    when the driver exits or the user Ctrl+Cs.
+
+    [bold]--detach[/]: same staging + AGFI-load flow, but the driver is
+    launched in the background under nohup. The local stamp at
+    `run/fpga/.fslab/run.yaml` records everything `fslab monitor run`
+    and `fslab abandon run` need to attach back or tear down later.
+    """
+    from fslab.runtime import (
+        RunSimulationFailed,
+        launch_detached,
+        run_simulation_foreground,
+    )
+    from fslab.runtime.runconfig import InvalidRunConfig
+    from fslab.schemas.parser import load_and_validate
+
+    resolved = yaml_path.resolve()
+
+    try:
+        config, registry = load_and_validate(str(resolved))
+    except Exception as exc:  # noqa: BLE001
+        error(f"Configuration error:\n  {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if detach:
+        try:
+            launch_detached(config, registry)
+        except InvalidRunConfig as exc:
+            error(str(exc))
+            raise typer.Exit(code=1) from exc
+        except RunSimulationFailed as exc:
+            error(f"Run failed during setup: {exc}")
+            raise typer.Exit(code=1) from exc
+        return
+
+    try:
+        rc = run_simulation_foreground(config, registry)
+    except InvalidRunConfig as exc:
+        error(str(exc))
+        raise typer.Exit(code=1) from exc
+    except RunSimulationFailed as exc:
+        error(f"Run failed during setup: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if rc != 0:
+        raise typer.Exit(code=rc)
 
 # ---------------------------------------------------------------------------
 # Helpers
