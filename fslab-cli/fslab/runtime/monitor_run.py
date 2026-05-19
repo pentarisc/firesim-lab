@@ -37,6 +37,15 @@ lives at `run/fpga/results/<ts>/{driver.log, result.yaml}` and is
 never touched here. If cleanup_remote() failed during the monitor
 attach (cleanup_done stays False), the stamp is preserved so the user
 can `fslab abandon run` to retry — same contract as the build side.
+
+Payload axis
+------------
+After the wrapper exits, monitor pulls each user-configured
+`result_files[*]` entry into the timestamped results dir alongside
+`driver.log` and `result.yaml`. The local `result.yaml` is enriched
+with a `payloads:` forensics block before being written — matching
+the foreground shape so downstream tooling sees one layout regardless
+of how the run was launched.
 """
 
 from __future__ import annotations
@@ -59,6 +68,7 @@ from fslab.pipeline.monitor import (
 from fslab.pipeline.stamp import utc_now_iso
 from fslab.utils.display import error, info, section, success, warning
 
+from .payloads import forensics_block
 from .run_stamp import (
     RunStamp,
     RunStatus,
@@ -84,9 +94,9 @@ def monitor_run(project: Any, registry: Any) -> None:
       MonitorAborted  — unrecoverable state (no stamp, id mismatch, etc.)
       MonitorDetached — user Ctrl+C; the run is left running on the remote.
     """
-    # RunConfig is resolved purely for the project_dir; we don't need the
-    # rest of the run config to operate the monitor. Keeping the
-    # resolution gives us a clear error if fslab.yaml has drifted out
+    # RunConfig is resolved here so we have access to project_dir +
+    # cfg.result_pulls() + cfg.resolved_payloads when pulling artifacts.
+    # Resolution also gives a clear error if fslab.yaml has drifted out
     # from under the stamp (e.g. target.run was removed).
     cfg = RunConfig.from_validated(project, registry)
 
@@ -117,7 +127,7 @@ def monitor_run(project: Any, registry: Any) -> None:
         )
 
         if stamp.status in (RunStatus.LAUNCHING, RunStatus.RUNNING):
-            _attach_to_running(host, stamp, cfg.project_dir)
+            _attach_to_running(host, stamp, cfg)
             reread = read_stamp(cfg.project_dir)
             if reread is None:
                 raise MonitorAborted("Stamp disappeared during monitoring.")
@@ -137,7 +147,7 @@ def monitor_run(project: Any, registry: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _attach_to_running(host: Any, stamp: RunStamp, project_dir: Path) -> None:
+def _attach_to_running(host: Any, stamp: RunStamp, cfg: RunConfig) -> None:
     """Tail the wrapper's driver.log on the remote until result.yaml
     appears, then transition the stamp + pull artifacts + run cleanup.
     """
@@ -146,7 +156,7 @@ def _attach_to_running(host: Any, stamp: RunStamp, project_dir: Path) -> None:
         # consistent state. We landed here past `verify_remote_id`, so
         # the wrapper is genuinely alive.
         stamp.status = RunStatus.RUNNING
-        write_stamp(project_dir, stamp)
+        write_stamp(cfg.project_dir, stamp)
 
     section(f"Attached to run {stamp.run_id} on {stamp.remote.host}")
     info(f"Streaming {stamp.remote.remote_log_path} — Ctrl+C to detach.")
@@ -158,14 +168,14 @@ def _attach_to_running(host: Any, stamp: RunStamp, project_dir: Path) -> None:
     )
 
     info("Wrapper exited — pulling artifacts and running cleanup…")
-    _on_wrapper_exit(host, stamp, project_dir)
+    _on_wrapper_exit(host, stamp, cfg)
 
 
-def _on_wrapper_exit(host: Any, stamp: RunStamp, project_dir: Path) -> None:
+def _on_wrapper_exit(host: Any, stamp: RunStamp, cfg: RunConfig) -> None:
     """Called once monitor detects the wrapper has exited. Pulls
     artifacts, runs cleanup, updates the stamp's terminal status."""
     result = _pull_result_yaml(host, stamp)
-    _pull_artifacts(host, stamp, project_dir, result)
+    _pull_artifacts(host, stamp, cfg, result)
 
     stamp.result = result
     stamp.finished_at = utc_now_iso()
@@ -189,7 +199,7 @@ def _on_wrapper_exit(host: Any, stamp: RunStamp, project_dir: Path) -> None:
                 f"Cleanup failed: {e}. Run `fslab abandon run` to retry."
             )
 
-    write_stamp(project_dir, stamp)
+    write_stamp(cfg.project_dir, stamp)
 
 
 def _pull_result_yaml(host: Any, stamp: RunStamp) -> dict:
@@ -225,16 +235,17 @@ def _pull_result_yaml(host: Any, stamp: RunStamp) -> dict:
 
 
 def _pull_artifacts(
-    host: Any, stamp: RunStamp, project_dir: Path, result: dict,
+    host: Any, stamp: RunStamp, cfg: RunConfig, result: dict,
 ) -> None:
-    """Pull `driver.log` and `result.yaml` from the remote into a fresh
-    timestamped results dir under `run/fpga/results/`. Best-effort:
-    failures are warnings, not aborts, since the result.yaml in `result`
-    already drives the state machine."""
+    """Pull `driver.log`, `result.yaml`, and any user-configured
+    `result_files` from the remote into a fresh timestamped results dir
+    under `run/fpga/results/`. Best-effort: failures are warnings, not
+    aborts, since the result.yaml in `result` already drives the state
+    machine."""
     from datetime import datetime, timezone
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    results_dir = project_dir / "run" / "fpga" / "results" / ts
+    results_dir = cfg.project_dir / "run" / "fpga" / "results" / ts
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # Pull driver.log.
@@ -248,12 +259,35 @@ def _pull_artifacts(
     except RsyncFailed as e:
         warning(f"Could not pull driver.log: {e}")
 
-    # Write the result.yaml the monitor already loaded into the same
-    # results dir, for parity with foreground mode and for offline
-    # inspection by tooling that just opens the local results tree.
+    # Pull each user-configured result_file. Missing files are warnings,
+    # not aborts — the driver may legitimately skip writing them on an
+    # early exit (e.g. a hash_verify failure aborts before the driver
+    # has a chance to produce anything).
+    for remote_abs, local_name in cfg.result_pulls():
+        try:
+            host.rsync_from(
+                remote_abs,
+                str(results_dir / local_name),
+                label=f"[rsync pull-{local_name}]",
+            )
+            info(f"Pulled {local_name} → {results_dir / local_name}")
+        except RsyncFailed as e:
+            warning(f"Could not pull result_file {local_name!r}: {e}")
+
+    # Enrich result.yaml with payload forensics so the local copy matches
+    # the foreground shape (the wrapper does not emit this block — the
+    # data is known at launch time and lives in cfg.resolved_payloads).
+    result_enriched = dict(result)
+    result_enriched["payloads"] = forensics_block(cfg.resolved_payloads)
+
+    # Write the (enriched) result.yaml into the same results dir, for
+    # parity with foreground mode and for offline inspection by tooling
+    # that just opens the local results tree.
     try:
         (results_dir / "result.yaml").write_text(
-            yaml.safe_dump(result, default_flow_style=False, sort_keys=False),
+            yaml.safe_dump(
+                result_enriched, default_flow_style=False, sort_keys=False,
+            ),
             encoding="utf-8",
         )
     except OSError as e:

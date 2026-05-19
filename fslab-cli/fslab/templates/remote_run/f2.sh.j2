@@ -14,26 +14,31 @@
     1. Write the *remote stamp* (containing $RUN_ID + metadata) so
        `fslab monitor run` can SSH in and verify the running run's
        identity before tailing logs.
-    2. `sudo fpga-clear-local-image -S $SLOT -A`   (idempotent reset)
+    2. Verify payload hashes against $SLOT_DIR/SHA256SUMS when gated
+       in (VERIFY_HASH != NO and HAS_SHA256SUMS == 1). Runs BEFORE
+       the FPGA is touched so a manifest mismatch never costs a
+       bitstream load. A failure here lands in result.yaml as
+       failure.stage=hash_verify.
+    3. `sudo fpga-clear-local-image -S $SLOT -A`   (idempotent reset)
        then busy-wait until `fpga-describe-local-image` reports
        `cleared` — the management commands return as soon as the
        request is queued, and the FPGA stays in (3) busy until the
        operation actually completes.
-    3. `sudo fpga-load-local-image -S $SLOT -I $AGFI -A`, then busy-
+    4. `sudo fpga-load-local-image -S $SLOT -I $AGFI -A`, then busy-
        wait for `loaded`. Uses the EC2 instance profile attached to
        the run host — see run-pipeline-handoff D4 for the minimal IAM
        policy (DescribeFpgaImages + AssociateFpgaImage).
-    4. Exec the driver under `sudo bash -lc "..."`. AWS F2 requires
+    5. Exec the driver under `sudo bash -lc "..."`. AWS F2 requires
        root for FPGA BAR access / AFI introspection (without it the
        driver fails with "Unable to get AFI information from slot ...
        Are you running as root?"). `bash -lc` is a login shell so
        /etc/profile.d/aws-fpga.sh and similar are sourced inside the
        elevated session. Passwordless sudo for the configured
        `ssh_user` is a firesim-lab requirement.
-    5. Always (success or failure): write `result.yaml` with status,
+    6. Always (success or failure): write `result.yaml` with status,
        exit_code, and `failure.stage` if applicable. The EXIT trap
        guarantees the file is written even on `set -e` aborts mid-stage.
-    6. Teardown: `sudo fpga-clear-local-image -S $SLOT -A` (best effort).
+    7. Teardown: `sudo fpga-clear-local-image -S $SLOT -A` (best effort).
 
   Driver completion = wrapper completion. Unlike the F2 build side,
   there is no post-wrapper polling phase — the driver's exit code is
@@ -54,6 +59,12 @@
     DRIVER_BASENAME    name of the driver binary in $SLOT_DIR
     MAX_CYCLES         optional integer; empty/0 ⇒ no +max-cycles flag
     EXTRA_FLAGS        space-separated verbatim extra driver flags (or empty)
+
+    VERIFY_HASH        YES | NO | IF_PRESENT — sha256 verification policy.
+                       The wrapper only acts when this is not "NO".
+    HAS_SHA256SUMS     "1" if the launcher uploaded SHA256SUMS into
+                       $SLOT_DIR, empty otherwise. Lets the wrapper skip
+                       the verify step without poking the filesystem.
 
   Project-static config rendered by Jinja2 below:
 
@@ -84,6 +95,10 @@ set -euo pipefail
 : "${DRIVER_BASENAME:?DRIVER_BASENAME env var is required}"
 MAX_CYCLES="${MAX_CYCLES:-}"
 EXTRA_FLAGS="${EXTRA_FLAGS:-}"
+# Payload-axis env vars are optional. Defaults preserve the pre-payload
+# behaviour: NO verification, no manifest present.
+VERIFY_HASH="${VERIFY_HASH:-NO}"
+HAS_SHA256SUMS="${HAS_SHA256SUMS:-}"
 
 # ---------------------------------------------------------------------------
 # Project-static config (rendered by Jinja2).
@@ -171,7 +186,24 @@ wait_for_fpga_state() {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Clear + program AGFI. Failures here surface in result.yaml as
+# 2. Payload hash verification (gated). Runs before any FPGA mgmt command
+#    so a corrupt payload never costs a bitstream load. Failure here is
+#    captured by the EXIT trap as failure.stage=hash_verify.
+#
+#    `sha256sum -c` runs from $SLOT_DIR because the manifest references
+#    payloads by basename and the launcher uploaded them next to
+#    SHA256SUMS in that dir.
+# ---------------------------------------------------------------------------
+CURRENT_STAGE=hash_verify
+if [[ "$VERIFY_HASH" != "NO" && "$HAS_SHA256SUMS" == "1" ]]; then
+  echo "[fslab] Verifying payload hashes via sha256sum -c"
+  ( cd "$SLOT_DIR" && sha256sum -c SHA256SUMS )
+else
+  echo "[fslab] Skipping payload hash verification (VERIFY_HASH=$VERIFY_HASH, HAS_SHA256SUMS=${HAS_SHA256SUMS:-<empty>})"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Clear + program AGFI. Failures here surface in result.yaml as
 #    failure.stage = agfi_load.
 # ---------------------------------------------------------------------------
 CURRENT_STAGE=agfi_load
@@ -181,7 +213,7 @@ sudo fpga-load-local-image -S "$SLOT" -I "$AGFI" -A
 wait_for_fpga_state "loaded"
 
 # ---------------------------------------------------------------------------
-# 3. Run the driver. stdout+stderr already redirected to $LOG_PATH by the
+# 4. Run the driver. stdout+stderr already redirected to $LOG_PATH by the
 #    nohup launch wrapper; this section's output is appended.
 #
 #    Driver runs under `sudo bash -lc` — F2 requires root for FPGA BAR

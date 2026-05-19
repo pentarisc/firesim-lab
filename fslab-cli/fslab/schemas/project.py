@@ -33,11 +33,14 @@ Validation requirements satisfied here:
             for fpga build operations (warning only — sim/driver still works)
   HMOD-05   target.build.host.type must be in platform.host_models keys
   PUB-03    target.build.publish.type must be in platform.publish keys
+  FSLOT-02  target.build.host.fpga_slot must NOT be set (slots are a run-side
+            concept)
 
   Run-pipeline cross-checks (gated on target.run being supplied)
   RUN-20    target.run requires the platform to have a runner configured
-  RUNA-01   target.run.runner_args must validate against the platform's
-            runner.args_schema (resolved via RUNNER_ARGS_REGISTRY)
+  FSLOT-03  target.run.host.fpga_slot must be set
+  RUNA-01   target.run.host.fpga_slot.runner_args must validate against the
+            platform's runner.args_schema (resolved via RUNNER_ARGS_REGISTRY)
   HMOD-06   target.run.host.type must be in platform.host_models keys
   ARTSRC-01 target.run.artifact_source.type must be in
             platform.run_artifact_sources keys
@@ -316,7 +319,9 @@ class TargetBuildConfig(BaseModel):
         description=(
             "Host-acquisition config. Discriminated by `host.type`. "
             "Defaults from `platforms.<id>.host_models.<type>` are merged "
-            "into the user dict at parse time."
+            "into the user dict at parse time. `fpga_slot` must be "
+            "omitted under the build host (slots are a run-side concept) "
+            "— see [FSLOT-02]."
         ),
     )
 
@@ -333,27 +338,25 @@ class TargetBuildConfig(BaseModel):
 class TargetRunConfig(BaseModel):
     """`target.run:` section of the project YAML.
 
-    Run-side counterpart to `target.build`. Three orthogonal axes:
-      * runner_args        per-runner user tunables (max_cycles, tracing, …)
+    Run-side counterpart to `target.build`. Two orthogonal axes:
       * host               host-acquisition strategy (HostModelConfig —
-                           same discriminated union as build.host)
+                           same discriminated union as build.host) with
+                           an embedded `fpga_slot` sub-block carrying
+                           the per-slot `runner_args` (max_cycles,
+                           payloads, etc.)
       * artifact_source    where the bitstream comes from (today: aws_afi)
 
     Optional at the `TargetConfig` level — a project that only builds
     (no `fslab sim fpga`) doesn't have to populate this.
+
+    The nested `host.fpga_slot` is single-instance today (one host, one
+    slot, id 0); the placement under `host:` is the forward-compatible
+    scaffold for multi-host / multi-slot — the eventual shape is
+    `hosts: [{ ..., slots: [...] }]`, with the inner slot fields
+    unchanged.
     """
 
     model_config = ConfigDict(extra="forbid")
-
-    runner_args: dict[str, Any] = Field(
-        default_factory=dict,
-        description=(
-            "Per-runner user-tunable args. The pydantic schema for this "
-            "block is selected via the platform's runner.args_schema and "
-            "validated cross-field in FSLabConfig.cross_validate_with_registry "
-            "[RUNA-01]."
-        ),
-    )
 
     host: HostModelConfig = Field(
         ...,
@@ -361,7 +364,8 @@ class TargetRunConfig(BaseModel):
             "Run-host acquisition config. Discriminated by `host.type`. "
             "Same schema as target.build.host — assigned verbatim here. "
             "Defaults from `platforms.<id>.host_models.<type>` are merged "
-            "into the user dict at parse time."
+            "into the user dict at parse time. `host.fpga_slot` must be "
+            "set on the run side — see [FSLOT-03]."
         ),
     )
 
@@ -495,11 +499,12 @@ class FSLabConfig(BaseModel):
                   MasterRegistry.fpgasimulators.
 
         Build-pipeline checks:
-        [BBA-01]  target.build.bitbuilder_args must validate against the
-                  platform's bitbuilder.args_schema. Skipped (warning) when
-                  the platform has no bitbuilder configured.
-        [HMOD-05] target.build.host.type must be in platform.host_models keys.
-        [PUB-03]  target.build.publish.type must be in platform.publish keys.
+        [BBA-01]   target.build.bitbuilder_args must validate against the
+                   platform's bitbuilder.args_schema. Skipped (warning) when
+                   the platform has no bitbuilder configured.
+        [HMOD-05]  target.build.host.type must be in platform.host_models keys.
+        [PUB-03]   target.build.publish.type must be in platform.publish keys.
+        [FSLOT-02] target.build.host.fpga_slot must NOT be set.
         """
         if info is None or info.context is None:
             return self
@@ -611,6 +616,16 @@ class FSLabConfig(BaseModel):
                 f"Supported: {supported}."
             )
 
+        # [FSLOT-02] build hosts must not carry an fpga_slot — slots are
+        # only meaningful on the run side (a build host compiles a
+        # bitstream; it does not load one onto an FPGA).
+        if build.host.fpga_slot is not None:
+            raise ValueError(
+                "[FSLOT-02] target.build.host.fpga_slot must NOT be set. "
+                "Slots are a run-side concept — move the block under "
+                "target.run.host.fpga_slot."
+            )
+
         # [PUB-03] publish.type ∈ platform.publish
         pub_type = build.publish.type
         if pub_type not in platform_entry.publish:
@@ -668,6 +683,16 @@ class FSLabConfig(BaseModel):
                 f"Supported: {supported}."
             )
 
+        # [FSLOT-03] run hosts must carry an fpga_slot block.
+        if run.host.fpga_slot is None:
+            raise ValueError(
+                "[FSLOT-03] target.run.host.fpga_slot is required. Add a "
+                "`fpga_slot:` block under `target.run.host` with at least "
+                "`id: 0` (single-slot today). The block also holds the "
+                "`runner_args:` sub-block previously at "
+                "`target.run.runner_args`."
+            )
+
         # [ARTSRC-01] artifact_source.type ∈ platform.run_artifact_sources
         art_type = run.artifact_source.type
         if art_type not in platform_entry.run_artifact_sources:
@@ -689,7 +714,7 @@ class FSLabConfig(BaseModel):
                 f"platform's registry entry with `runner:` + `run_artifact_sources:`."
             )
 
-        # [RUNA-01] runner_args validates against runner.args_schema
+        # [RUNA-01] host.fpga_slot.runner_args validates against runner.args_schema
         runner_entry = registry.runners.get(platform_entry.runner)
         if runner_entry is None:
             # Already caught at MasterRegistry cross-validation [RUN-10],
@@ -705,11 +730,11 @@ class FSLabConfig(BaseModel):
             raise ValueError(f"[RUNA-01] {e}") from e
 
         try:
-            run_args_cls.model_validate(run.runner_args or {})
+            run_args_cls.model_validate(run.host.fpga_slot.runner_args or {})
         except Exception as e:
             raise ValueError(
-                f"[RUNA-01] target.run.runner_args do not validate against "
-                f"{runner_entry.args_schema}: {e}"
+                f"[RUNA-01] target.run.host.fpga_slot.runner_args do not "
+                f"validate against {runner_entry.args_schema}: {e}"
             ) from e
 
         return self

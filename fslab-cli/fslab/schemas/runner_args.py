@@ -6,7 +6,7 @@ Pydantic V2 models for the **runner_args** (user-side) and
 `bitbuilder_args.py`.
 
 runner_args
-    Lives at  target.run.runner_args  in fslab.yaml.
+    Lives at  target.run.host.fpga_slot.runner_args  in fslab.yaml.
     Schema selected at parse time by  registry.runners[<id>].args_schema.
 
 runner_params
@@ -38,6 +38,20 @@ Validation requirements
   RUNA-04  registry's runner params block must validate against the
            resolved params class
 
+Payload-axis validation (F2RunnerArgs)
+--------------------------------------
+  PAY-02   `remote_name` must be unique within the payloads list.
+  PAY-03   `remote_name` must not collide with a framework-reserved
+           name. The driver-basename collision check is deferred to
+           `RunConfig.from_validated` (the driver basename is project-
+           derived and not known at pydantic-validation time).
+  PAY-06   `result_files[*].remote_path` must not collide with a
+           framework-reserved name.
+
+  Filesystem-touching payload checks (PAY-01 path-exists,
+  PAY-04 SHA256SUMS-required-when-YES, PAY-05 manifest covers payloads)
+  live in `RunConfig.from_validated` so pydantic stays free of IO.
+
 Adding a new runner
 -------------------
     @register_runner_args
@@ -51,10 +65,11 @@ Adding a new runner
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -82,13 +97,126 @@ def register_runner_params(cls: type["RunnerParamsBase"]) -> type["RunnerParamsB
 # ---------------------------------------------------------------------------
 
 class RunnerArgsBase(BaseModel):
-    """Base for per-runner user-tunable args (target.run.runner_args)."""
+    """Base for per-runner user-tunable args (target.run.host.fpga_slot.runner_args)."""
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
 class RunnerParamsBase(BaseModel):
     """Base for per-runner recipe parameters (registry.runners[].params)."""
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+# ---------------------------------------------------------------------------
+# Payload axis — shared types
+# ---------------------------------------------------------------------------
+
+# Names the framework writes into the per-slot remote dir during a run.
+# Any user-supplied remote_name / remote_path that collides with one of
+# these would be silently overwritten or would shadow framework files —
+# rejected up front. The driver binary basename is project-derived and
+# checked separately in RunConfig.from_validated.
+_RESERVED_REMOTE_NAMES: frozenset[str] = frozenset({
+    "driver.log",
+    "result.yaml",
+    "remote_run_f2.sh",
+    "SHA256SUMS",
+    "pid",
+    "run.yaml",
+    ".fslab",
+})
+
+
+class VerifyHash(str, Enum):
+    """Tri-state policy for `payloads/SHA256SUMS` verification.
+
+    Verification runs in two places: locally before upload and on the
+    remote before driver exec. Both honour the same policy.
+
+        YES         Verification required. Missing SHA256SUMS is fatal
+                    at config-load time.
+        NO          Never verify. SHA256SUMS, if present, is ignored.
+        IF_PRESENT  Verify when SHA256SUMS is present; warn-once and
+                    skip otherwise. This is the default — least friction
+                    while still catching corruption when the manifest is
+                    provided.
+    """
+    YES = "YES"
+    NO = "NO"
+    IF_PRESENT = "IF_PRESENT"
+
+
+class PayloadConfig(BaseModel):
+    """One payload file uploaded alongside the driver.
+
+    `path` is the local source (project-relative or absolute; resolved
+    to absolute in RunConfig.from_validated). `remote_name` is the
+    filename inside the per-slot remote dir; defaults to the basename
+    of `path`. The driver references it via relative path (e.g.
+    `+loadmembin=dhrystone.bin`) since the driver `cd`s into the slot
+    dir before exec.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    path: Path = Field(
+        ...,
+        description=(
+            "Local source path. Project-relative paths resolve against "
+            "the project dir at RunConfig construction time; absolute "
+            "paths are kept as-is. Existence is checked then, not here."
+        ),
+    )
+
+    remote_name: Optional[str] = Field(
+        None,
+        description=(
+            "Filename inside the per-slot remote dir. Defaults to "
+            "basename(path) when unset. The driver references payloads "
+            "via this name, so keep it stable across runs if your "
+            "driver flags hard-code it."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _default_remote_name(self) -> "PayloadConfig":
+        if self.remote_name is None or self.remote_name == "":
+            object.__setattr__(self, "remote_name", self.path.name)
+        return self
+
+
+class ResultFileConfig(BaseModel):
+    """One file produced by the driver and pulled back into the local
+    results dir after the run.
+
+    `remote_path` is interpreted relative to the per-slot remote dir
+    (where the driver runs). `local_name` is the filename inside
+    `run/fpga/results/<ts>/`; defaults to basename(remote_path).
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    remote_path: str = Field(
+        ...,
+        description=(
+            "Path of the produced file relative to the per-slot remote "
+            "dir. The driver `cd`s into that dir before exec, so a bare "
+            "filename is the common case."
+        ),
+    )
+
+    local_name: Optional[str] = Field(
+        None,
+        description=(
+            "Filename written under `run/fpga/results/<ts>/`. Defaults "
+            "to basename(remote_path) when unset."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _default_local_name(self) -> "ResultFileConfig":
+        if self.local_name is None or self.local_name == "":
+            object.__setattr__(self, "local_name", Path(self.remote_path).name)
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -133,13 +261,30 @@ class F2RunnerArgs(RunnerArgsBase):
         ),
     )
 
-    workload_bin: Optional[Path] = Field(
-        None,
+    payloads: list[PayloadConfig] = Field(
+        default_factory=list,
         description=(
-            "Path to the target workload binary (e.g. a RISC-V ELF). "
-            "Resolved relative to the project dir if not absolute. "
-            "Some workloads embed everything in the bitstream and need "
-            "no separate binary — leave None in that case."
+            "Files staged into the per-slot remote dir alongside the "
+            "driver. Addressable from `extra_driver_flags` by "
+            "`remote_name` (which defaults to basename(path))."
+        ),
+    )
+
+    result_files: list[ResultFileConfig] = Field(
+        default_factory=list,
+        description=(
+            "Files produced by the driver to pull back into the local "
+            "results dir after the run. Missing files at pull time "
+            "produce a warning, not a fatal error."
+        ),
+    )
+
+    verify_hash: VerifyHash = Field(
+        VerifyHash.IF_PRESENT,
+        description=(
+            "Policy for verifying `payloads/SHA256SUMS` locally before "
+            "upload and on the remote before driver exec. Default "
+            "`IF_PRESENT` verifies only when the manifest exists."
         ),
     )
 
@@ -151,6 +296,52 @@ class F2RunnerArgs(RunnerArgsBase):
             "Each entry is passed through as-is — no validation."
         ),
     )
+
+    @model_validator(mode="after")
+    def _validate_payload_axis(self) -> "F2RunnerArgs":
+        """[PAY-02] / [PAY-03] / [PAY-06] payload + result_file shape checks.
+
+        Filesystem-touching checks (path exists, manifest exists, manifest
+        covers payloads) are intentionally deferred to RunConfig.from_validated
+        so the schema layer stays IO-free.
+        """
+        seen: dict[str, int] = {}
+        for idx, p in enumerate(self.payloads):
+            rn = p.remote_name or p.path.name
+
+            # [PAY-02] unique remote_name across the payloads list.
+            if rn in seen:
+                raise ValueError(
+                    f"[PAY-02] payloads[{idx}].remote_name='{rn}' duplicates "
+                    f"payloads[{seen[rn]}]. Each remote_name must be unique."
+                )
+            seen[rn] = idx
+
+            # [PAY-03] no collision with framework-reserved remote names.
+            # (Driver-basename collision is checked in RunConfig.from_validated
+            #  since the basename is project-derived.)
+            if rn in _RESERVED_REMOTE_NAMES:
+                raise ValueError(
+                    f"[PAY-03] payloads[{idx}].remote_name='{rn}' collides "
+                    f"with a framework-reserved name "
+                    f"({sorted(_RESERVED_REMOTE_NAMES)}). Choose a different "
+                    f"remote_name."
+                )
+
+        for idx, r in enumerate(self.result_files):
+            # [PAY-06] result_files remote_path must not collide with reserved
+            # names — those are framework outputs (driver.log, result.yaml,
+            # etc.) which we generate and pull back unconditionally.
+            if r.remote_path in _RESERVED_REMOTE_NAMES:
+                raise ValueError(
+                    f"[PAY-06] result_files[{idx}].remote_path='{r.remote_path}' "
+                    f"collides with a framework-reserved name "
+                    f"({sorted(_RESERVED_REMOTE_NAMES)}). Choose a different "
+                    f"remote_path; framework artifacts are pulled "
+                    f"automatically."
+                )
+
+        return self
 
 
 @register_runner_params

@@ -34,13 +34,15 @@ init_app = typer.Typer(rich_markup_mode="rich")
 _KNOWN_PLATFORMS = ["f2", "vitis_u250"]
 
 _RTL_DIR = "user_rtl"
+_PAYLOADS_DIR = "payloads"
 
 # Sub-directories to scaffold under <name>/
 _SCAFFOLD_DIRS = [
     "src/main/scala",
     "src/main/cc",
     "generated-src",
-    _RTL_DIR
+    _RTL_DIR,
+    _PAYLOADS_DIR,
 ]
 
 _DEFAULT_GITIGNORE = """\
@@ -52,6 +54,11 @@ target/
 *.class
 *.jar
 
+# User payloads — uploaded to the run host per-run, not version-controlled.
+# Reproducibility is via payloads/SHA256SUMS, which IS committed if you create it.
+payloads/*
+!payloads/SHA256SUMS
+
 # Editors
 .idea/
 .vscode/
@@ -61,7 +68,7 @@ target/
 @new_app.command("new")
 def cmd_new(
     project_name: str = typer.Argument(
-        ..., 
+        ...,
         help="The name of the new project folder to create"
     ),
 ) -> None:
@@ -100,7 +107,7 @@ def cmd_new(
             # You can add other defaults here in the future if needed
             # e.g., "fslab_version": "1.0.0"
         }
-        
+
         with open(meta_file, "w") as f:
             json.dump(meta_data, f, indent=4)
 
@@ -162,9 +169,9 @@ def cmd_init(
     try:
         with open(meta_file, "r") as f:
             meta_data = json.load(f)
-            
+
         project_name = meta_data.get("project_name")
-        
+
         if not project_name:
             error("project_name key is missing from meta.json")
             raise typer.Exit(code=2)

@@ -1,8 +1,9 @@
 """
 fslab/schemas/host_model.py
 ===========================
-Pydantic V2 models for `target.build.host` — discriminated union of
-host-acquisition strategies.
+Pydantic V2 models for `target.build.host` / `target.run.host` —
+discriminated union of host-acquisition strategies, plus the per-FPGA
+slot configuration that hangs off the run side.
 
 Discriminator is the `type` field. The union is a *closed* set of
 framework-owned subclasses; the discriminated-union dispatch is wired in
@@ -28,6 +29,22 @@ Currently registered types
                     state change on release (preserves user-controlled
                     instances that another process is already using).
 
+FPGA slot
+---------
+`fpga_slot` is an optional sub-block carried on every host variant
+(declared on `HostModelConfigBase` so all concrete subclasses inherit
+it). It is meaningful only on the run side: a build host compiles a
+bitstream but never loads one onto an FPGA. Cross-validation in
+`FSLabConfig.cross_validate_with_registry` enforces:
+
+  * `target.build.host.fpga_slot` must be absent  [FSLOT-02]
+  * `target.run.host.fpga_slot`   must be present [FSLOT-03]
+
+The block is single-instance today (one host, one slot, id 0); the
+nesting under `host` is the forward-compatible scaffold for multi-host
+multi-slot, which will refactor to `target.run.hosts: [{ ..., slots:
+[...] }]` without restructuring the inner shape.
+
 Validation requirements
 -----------------------
   HMOD-01  type discriminator must match a registered host model
@@ -41,6 +58,7 @@ Validation requirements
   AWS-03   ec2_launch.instance_type matches AWS naming (when set)
   AWS-06   ec2_launch.aws_profile matches the named-profile shape (when set)
   AWS-07   ec2_launch.instance_id matches `i-XXXX...` format (when set)
+  FSLOT-01 fpga_slot.id must be a non-negative integer (today: 0)
 """
 
 from __future__ import annotations
@@ -54,15 +72,84 @@ from fslab.utils.display import regex_msg
 
 
 # ---------------------------------------------------------------------------
+# FpgaSlotConfig — per-FPGA-slot configuration carried on run hosts
+# ---------------------------------------------------------------------------
+
+class FpgaSlotConfig(BaseModel):
+    """Per-FPGA-slot block under `target.run.host.fpga_slot:`.
+
+    Today's framework is single-host, single-slot (id 0); the nesting
+    inside `host:` is the forward-compatible scaffold for multi-host /
+    multi-slot — `target.run.hosts: [{ ..., slots: [...] }]` is the
+    eventual shape, but the inner per-slot fields (runner_args) stay
+    the same.
+
+    Lives here rather than under schemas/project.py so the host union
+    can import it without a circular dependency.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int = Field(
+        ...,
+        description=(
+            "Slot identifier within the host. Single-slot today, so "
+            "must be 0. Multi-slot support will relax this to any "
+            "non-negative integer."
+        ),
+    )
+
+    runner_args: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Per-runner user-tunable args. The pydantic schema for this "
+            "block is selected via the platform's runner.args_schema and "
+            "validated cross-field in FSLabConfig.cross_validate_with_registry "
+            "[RUNA-01]."
+        ),
+    )
+
+    @field_validator("id", mode="after")
+    @classmethod
+    def _validate_slot_id(cls, v: int) -> int:
+        """[FSLOT-01] fpga_slot.id must be non-negative and (today) must be 0."""
+        if v < 0:
+            raise ValueError(
+                f"[FSLOT-01] target.run.host.fpga_slot.id must be a "
+                f"non-negative integer; got {v}."
+            )
+        if v != 0:
+            raise ValueError(
+                f"[FSLOT-01] target.run.host.fpga_slot.id must be 0 "
+                f"(multi-slot is not yet supported); got {v}."
+            )
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Base
 # ---------------------------------------------------------------------------
 
 class HostModelConfigBase(BaseModel):
-    """Base class for the `target.build.host` discriminated union.
+    """Base class for the `target.build.host` / `target.run.host`
+    discriminated union.
 
     All concrete subclasses set `type: Literal[...]` as the discriminator.
+    `fpga_slot` is declared here so it transparently flows through every
+    host variant; cross-validation in FSLabConfig gates its presence on
+    the run side and its absence on the build side.
     """
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    fpga_slot: Optional[FpgaSlotConfig] = Field(
+        None,
+        description=(
+            "Per-FPGA-slot configuration. Only valid under "
+            "`target.run.host` — must be omitted under `target.build.host` "
+            "[FSLOT-02], must be present under `target.run.host` "
+            "[FSLOT-03]."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +465,7 @@ HostModelConfig = Annotated[
     Union[ExternalHostConfig, Ec2LaunchHostConfig],
     Field(discriminator="type"),
 ]
-"""Public union type used by TargetBuildConfig.host."""
+"""Public union type used by TargetBuildConfig.host and TargetRunConfig.host."""
 
 
 KNOWN_HOST_MODELS: frozenset[str] = frozenset({"external", "ec2_launch"})

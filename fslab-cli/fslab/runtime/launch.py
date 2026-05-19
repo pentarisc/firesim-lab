@@ -2,9 +2,10 @@
 
 `fslab sim fpga --detach` entry point. Resolves `RunConfig`, requests a
 run host through the pipeline-level provider, stages the just-in-time
-rendered run wrapper, rsyncs driver + wrapper to the remote slot dir,
-nohup-launches the wrapper, writes the local stamp, verifies the wrapper
-actually started, and returns the new `run_id` to the caller.
+rendered run wrapper, rsyncs driver + wrapper + payloads to the remote
+slot dir, nohup-launches the wrapper, writes the local stamp, verifies
+the wrapper actually started, and returns the new `run_id` to the
+caller.
 
 Cleanup is *not* performed on success — the wrapper keeps the host alive
 until the driver exits. Cleanup runs later via `fslab monitor run`
@@ -13,6 +14,15 @@ until the driver exits. Cleanup runs later via `fslab monitor run`
 Mirrors `fslab.bitstream.bitbuilder.build_bitstream` in shape; the
 shared mechanics (provider.serialize_cleanup_state, nohup launch with
 `< /dev/null` stdin redirect, verify-started poll) come from Phase 1.
+
+Payload axis
+------------
+Local sha256 verification (`payloads.local_verify`) runs before any
+host work so a stale local manifest fails fast — no EC2 spend on a
+known-bad payload set. Payload files and the optional SHA256SUMS
+manifest are uploaded alongside the driver. The wrapper performs a
+matching remote `sha256sum -c` before AGFI clear; mismatch surfaces as
+`failure.stage = "hash_verify"` in the remote result.yaml.
 """
 
 from __future__ import annotations
@@ -29,8 +39,14 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from fslab.pipeline.host import Host, make_host_provider
 from fslab.pipeline.stamp import utc_now_iso
 from fslab.schemas.artifact_source import AwsAfiArtifactSourceConfig
+from fslab.schemas.runner_args import VerifyHash
 from fslab.utils.display import error, info, section, success, warning
 
+from .payloads import (
+    HashVerificationFailed,
+    local_verify,
+    upload_pairs,
+)
 from .runconfig import RunConfig
 from .runner import RunSimulationFailed, make_run_id
 from .run_stamp import (
@@ -81,6 +97,18 @@ def launch_detached(project: object, registry: object) -> str:
     # before any expensive work; here it covers direct callers.
     check_no_existing_run(cfg.project_dir)
 
+    # --- local sha256 verify (before paying for a host) ------------------
+    # Mirrors the foreground path: a stale local manifest must not cost
+    # an EC2 launch. No-op when verify_hash=NO or IF_PRESENT-with-no-
+    # manifest.
+    try:
+        local_verify(cfg.resolved_payloads)
+    except HashVerificationFailed as e:
+        error(str(e))
+        raise RunSimulationFailed(
+            "Local payload hash verification failed before host acquisition."
+        ) from e
+
     provider = make_host_provider(cfg)
     host = provider.request(cfg)
     cleanup_state: Optional[dict] = None
@@ -123,6 +151,13 @@ def launch_detached(project: object, registry: object) -> str:
         info(f"Uploading driver: {cfg.local_driver_path.name}")
         host.put(str(cfg.local_driver_path), remote_driver_path)
         host.run(f"chmod +x {shlex.quote(remote_driver_path)}")
+
+        # --- upload payloads (+ SHA256SUMS when in scope) ----------------
+        # Order with respect to the wrapper upload doesn't matter; both
+        # land before the wrapper is launched. Each pair is one host.put.
+        for local, remote in upload_pairs(cfg.resolved_payloads, remote_slot_dir):
+            info(f"Uploading payload: {local.name}")
+            host.put(str(local), remote)
 
         info(f"Uploading wrapper: {local_wrapper.name}")
         host.put(str(local_wrapper), remote_wrapper_path)
@@ -322,6 +357,7 @@ def _compose_wrapper_env(
     """
     ra = cfg.runner_args
     extra_flags = list(getattr(ra, "extra_driver_flags", []) or [])
+    resolved = cfg.resolved_payloads
     return {
         "RUN_ID": run_id,
         "AGFI": agfi,
@@ -338,6 +374,12 @@ def _compose_wrapper_env(
         # The wrapper word-splits EXTRA_FLAGS; pre-join here. Each entry
         # is expected to be a single flag token like "+plusarg=val".
         "EXTRA_FLAGS": " ".join(extra_flags),
+        # Payload axis. The wrapper runs `sha256sum -c SHA256SUMS` only
+        # when both gates open: VERIFY_HASH != NO and the manifest was
+        # uploaded (HAS_SHA256SUMS=1). The string form of the enum is
+        # what the wrapper compares against.
+        "VERIFY_HASH": resolved.verify_hash.value,
+        "HAS_SHA256SUMS": "1" if resolved.local_manifest_path is not None else "",
     }
 
 

@@ -42,6 +42,19 @@ ioctls); without it the driver fails with "Unable to get AFI information
 from slot ... Are you running as root?". `bash -lc` gives the driver a
 login shell so /etc/profile.d/aws-fpga.sh (and anything else the AMI
 sources for the FPGA tools) is in scope inside the elevated session.
+
+Payload axis
+------------
+Payloads (and the optional `payloads/SHA256SUMS` manifest) are uploaded
+into the per-slot remote dir immediately after the driver, before AGFI
+clear. The remote `sha256sum -c` step runs inside the captured try
+block so a manifest mismatch surfaces as `failure.stage = "hash_verify"`
+in result.yaml — no FPGA cycles wasted on a payload we already know is
+corrupt.
+
+Local sha256 verification runs even earlier — in
+`run_simulation_foreground` before host acquisition — so the user
+fails fast on a stale local manifest without paying for an EC2 instance.
 """
 
 from __future__ import annotations
@@ -63,8 +76,16 @@ from fslab.pipeline.host import (
 )
 from fslab.pipeline.stamp import utc_now_iso
 from fslab.schemas.artifact_source import AwsAfiArtifactSourceConfig
+from fslab.schemas.runner_args import VerifyHash
 from fslab.utils.display import error, info, section, success, warning
 
+from .payloads import (
+    HashVerificationFailed,
+    forensics_block,
+    local_verify,
+    remote_verify_command,
+    upload_pairs,
+)
 from .runconfig import RunConfig
 
 
@@ -205,6 +226,12 @@ class F2Runner(Runner):
             f"chmod +x {shlex.quote(f'{remote_slot_dir}/{cfg.driver_basename}')}"
         )
 
+        # --- upload payloads (+ SHA256SUMS when in scope) ----------------
+        # Pre-try, matching the driver upload: an upload-side failure is
+        # a setup error, distinct from the hash-mismatch case below which
+        # gets its own failure.stage.
+        self._upload_payloads(host, remote_slot_dir)
+
         # --- load AGFI ---------------------------------------------------
         agfi = self._require_aws_afi_agfi()
         exit_code: Optional[int] = None
@@ -212,6 +239,13 @@ class F2Runner(Runner):
         failure_message: Optional[str] = None
 
         try:
+            # --- remote sha256 verification (when in scope) -------------
+            # Inside the captured try so a manifest mismatch ends up in
+            # result.yaml as failure.stage=hash_verify rather than as an
+            # unhandled exception. Runs before any FPGA mgmt command so
+            # a corrupt payload never reaches the bitstream.
+            self._remote_verify(host, remote_slot_dir)
+
             info(f"Clearing FPGA slot {self.SLOT}")
             host.run(f"sudo fpga-clear-local-image -S {self.SLOT} -A")
             self._wait_for_fpga_state(host, "cleared")
@@ -266,6 +300,12 @@ class F2Runner(Runner):
                 exit_code = e.exit_code
                 failure_stage = "driver"
                 failure_message = str(e)
+        except _HashVerifyAborted as e:
+            # Remote sha256 mismatch — captured here so the AGFI load
+            # never runs against a known-corrupt payload.
+            exit_code = 1
+            failure_stage = "hash_verify"
+            failure_message = str(e)
         except RemoteCommandFailed as e:
             # Failures before/around AGFI load — capture in result.yaml.
             exit_code = e.exit_code if exit_code is None else exit_code
@@ -308,6 +348,7 @@ class F2Runner(Runner):
                     (results_dir / "driver.log").relative_to(cfg.project_dir)
                 ),
             },
+            "payloads": forensics_block(cfg.resolved_payloads),
         }
         if failure_stage is not None:
             result_dict["failure"] = {
@@ -320,6 +361,46 @@ class F2Runner(Runner):
     # ----------------------------------------------------------------------
     # Helpers
     # ----------------------------------------------------------------------
+
+    def _upload_payloads(self, host: Host, remote_slot_dir: str) -> None:
+        """Upload each configured payload (plus SHA256SUMS when in scope)
+        into the per-slot remote dir. No-op when the user supplied no
+        payloads."""
+        resolved = self.cfg.resolved_payloads
+        if not resolved.payloads and resolved.local_manifest_path is None:
+            return
+        for local, remote in upload_pairs(resolved, remote_slot_dir):
+            info(f"Uploading payload: {local.name}")
+            host.put(str(local), remote)
+
+    def _remote_verify(self, host: Host, remote_slot_dir: str) -> None:
+        """Run `sha256sum -c SHA256SUMS` on the remote when a manifest is
+        in scope. Mismatch raises `_HashVerifyAborted` so the outer try
+        captures it as `failure.stage = "hash_verify"`."""
+        resolved = self.cfg.resolved_payloads
+        cmd = remote_verify_command(resolved, remote_slot_dir)
+        if cmd is None:
+            # No manifest in scope. With IF_PRESENT (default) and no
+            # manifest, the user's intent is "don't bother" — keep this
+            # path silent. The runtime layer emits the warn-once when
+            # payloads were supplied but no manifest exists.
+            if (
+                resolved.verify_hash is VerifyHash.IF_PRESENT
+                and resolved.payloads
+                and resolved.local_manifest_path is None
+            ):
+                warning(
+                    "verify_hash=IF_PRESENT and no payloads/SHA256SUMS "
+                    "manifest present — skipping payload hash verification."
+                )
+            return
+        info("Verifying payload hashes on remote")
+        try:
+            host.run(cmd)
+        except RemoteCommandFailed as e:
+            raise _HashVerifyAborted(
+                f"sha256sum -c reported a mismatch on the remote: {e}"
+            ) from e
 
     def _wait_for_fpga_state(
         self,
@@ -399,9 +480,10 @@ class F2Runner(Runner):
     def _pull_results(self, host: Host, results_dir: Path) -> None:
         """Rsync the per-slot run dir's artifacts back into results_dir.
 
-        Pulls a small explicit allow-list (driver.log today) rather than
-        the entire slot dir, because the slot dir also holds the
-        uploaded driver binary which we don't want round-tripping back.
+        Pulls a small explicit allow-list (driver.log + user-configured
+        result_files) rather than the entire slot dir, because the slot
+        dir also holds the uploaded driver binary + payloads which we
+        don't want round-tripping back.
         """
         results_dir.mkdir(parents=True, exist_ok=True)
         remote_driver_log = f"{self.cfg.remote_slot_dir}/driver.log"
@@ -410,6 +492,18 @@ class F2Runner(Runner):
             str(results_dir / "driver.log"),
             label="[rsync pull-driver-log]",
         )
+        # User-configured driver-produced files. Missing files are warned,
+        # not fatal — the driver may legitimately skip writing them on
+        # early exit (and a hash-verify abort never wrote anything).
+        for remote_abs, local_name in self.cfg.result_pulls():
+            try:
+                host.rsync_from(
+                    remote_abs,
+                    str(results_dir / local_name),
+                    label=f"[rsync pull-{local_name}]",
+                )
+            except RsyncFailed as e:
+                warning(f"Could not pull result_file {local_name!r}: {e}")
 
     @staticmethod
     def _host_label(host: Host) -> str:
@@ -419,6 +513,12 @@ class F2Runner(Runner):
         user = getattr(params, "user", "?")
         h = getattr(params, "host", "?")
         return f"{user}@{h}"
+
+
+class _HashVerifyAborted(Exception):
+    """Internal signal carried from `_remote_verify` up to the captured
+    try in `run_foreground` so the resulting result.yaml records
+    `failure.stage = "hash_verify"`. Not part of the public API."""
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +575,30 @@ def run_simulation_foreground(project: object, registry: object) -> int:
     info(f"  host_model:      {cfg.host.type}")
     info(f"  artifact_source: {cfg.artifact_source.type}")
     info(f"  results dir:     {results_dir.relative_to(cfg.project_dir)}")
+
+    # --- local sha256 verify (before paying for a host) ------------------
+    # Catches a stale local manifest or corrupted local payload before
+    # any network or EC2 cost is incurred. No-op when verify_hash=NO or
+    # IF_PRESENT-with-no-manifest.
+    try:
+        local_verify(cfg.resolved_payloads)
+    except HashVerificationFailed as e:
+        error(str(e))
+        _write_result_yaml(
+            results_dir,
+            {
+                "run_id": run_id,
+                "status": "failed",
+                "exit_code": 1,
+                "started_at": utc_now_iso(),
+                "finished_at": utc_now_iso(),
+                "failure": {"stage": "hash_verify_local", "message": str(e)},
+                "payloads": forensics_block(cfg.resolved_payloads),
+            },
+        )
+        raise RunSimulationFailed(
+            "Local payload hash verification failed before host acquisition."
+        ) from e
 
     # `make_host_provider` / `provider.request` are typed `cfg: Any` —
     # they only access `.host.type` and `.host.<fields>`. RunConfig has

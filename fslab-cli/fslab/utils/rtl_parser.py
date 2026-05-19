@@ -21,8 +21,8 @@ def is_struct(port_name, port_type, direction)-> bool:
 
 def extract_module_info(file_path, module_name)->[dict[str,str], dict[str,str]]:
     sm = pyslang.SourceManager()
-    tree = pyslang.SyntaxTree.fromFile(file_path, sm)
-    compilation = pyslang.Compilation()
+    tree = pyslang.syntax.SyntaxTree.fromFile(file_path, sm)
+    compilation = pyslang.ast.Compilation()
     compilation.addSyntaxTree(tree)
 
     root = compilation.getRoot()
@@ -35,7 +35,7 @@ def extract_module_info(file_path, module_name)->[dict[str,str], dict[str,str]]:
     # 1. Parameters
     params: dict[str, str] = {}
     for sym in target_inst.body:
-        if sym.kind == pyslang.SymbolKind.Parameter and not sym.isLocalParam:
+        if sym.kind == pyslang.ast.SymbolKind.Parameter and not sym.isLocalParam:
             val = sym.value
             if val is None or str(val) == "<BAD>":
                 syntax_str = str(sym.syntax)
@@ -45,7 +45,7 @@ def extract_module_info(file_path, module_name)->[dict[str,str], dict[str,str]]:
     # 2. Ports
     ports: dict[str, str] = {}
     for sym in target_inst.body:
-        if sym.kind == pyslang.SymbolKind.Port:
+        if sym.kind == pyslang.ast.SymbolKind.Port:
             # Get direction string (e.g., 'In', 'Out')
             direction = str(sym.direction).split('.')[-1]
             # Run recursive flattener

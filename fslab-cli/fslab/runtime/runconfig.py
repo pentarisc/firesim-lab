@@ -22,6 +22,17 @@ output (see `DRIVER_TARGET` in CMakeLists.txt.j2). `from_validated`
 raises `InvalidRunConfig` if the binary is missing — the user is
 expected to have built the driver before invoking `fslab sim fpga` (no
 implicit auto-compile, per Phase 3 decision).
+
+Payload axis
+------------
+`from_validated` also runs payload-axis resolution via
+`fslab.runtime.payloads.resolve_payloads`. The IO-touching checks
+(PAY-01 / PAY-03 / PAY-04 / PAY-05) live there. The resulting
+`ResolvedPayloads` is attached to the RunConfig so both foreground
+(`runner.py`) and detached (`launch.py`) paths consume the same
+artefact. Local `sha256sum -c` is *not* run here — callers invoke
+`payloads.local_verify()` explicitly before any network I/O so monitor
+(which also constructs a RunConfig) does not re-hash multi-GB files.
 """
 
 from __future__ import annotations
@@ -33,6 +44,12 @@ from typing import Any
 from fslab.schemas.artifact_source import ArtifactSourceConfig
 from fslab.schemas.host_model import HostModelConfig
 from fslab.schemas.runner_args import resolve_args_schema
+
+from .payloads import (
+    PayloadResolutionFailed,
+    ResolvedPayloads,
+    resolve_payloads,
+)
 
 
 class InvalidRunConfig(Exception):
@@ -82,6 +99,13 @@ class RunConfig:
     which re-parses the dict through the resolved schema so the
     orchestration layer gets typed access (rather than a `dict[str, Any]`)."""
 
+    resolved_payloads: ResolvedPayloads
+    """Payload-axis state resolved from runner_args.payloads /
+    .result_files / .verify_hash. Holds absolute local paths, the
+    manifest location (when in scope), and per-payload sha256s pulled
+    from the manifest for forensics. Always present; empty when the
+    user supplied no payloads."""
+
     # --- derived ----------------------------------------------------------
 
     @property
@@ -94,6 +118,17 @@ class RunConfig:
     @property
     def remote_driver_path(self) -> str:
         return f"{self.remote_slot_dir}/{self.driver_basename}"
+
+    def result_pulls(self) -> list[tuple[str, str]]:
+        """Return [(remote_abs_path, local_name), ...] for each
+        configured result_file. Convenience for runner / monitor which
+        otherwise have to interleave the slot_dir prefix themselves.
+        """
+        slot = self.remote_slot_dir
+        return [
+            (f"{slot}/{rf.remote_path}", rf.local_name)
+            for rf in self.resolved_payloads.result_files
+        ]
 
     # ----------------------------------------------------------------------
     # Construction
@@ -109,11 +144,16 @@ class RunConfig:
 
         `project` and `registry` are already-validated pydantic objects.
         This method performs only what pydantic structurally cannot:
-          * filesystem existence checks (driver binary)
+          * filesystem existence checks (driver binary, payload files)
           * cross-object lookup (platform → runner entry)
           * re-parse `runner_args` dict through the resolved args schema
             (cross-validation step ARTSRC-01 / RUNA-01 has already
             confirmed it validates; we re-parse to get a typed instance)
+          * payload-axis IO checks (PAY-01 / PAY-03 / PAY-04 / PAY-05)
+            via `payloads.resolve_payloads`.
+
+        Local sha256 verification is intentionally NOT run here — see
+        the module docstring. Callers run it explicitly before upload.
         """
         # --- target.run is required for `fslab sim fpga` -----------------
         run = getattr(project.target, "run", None)
@@ -188,7 +228,21 @@ class RunConfig:
         # already validated this dict; re-parsing here gives the
         # orchestrator a typed instance instead of an opaque dict.
         args_cls = resolve_args_schema(runner_entry.args_schema)
-        runner_args = args_cls.model_validate(run.runner_args or {})
+        runner_args = args_cls.model_validate(run.host.fpga_slot.runner_args or {})
+
+        # --- resolve payload axis ----------------------------------------
+        # PAY-01 / PAY-03 / PAY-04 / PAY-05 are surfaced here. Local
+        # sha256 verification is deferred to the runner / launcher so
+        # `fslab monitor run` (which also calls from_validated) does not
+        # re-hash payloads on every attach.
+        try:
+            resolved_payloads = resolve_payloads(
+                project_dir=project_dir,
+                runner_args=runner_args,
+                driver_basename=driver_basename,
+            )
+        except PayloadResolutionFailed as e:
+            raise InvalidRunConfig(str(e)) from e
 
         return cls(
             project_name=project_name,
@@ -204,4 +258,5 @@ class RunConfig:
             host=run.host,
             artifact_source=run.artifact_source,
             runner_args=runner_args,
+            resolved_payloads=resolved_payloads,
         )
