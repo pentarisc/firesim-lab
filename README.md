@@ -5,669 +5,293 @@
 
 # firesim-lab
 
-A framework for building and running custom target designs with
-[FireSim](https://fires.im) in standalone mode — without Chipyard.
+**Cycle-accurate, FPGA-accelerated simulation of your Verilog / SystemVerilog
+designs — without writing a single line of Chisel, Scala, or C++.**
 
-firesim-lab sits between the immutable FireSim distribution and your own
-target projects, providing a shared library of common bridge drivers and
-a code-generation tool that scaffolds new targets in seconds.
+firesim-lab is an opinionated framework built on top of UC Berkeley's
+[FireSim](https://fires.im) and [Chipyard](https://chipyard.readthedocs.io)
+that turns FPGA-accelerated RTL simulation into a turnkey, project-style
+workflow. Drop your `.v` / `.sv` files into a generated project folder,
+declare the bridges you need in a single YAML file, and run metasimulations
+locally or full FPGA simulations on AWS F2 — with one CLI.
 
 > **Scope — simulation only.**
-> FireSim is a cycle-accurate hardware simulation platform designed for
-> *design verification and performance analysis*, not physical implementation.
-> It is particularly well suited to ASIC development workflows, where
-> cycle-accurate simulation at speed is essential before committing to
-> synthesis — giving you confidence in microarchitectural decisions,
-> performance numbers, and hardware-software co-design long before tapeout.
-> If your goal is to synthesise a bitstream and deploy your design onto a
-> physical FPGA board, FireSim and firesim-lab are not the right tools for
-> that — you would use a standard vendor flow such as Vivado or Quartus,
-> or an open-source front-end like [F4PGA](https://f4pga.org/).
-> firesim-lab is solely concerned with the simulation side: building,
-> running, and observing your design's behaviour in a fast, reproducible
-> environment before — or alongside — any physical implementation work.
+> firesim-lab targets *design verification and performance analysis*, not
+> physical implementation. If your goal is to synthesise a bitstream and
+> deploy onto a physical FPGA board, use a standard vendor flow (Vivado,
+> Quartus) or [F4PGA](https://f4pga.org/) instead.
+
+---
+
+## Why firesim-lab?
+
+- **Zero Chisel, zero C++, zero Scala on the user side.** Write Verilog /
+  SystemVerilog. Everything else — the Chisel shim, Golden Gate elaboration
+  glue, the simulator driver — is generated from templates.
+- **Pinned, self-contained Docker image.** A versioned image ships the full
+  toolchain (Scala/SBT, Verilator, Python, FPGA tooling). On the host
+  you need only Docker and `curl`. No multi-hour install scripts, no
+  per-distro fiddling.
+- **Bridges included out of the box.** UART, BlockDevice, and FASED memory
+  timing models ship with the framework; more on the way. Bring your own
+  via the registry — no upstream PR required.
+- **Independent project folders.** `fslab new` scaffolds a clean,
+  out-of-tree project. No in-tree source copying, no entanglement with the
+  framework repo. Each project is its own git repo, CI/CD-friendly by
+  construction.
+- **Single source of configuration.** A single `fslab.yaml` describes the
+  design, the bridges, the build, and the run. No scattered makefrags, no
+  multi-file Scala configs.
+- **Automatic top-module parsing.** `fslab init` parses your top module
+  and pre-populates `fslab.yaml` with its ports. You map ports to bridges;
+  the framework generates the Chisel wiring.
+- **First-class AWS F2 remote builds and runs.** AGFI builds are submitted
+  from the EC2 host *after* the local build, so artifacts never round-trip
+  through your laptop. F2 runs use pre-baked AMIs with `aws-fpga-firesim-f2`
+  already installed — uptime (and cost) stays low.
+- **Detached runs and resumable monitoring.** `fslab build` and
+  `fslab sim fpga` both support `--detach`; `fslab monitor` re-attaches
+  to in-flight jobs from any shell. `fslab abandon` cleans up safely.
+- **Extensible via local registries.** Add your own bridges in your own
+  registry file and point the framework at them. No upstream integration
+  hassle. (Contributions back upstream are welcome but never required.)
+- **All standard FireSim bridges & FASED memory models** are available
+  unchanged — firesim-lab uses Golden Gate (MIDAS) as-shipped.
+
+---
+
+## Quick start
+
+You need Docker and `curl` on a Linux host. That's it.
+
+```bash
+# 1. Install the launcher and pull the image
+curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash
+
+# 2. Enter a workspace and open the container shell
+cd ~/my-workspace
+firesim-lab
+
+# 3. Inside the container — full project lifecycle
+fslab new my-design
+cd /target/my-design
+
+# Copy your .v / .sv files into user_rtl/ and workload artefacts into payloads/
+# Then:
+fslab init --top-module MyTop --top-module-file user_rtl/MyTop.sv --platform f2
+# (edit fslab.yaml: pick bridges, map ports, configure build/run)
+
+fslab generate     # render Chisel shim, CMakeLists, driver, etc.
+fslab build metasim
+fslab sim metasim  # local Verilator/VCS metasimulation
+
+# Or, for FPGA-accelerated simulation on AWS F2:
+fslab build fpga
+fslab sim fpga
+```
+
+Full lifecycle reference is below.
 
 ---
 
 ## Table of Contents
 
-1. [Architecture and Tiering](#architecture-and-tiering)
-2. [Repository Layout](#repository-layout)
-3. [Prerequisites](#prerequisites)
-4. [Docker Workflow](#docker-workflow)
-5. [Common Bridge Library](#common-bridge-library)
-6. [Creating a New Target — init-target](#creating-a-new-target)
-   - [Installation](#installation)
-   - [CLI Reference](#cli-reference)
-   - [Walkthrough](#walkthrough)
-   - [Generated Project Layout](#generated-project-layout)
-7. [Building and Running a Target](#building-and-running-a-target)
-8. [Extending the Framework](#extending-the-framework)
-   - [Adding a Bridge to the Registry](#adding-a-bridge-to-the-registry)
-   - [Adding a Template](#adding-a-template)
-9. [Environment Variables](#environment-variables)
+1. [Architecture](#architecture)
+2. [Prerequisites](#prerequisites)
+3. [Project lifecycle](#project-lifecycle)
+4. [Environment variables](#environment-variables)
+5. [Acknowledgements & non-affiliation](#acknowledgements--non-affiliation)
+6. [Licensing](#licensing)
 
 ---
 
-## Architecture and Tiering
+## Architecture
 
-The system is structured as three independent tiers, each a self-contained
-repository that depends on the one below via SBT `ProjectRef`. This mirrors
-exactly how Chipyard depends on FireSim, but without requiring Chipyard.
+firesim-lab has three layers. The bottom two are baked into the Docker
+image and never modified at runtime; the top one is your project, mounted
+into the container as `/target`.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Tier 1 — FireSim                            /opt/firesim               │
+│  Layer 1 — FireSim (upstream)                       /opt/firesim    │
 │                                                                     │
-│  The FireSim simulation framework. Baked into the Docker image      │
-│  at a pinned commit. Never modified. Provides: Golden Gate          │
-│  compiler, FASED memory model, Verilator/VCS simulation harness,    │
-│  and the core simulation Makefile infrastructure.                   │
+│  Used as shipped. Provides Golden Gate (MIDAS), FASED memory model, │
+│  Verilator/VCS simulation harness, and the FPGA build flows.        │
+│  Pinned at a known-good commit in the image.                        │
 └────────────────────────────┬────────────────────────────────────────┘
-                             │ ProjectRef (SBT)
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Tier 2 — firesim-lab                        /opt/firesim-lab           │
+│  Layer 2 — firesim-lab (this repo)             /opt/firesim-lab     │
 │                                                                     │
-│  This repository. Baked into the Docker image.                      │
-│  Provides:                                                          │
-│    • lib/                — shared bridge Scala stubs, Golden Gate   │
-│                            BridgeModule implementations, and C++    │
-│                            simulation drivers (UART, BlockDev, etc.)│
-│    • lib/registry.yaml   — single source of truth for all           │
-│                            available bridges and features           │
-│    • scripts/fslab/int_target.py — target project generator         │
-│    • scripts/fslab/templates/ — Jinja2 templates for generated files│
+│  Bridge library, Jinja2 templates, and the fslab CLI:               │
+│    • lib/bridges/        — Scala stubs + Golden Gate BridgeModules  │
+│                            + C++ drivers (UART, BlockDev, …)        │
+│    • lib/registry.yaml   — registry of bridges, platforms, features │
+│    • fslab-cli/          — the fslab CLI (Typer-based Python)       │
+│    • fslab-cli/fslab/templates/                                     │
+│                          — Jinja2 templates for the generated       │
+│                            Chisel shim, CMakeLists, driver, and     │
+│                            remote build/run scripts                 │
 └────────────────────────────┬────────────────────────────────────────┘
-                             │ ProjectRef (SBT)
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Tier 3 — Your Target Project                /my-target  (anywhere) │
+│  Layer 3 — Your project              /target/<my-project>           │
 │                                                                     │
-│  Generated by init-target. Lives outside both FireSim and           │
-│  firesim-lab — in its own repository, mounted as its own Docker     │
-│  volume. Provides:                                                  │
-│    • build.sbt          — own SBT root; ProjectRef → Tier 2 + 1     │
-│    • env.sh             — sets FIRESIM_ROOT, FIRESIM_LAB_ROOT       │
-│    • Makefile           — delegates to FireSim's Make infrastructure│
-│    • makefrag/          — the 4 .mk fragments FireSim requires      │
-│    • src/main/scala/    — your Chisel target logic                  │
-│    • src/main/resources/vsrc/ — your Verilog BlackBox RTL           │
-│    • src/main/cc/       — your C++ simulation driver                │
+│  Scaffolded by `fslab new`. Lives in its own folder / git repo:     │
+│    • fslab.yaml          — single source of configuration           │
+│    • user_rtl/           — your .v / .sv sources                    │
+│    • payloads/           — workload artefacts (loadmem, ROMs, …)    │
+│    • generated-src/      — Chisel shim, FIRRTL, Golden Gate output  │
+│    • build/              — driver, metasim binary, FPGA artefacts   │
+│    • run/                — detached-run staging and results         │
+│    • scripts/            — generated remote build/run wrappers      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Why this structure?
+Why three layers?
 
-| Concern | How it is solved |
-|---|---|
-| FireSim upgrades | Bump the pinned commit in the Dockerfile; no other repo changes |
-| Shared bridge code | Lives once in firesim-lab/targets/common/; all targets inherit it |
-| Target isolation | Each target is its own repo; teams work independently |
-| Docker immutability | Tiers 1 and 2 are baked in; only the user's Tier 3 volume changes |
-| SBT incremental builds | All three tiers compile together via ProjectRef chains |
-
----
-
-## Repository Layout
-
-```
-firesim-lab/
-│
-├── docker/
-│   ├── docker-compose.yaml
-│   ├── Dockerfile
-│   ├── firesim-requirements.txt    ← Firesim python dependencies
-│   ├── install.sh                  ← First time installer
-│   ├── firesim-lab                 ← For project creation/launching
-│
-├── examples/
-│   ├── ...                    ← Example target designs created using init-target
-|
-├── licenses/
-│   ├── ...                    ← Third party licenses
-|
-├── project/
-│   ├── ...                    ← Scala project folder
-|
-├── scripts/
-|   |
-|   ├── fslab
-│   |   ├── init_target.py         ← target project generator (see below)
-│   └── └── templates/             ← Jinja2 templates, one per generated file
-|   |       |
-│   |       ├── build.sbt.j2
-│   |       ├── build.properties.j2
-│   |       ├── env.sh.j2
-│   |       ├── Makefile.j2
-│   |       ├── config.mk.j2
-│   |       ├── build.mk.j2
-│   |       ├── driver.mk.j2
-│   |       ├── metasim.mk.j2
-│   |       ├── Generator.scala.j2
-│   |       ├── Configs.scala.j2
-│   |       ├── TargetTop.scala.j2
-│   |       ├── BlackBoxDUT.scala.j2
-│   |       ├── BlackBoxDUT.v.j2
-│   |       └── firesim_top.cc.j2
-|   |
-│   ├── pyproject.toml         ← init-target build file
-│   ├── requirements.txt       ← Python dependencies
-│   |
-└── targets/
-    └── common/
-        ├── registry.yaml      ← bridge/feature/platform registry
-        ├── src/main/
-        │   ├── scala/bridges/ ← bridge Scala stubs  (copied from firechip)
-        │   ├── goldengateimplementations/scala/
-        │   │                  ← host-side BridgeModule Scala
-        │   └── cc/bridges/    ← C++ bridge drivers  (copied from firechip)
-        └── makefrag/
-            ├── common_base.mk ← sets COMMON_BASE_DIR, COMMON_CC_DIR
-            ├── uart.mk        ← opt-in: UART bridge C++ + defines
-            ├── fased.mk       ← opt-in: FASED memory model docs/hook
-            ├── blockdev.mk    ← opt-in: block device bridge C++
-            ├── iceblk.mk      ← opt-in: IceBlk lightweight block device
-            └── simplenic.mk   ← opt-in: simple NIC bridge C++
-```
+| Concern                | How it is solved                                           |
+|------------------------|------------------------------------------------------------|
+| FireSim upgrades       | Bump the pinned commit in the image; nothing else changes  |
+| Shared bridge code     | Lives once in `lib/`; every project inherits it            |
+| Project isolation      | Each project is its own folder / repo                      |
+| Docker immutability    | Layers 1 & 2 are read-only; only `/target` changes         |
+| Reproducible toolchain | Pinned image tag → identical Scala/Verilator/SBT versions  |
 
 ---
 
 ## Prerequisites
 
-The only requirement on your local machine is a working Docker environment.
-Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-on macOS or Windows, or the
-[Docker Engine](https://docs.docker.com/engine/install/) with the
-Compose plugin on Linux. Everything else — Java, SBT, Scala, Verilator,
-Python, and the FireSim toolchain — is provided inside the image and
-requires nothing from your host system.
+A Linux host with Docker and `curl` installed. Everything else — Java, SBT,
+Scala, Verilator, the FireSim Python environment, FPGA tooling — lives
+inside the image.
+
+For FPGA-accelerated simulation you also need an AWS account with access to
+F2 instances and an IAM setup for build and run hosts. See
+[docs/aws-setup.md](docs/aws-setup.md) and
+[docs/aws-setup-run.md](docs/aws-setup-run.md).
 
 ---
 
-## Docker Workflow
+## Project lifecycle
 
-### Installation
+The `fslab` CLI (inside the container) drives the whole lifecycle. The
+table below is the high-level map; each command has its own `--help` and
+the detailed documentation will live alongside it (separate from this
+README).
 
-The entire setup is driven by a single bootstrap command:
+| Command                      | Purpose                                                                 |
+|------------------------------|-------------------------------------------------------------------------|
+| `fslab new <name>`           | Scaffold a new out-of-tree project under `/target/<name>`               |
+| `fslab init`                 | Parse the top module and generate `fslab.yaml` with ports populated     |
+| `fslab generate`             | Render templates → Chisel shim, CMakeLists, driver, helper scripts      |
+| `fslab build metasim`        | Build a local Verilator/VCS metasimulation binary                       |
+| `fslab build driver`         | Build only the simulator driver                                         |
+| `fslab build fpgasim`        | Build the FPGA-side simulation binary                                   |
+| `fslab build fpga [--detach]`| Build an FPGA bitstream on AWS F2 (foreground or background)            |
+| `fslab sim metasim`          | Run a local metasimulation                                              |
+| `fslab sim fpga [--detach]`  | Run a built bitstream on an F2 host (foreground or background)          |
+| `fslab monitor build \| run` | Attach to an in-flight background build or detached run                 |
+| `fslab abandon build \| run` | Discard local state for an in-flight job and clean up the remote        |
+| `fslab archive`              | Snapshot the current build for later replay                             |
+| `fslab clean [--all]`        | Remove `generated-src/` and `build/` (and optionally `.fslab/`)         |
 
-```bash
-curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash
-```
+Between `fslab init` and `fslab generate` you edit `fslab.yaml` to:
 
-This downloads `firesim-lab`, `docker-compose.yaml`, and the `Dockerfile` into
-`~/.firesim-lab/docker/`, symlinks `firesim-lab` into your PATH (via `~/.local/bin`),
-and prints the next step. No Docker interaction happens at this stage.
+- list your RTL source files under `user_rtl/`,
+- enable the bridges you need from the registry,
+- map your top module's ports to bridge ports,
+- (optionally) fill in the `target.build` and `target.run` blocks for FPGA
+  builds and runs on AWS F2 — see
+  [docs/run-pipeline-guide.md](docs/run-pipeline-guide.md).
 
-To install a specific version (tag or branch):
+The Docker launcher (`firesim-lab` on the host) provides the supporting
+commands for the container itself:
 
-```bash
-# Via environment variable
-curl -sSL .../install.sh | VERSION=v1.2.0 bash
+| Command                      | Purpose                                                |
+|------------------------------|--------------------------------------------------------|
+| `firesim-lab`                | Start the container (or enter it if already running)   |
+| `firesim-lab --down`         | Stop and remove the container                          |
+| `firesim-lab --pull`         | Pull the latest image and restart                      |
+| `firesim-lab --reconfigure`  | Re-prompt workspace settings                           |
+| `firesim-lab --status`       | Show container status for this workspace              |
+| `firesim-lab --clean-cache`  | Remove SBT and ccache volumes (forces re-download)     |
+| `firesim-lab --help`         | Show usage information                                 |
 
-# Via argument
-curl -sSL .../install.sh | bash -s -- v1.2.0
-
-# Into a custom directory
-curl -sSL .../install.sh | INSTALL_DIR=/opt/firesim-lab bash
-```
-
----
-
-### Starting the environment
-
-`firesim-lab` is run from any **workspace directory** — a folder that contains
-(or will contain) your FireSim project(s). Settings are saved per-workspace in
-a `.firesim-lab.env` file so you never have to re-enter them.
-
-On first run, `firesim-lab` will:
-- Scan the workspace for an existing firesim-lab project (identified by
-  `build.sbt` containing `FIRESIM_LAB_ROOT`) and ask for confirmation
-- Prompt for Docker image name and Verilator thread count
-- Write `.firesim-lab.env` into the workspace directory
-- Start the container and drop you directly into a shell
-
-```bash
-cd ~/my-workspace
-firesim-lab
-```
-
-On subsequent runs it reads `.firesim-lab.env` silently, starts the container
-if needed, and enters the shell immediately.
-
-**Non-interactive mode** — for CI or scripted use:
-
-```bash
-cd ~/my-workspace
-FIRESIM_IMAGE=firesim-lab:latest VERILATOR_THREADS=8 firesim-lab
-```
+Each workspace gets its own container and its own `.firesim-lab.env`;
+multiple workspaces can run side-by-side.
 
 ---
 
-### Workspace layout
+## Environment variables
 
-```
-~/my-workspace/                   ← run firesim-lab from here
-├── .firesim-lab.env              ← generated settings (workspace-specific)
-└── my-design/                    ← your firesim-lab project
-    ├── build.sbt
-    ├── env.sh
-    ├── Makefile
-    └── generated-src/            ← build outputs (persisted automatically)
-```
+The launcher sets these inside the container automatically; you should not
+need to touch them. They are listed here only for reference.
 
-The workspace is mounted as `/target` inside the container. All subdirectories
-are persisted automatically — no separate Docker volumes are needed for build
-outputs.
+| Variable                   | Default                     | Description                                                                 |
+|----------------------------|-----------------------------|-----------------------------------------------------------------------------|
+| `HOME`                     | `/home/firesim-lab`         | Fixed in-container home, so SBT / ccache / pip caches resolve consistently  |
+| `FIRESIM_ROOT`             | `/opt/firesim`              | Layer 1 — pinned FireSim checkout (read-only)                               |
+| `FIRESIM_LAB_ROOT`         | `/opt/firesim-lab`          | Layer 2 — this repo, baked into the image (read-only)                       |
+| `TARGET_ROOT`              | `/target`                   | Layer 3 — bind-mounted workspace from the host                              |
+| `SBT_OPTS`                 | `-Xmx8g -Xss8m …`           | JVM options for SBT (memory + non-interactive shell)                        |
+| `VERILATOR_THREADS`        | host nproc                  | Verilator parallel-job count; prompted on first run, persisted in `.env`    |
+| `ENABLE_CUSTOM_PLUGINS`    | `0`                         | Opt-in for loading user Python plugins (security-sensitive)                 |
+| `CACHE_GID`                | `2543`                      | GID of the in-image `firesim-lab-cache` group owning the SBT/ccache caches  |
+| `CONTAINER_MEMORY_LIMIT`   | `16g`                       | Docker memory ceiling for the container                                     |
+| `CONTAINER_MEMORY_RESERVE` | `8g`                        | Docker memory reservation                                                   |
 
----
+Host-side (consumed by the launcher, written to `<workspace>/.firesim-lab.env`):
 
-### Creating a new project
-
-If no project is detected in the workspace, `firesim-lab` will start the
-container and show scaffolding instructions. Once inside the container shell:
-
-```bash
-init-target --name my-design \
-            --output-dir /target \
-            --bridge uart,fased \
-            --feature verilog-blackbox
-```
-
-To see all available bridges and features:
-
-```bash
-init-target --list
-```
-
-After scaffolding, exit the shell and re-run `firesim-lab` from the workspace —
-the new project will be auto-detected on the next launch.
+| Variable             | Description                                                                          |
+|----------------------|--------------------------------------------------------------------------------------|
+| `FIRESIM_IMAGE`      | Pinned image tag (default `pentarisc/firesim-lab:latest`)                            |
+| `CONTAINER_NAME`     | Derived from the workspace basename; one container per workspace                     |
+| `HOST_WORKSPACE_DIR` | The workspace directory on the host, bind-mounted as `/target`                       |
+| `HOST_AWS_DIR`       | Bind-mounted at `~/.aws` so `aws sso login` etc. persist credentials                 |
+| `HOST_SSH_DIR`       | Bind-mounted at `~/.ssh` so ssh / scp / git / rsync find keys at the conventional path |
+| `HOST_UID`, `HOST_GID` | Detected from the workspace mount; used by the entrypoint to drop privileges       |
 
 ---
 
-### Building and running
+## Acknowledgements & non-affiliation
 
-Once inside the container shell (firesim-lab prompt is shown):
+firesim-lab stands on the shoulders of two outstanding open-source projects
+from UC Berkeley:
 
-```bash
-cd /target/my-design
-source env.sh
-make compile    # generate Verilog
-make verilator    # compile simulation binary
-make run          # run simulation
-```
+- [**FireSim**](https://fires.im) — the cycle-accurate, FPGA-accelerated
+  hardware simulation platform. firesim-lab uses Golden Gate (MIDAS) and
+  FireSim's bridge infrastructure as shipped, with no modifications to the
+  FAME-1 transform pipeline, decoupling, or multi-clock handling.
+- [**Chipyard**](https://chipyard.readthedocs.io) — the integrated SoC
+  research and development framework. The bridges vendored under `lib/`
+  (UART, BlockDevice, …) originate from Chipyard / firechip.
 
-Exiting the shell with `exit` returns you to the host but leaves the container
-running. Re-running `firesim-lab` from the same workspace re-enters it instantly.
+We are deeply grateful to the FireSim and Chipyard teams for their work,
+and for releasing it under permissive open-source licences that make
+projects like this possible.
 
----
+The one piece of firesim-lab that is *not* derived from upstream is the
+`fslab` CLI and its associated project lifecycle (templates, registry,
+build/run orchestration, AWS F2 remote build and run pipelines). These
+were re-imagined from the ground up to make FireSim approachable to users
+who want to simulate plain Verilog / SystemVerilog without learning Chisel
+or Scala.
 
-### Available commands
-
-| Command | Description |
-|---|---|
-| `firesim-lab` | Start container (or enter if already running) |
-| `firesim-lab --down` | Stop and remove the container |
-| `firesim-lab --pull` | Pull the latest image and restart |
-| `firesim-lab --reconfigure` | Re-prompt all workspace settings |
-| `firesim-lab --status` | Show container status for this workspace |
-| `firesim-lab --clean-cache` | Remove SBT and ccache volumes (forces re-download) |
-| `firesim-lab --help` | Show usage information |
-
-Multiple workspaces are fully supported — each gets its own container named
-`firesim-lab-<workspace>` and its own `.firesim-lab.env`. Containers are
-isolated and can run simultaneously.
+**firesim-lab is an independent project. It is not affiliated with,
+endorsed by, or supported by the FireSim or Chipyard projects, UC Berkeley,
+or the Berkeley Architecture Research group.** Issues with firesim-lab
+should be reported here, not to the upstream projects.
 
 ---
-
-**What is ephemeral vs. persistent:**
-
-| Location | Ephemeral? | Notes |
-|---|---|---|
-| `/opt/firesim/` | Immutable image | Never written to during builds |
-| `/opt/firesim-lab/` | Immutable image | Never written to during builds |
-| GoldenGate symlinks in `/opt/firesim/sim/firesim-lib/` | Re-created each `make compile` | Cheap; auto-recreated by `firesim_target_symlink_hook` |
-| `/target` | **Persistent** (mounted volume) | Firesim target project created here |
-| SBT Ivy/Coursier cache | Baked into image | Pre-warmed in Dockerfile |
-
----
-
-## Common Bridge Library
-
-`targets/common/` is the shared bridge library. It contains:
-
-- **Scala bridge stubs** — the target-side Chisel `Bridge` annotations
-  (copied from firechip; package-renamed to `firechip.bridgestubs`)
-- **GoldenGate BridgeModule Scala** — the host-side compiler passes,
-  symlinked into `firesim-lib` at elaboration time
-- **C++ bridge drivers** — compiled into the simulator binary
-- **Makefrag fragments** — opt-in per bridge; included by each target's
-  `config.mk`
-
-Targets access the common library two ways:
-
-1. **SBT:** `build.sbt` declares `.dependsOn(common)` so bridge Scala is
-   on the compile classpath.
-2. **Make:** `config.mk` includes the relevant `common/makefrag/*.mk`
-   fragments which append C++ sources and compiler defines.
-
----
-
-## Creating a New Target
-
-### CLI Reference
-
-```
-Usage: init-target [OPTIONS]
-
-  Generate a self-contained FireSim target project outside firesim-lab.
-
-Options:
-  -n, --name NAME                 Target project name (lowercase, hyphens OK).
-                                  e.g. my-baremetal  [required]
-
-  -o, --output-dir DIR            Parent directory to create the project in.
-                                  Project appears at <DIR>/<name>/.
-                                  [default: current directory]
-
-  --lab-root PATH                 Path to firesim-lab repo. Written into
-                                  env.sh and build.sbt.
-                                  [default: /opt/firesim-lab]
-
-  --firesim-root PATH             Path to firesim checkout. Written into
-                                  env.sh and build.sbt.
-                                  [default: /opt/firesim]
-
-  --sbt-version VER               SBT version for project/build.properties.
-                                  Must match firesim's version exactly.
-                                  [default: 1.9.7]
-
-  -p, --package PKG               Scala package name.
-                                  [default: lowerCamelCase of --name]
-
-  -d, --design CLASS              Top-level Chisel module class name.
-                                  [default: <PascalCaseName>Top]
-
-  -b, --bridge BRIDGE[,BRIDGE...] Bridge(s) to enable. Repeat the flag or
-                                  comma-separate: --bridge uart,fased
-                                  Use --list to discover available bridges.
-
-  -f, --feature FEATURE[,...]     Feature(s) to enable. Repeat or
-                                  comma-separate.
-                                  Use --list to discover available features.
-
-  --platform PLATFORM[,...]       Simulation platform(s) to generate configs
-                                  for: verilator, vcs, f2.
-                                  Repeat or comma-separate.
-                                  [default: verilator]
-
-  --blackbox-name MODULE          Verilog BlackBox module name. Implies
-                                  --feature verilog-blackbox.
-                                  [default: <PascalCaseName>DUT]
-
-  --axi-addr-width BITS           AXI4 address width in bits. Applies when
-                                  the fased bridge or verilog-blackbox feature
-                                  is enabled.  [default: 32; range: 12–64]
-
-  --axi-data-width BITS           AXI4 data bus width in bits.
-                                  [default: 64; choices: 32,64,128,256,512]
-
-  --axi-id-width BITS             AXI4 ID field width in bits.
-                                  [default: 4; range: 1–16]
-
-  --force                         Overwrite an existing project directory
-                                  without prompting.
-
-  --dry-run                       Print what would be generated without
-                                  writing any files. Always run this first.
-
-  --list                          List all bridges, features, and platforms
-                                  discovered from registry.yaml, then exit.
-
-  -h, --help                      Show this message and exit.
-```
-
-#### Available bridges
-
-| ID | Label | Description |
-|---|---|---|
-| `uart` | UART Bridge | Connects target UART TX/RX to host. Driver writes bytes to file or stdout. |
-| `fased` | FASED Memory Timing Model | AXI4 port → DRAM timing model on host. C++ driver auto-registered by base class. |
-| `blockdev` | Block Device Bridge | Request/response token bridge backed by a raw disk image on the host. |
-| `simplenic` | Simple NIC Bridge | Token-based network bridge for multi-node FireSim simulations. |
-
-#### Available features
-
-| ID | Label | Description |
-|---|---|---|
-| `verilog-blackbox` | Verilog BlackBox DUT | Generates a Chisel `BlackBox` wrapper + stub `.v` file sized to match enabled bridges. |
-| `multi-clock` | Multi-clock target | Adds a `RationalClockBridge` and a multi-clock `TargetTop` scaffold. |
-| `printf-synthesis` | Printf synthesis | Enables GoldenGate's printf synthesis pass for bridged `printf()` calls. |
-
-#### Runtime plusargs (by bridge)
-
-| Bridge | Plusarg | Description |
-|---|---|---|
-| `uart` | `+uart-loopback` | Echo TX back to RX (no file needed) |
-| `uart` | `+uart-out=<path>` | Write TX bytes to a file |
-| `fased` | `+mm-unified-latency=<n>` | Simple unified read/write latency model |
-| `fased` | `+dramsim` | Enable DRAMSim2 timing model |
-| `fased` | `+fased-init-depth=<n>` | Initial DRAM row-buffer fill depth |
-| `blockdev` | `+blkdev-in-mem=1` | In-memory block device (testing) |
-| `blockdev` | `+blkdev-img=<path>` | Path to a raw disk image |
-| `simplenic` | `+niclog=<path>` | Log NIC token traffic to file |
-| `simplenic` | `+nic-loopback` | Loopback NIC TX to RX (single-node test) |
-
-### Walkthrough
-
-```bash
-# 1. Discover what is available
-init-target --list
-
-# 2. Dry run first — see every file that would be created
-init-target --name my-baremetal \
-            --bridge uart,fased \
-            --feature verilog-blackbox \
-            --dry-run
-
-# 3. Generate the project
-init-target --name my-baremetal \
-            --output-dir ~/projects \
-            --bridge uart,fased \
-            --feature verilog-blackbox \
-            --blackbox-name BaremetalDUT
-
-# 4. Go to the project and implement your RTL
-cd ~/projects/my-baremetal
-# Edit src/main/scala/MyBaremetalTop.scala  — wire up AXI4 + UART
-# Edit src/main/resources/vsrc/BaremetalDUT.v  — your Verilog RTL
-
-# 5. Build and run (inside Docker with env.sh sourced)
-source env.sh
-make compile        # Chisel → FIRRTL → Golden Gate Verilog
-make verilator        # compile the Verilator simulator binary
-make run              # run the simulation
-
-# 6. Pass runtime plusargs
-make run ARGS="+uart-out=/tmp/uart.log +mm-unified-latency=50"
-
-# 7. Waveform debug
-make run-debug        # generates <design>.vpd in generated-src/
-```
-
-**Common invocation patterns:**
-
-```bash
-# Minimal — no bridges, no BlackBox
-init-target --name my-dsp
-
-# UART + FASED, Verilog BlackBox, Verilator only
-init-target --name my-baremetal \
-            --bridge uart,fased \
-            --feature verilog-blackbox
-
-# Full SoC — all bridges, VCS + Verilator, wide AXI4, custom names
-init-target --name my-soc \
-            --package mysoc \
-            --design MySoCTop \
-            --bridge uart,fased,blockdev \
-            --platform verilator,vcs \
-            --feature verilog-blackbox \
-            --axi-addr-width 40 \
-            --axi-data-width 128 \
-            --axi-id-width 6
-
-# Repeated-flag style (equivalent to comma-separated)
-init-target --name my-baremetal \
-            --bridge uart --bridge fased \
-            --platform verilator --platform vcs
-
-# Overwrite an existing project
-init-target --name my-baremetal --bridge uart,fased,blockdev --force
-```
-
-### Generated Project Layout
-
-Running `init-target` produces a fully self-contained project:
-
-```
-my-baremetal/
-│
-├── build.sbt                    ← SBT root; ProjectRef → firesim-lab + firesim
-├── project/build.properties     ← sbt.version (must match firesim's)
-├── env.sh                       ← sets FIRESIM_ROOT, FIRESIM_LAB_ROOT, SBT_COMMAND
-├── Makefile                     ← top-level build/run interface
-├── .gitignore
-│
-├── makefrag/                    ← the 4 .mk fragments FireSim requires
-│   ├── config.mk                ← paths, bridge opt-ins, SBT/generator vars
-│   ├── build.mk                 ← elaboration rule + firesim_target_symlink_hook
-│   ├── driver.mk                ← C++ source list + include paths
-│   └── metasim.mk               ← verilator, run-vcs, run-*-debug targets
-│
-└── src/main/
-    ├── scala/
-    │   ├── Generator.scala      ← GoldenGate generator entry point
-    │   ├── Configs.scala        ← target + platform Config classes
-    │   ├── MyBaremetalTop.scala ← Chisel top (wire up bridges here)
-    │   └── BaremetalDUT.scala   ← Chisel BlackBox wrapper (if --feature verilog-blackbox)
-    │
-    ├── resources/vsrc/
-    │   └── BaremetalDUT.v       ← Verilog stub — implement your RTL here
-    │
-    ├── goldengateimplementations/scala/
-    │   └── .gitkeep             ← place target-specific BridgeModule Scala here
-    │
-    └── cc/
-        └── firesim_top.cc       ← C++ simulation class; registers bridge drivers
-```
-
----
-
-## Building and Running a Target
-
-All commands are run from inside the generated project directory with
-`env.sh` sourced. There is no need to `cd` into the FireSim tree.
-
-```bash
-cd /my-target
-source env.sh
-
-make compile        # Run Chisel elaboration and Golden Gate compilation
-make verilator        # Compile the Verilator software simulator binary
-make vcs              # Compile with VCS (if installed)
-
-make run              # Run Verilator simulation
-make run-debug        # Run with waveform dump (.vpd)
-make run-vcs          # Run VCS simulation
-make run-vcs-debug    # Run VCS with waveform dump
-
-make clean            # Remove generated-src/ and all build artifacts
-make help             # Show all targets and enabled bridge plusargs
-```
-
-Pass extra simulator plusargs via `ARGS=`:
-
-```bash
-make run ARGS="+uart-out=/tmp/uart.log +mm-unified-latency=50"
-```
-
-Override the default timeout (cycles before the simulation is forcibly
-terminated — useful in CI):
-
-```bash
-make run ARGS="+timeout=10000000"
-```
-
----
-
-## Extending the Framework
-
-### Adding a Bridge to the Registry
-
-Edit `targets/common/registry.yaml`. Add a block under `bridges:` following
-the existing schema. The generator script discovers it automatically on the
-next run — no changes to the script or templates are needed.
-
-```yaml
-bridges:
-  - id: mybridge
-    label: My Custom Bridge
-    description: >
-      One-sentence description shown in --list output.
-    makefrag: mybridge.mk        # file under targets/common/makefrag/
-    cpp_define: ENABLE_MYBRIDGE_BRIDGE
-    cpp_header: mybridge.h       # under targets/common/src/main/cc/bridges/
-    gg_scala_dir: null
-    max_instances: 1
-    driver_class: mybridge_t
-    constructor_template: "new mybridge_t(*this, {struct}, {idx}, {args})"
-    scala_bridge_package: chirechip.bridgestubs
-    runtime_plusargs:
-      - flag: "+mybridge-opt=<val>"
-        description: "Description of this plusarg"
-    requires: []
-```
-
-Then add the corresponding files:
-
-- `targets/common/makefrag/mybridge.mk` — appends `mybridge.cc` to
-  `COMMON_DRIVER_CC` and sets `-DENABLE_MYBRIDGE_BRIDGE`
-- `targets/common/src/main/cc/bridges/mybridge.{cc,h}` — C++ driver
-- `targets/common/src/main/scala/bridges/MyBridge.scala` — Chisel stub
-- `targets/common/src/main/goldengateimplementations/scala/MyBridgeModule.scala`
-  — host-side GoldenGate BridgeModule
-
-### Adding a Template
-
-To generate an additional file for every new target:
-
-1. Create `scripts/templates/myfile.ext.j2` using any context variable
-   already in the `ctx` dict (see `init_target.py` for the full list).
-2. Add one `write_file(...)` call in the "Generate files" section of
-   `init_target.py`.
-
-That's all. The Jinja2 environment picks up templates by filename
-automatically.
-
----
-
-## Environment Variables
-
-| Variable | Set by | Description |
-|---|---|---|
-| `FIRESIM_ROOT` | `env.sh` / Docker | Path to the FireSim checkout. Default: `/opt/firesim` |
-| `FIRESIM_LAB_ROOT` | `env.sh` / Docker | Path to this repo. Default: `/opt/firesim-lab` |
-| `TARGET_ROOT` | `env.sh` | Absolute path to the target project root |
-| `GENERATED_DIR` | `env.sh` | Output directory for elaboration artifacts and simulator binary. Default: `$TARGET_ROOT/generated-src` |
-| `SBT_COMMAND` | `env.sh` | Overrides FireSim's internal SBT invocation to use the target's `build.sbt`. Set automatically — do not override manually. |
-| `SBT_OPTS` | `env.sh` | JVM options passed to SBT. Default: `-Xmx4g -Xss8m -Dsbt.supershell=false` |
 
 ## Licensing
 
 This project is licensed under the Apache License 2.0.
 
-It includes third-party components that are licensed under their respective open-source licenses. 
-All third-party license texts and attributions are provided in the `licenses/` directory.
+It includes third-party components that are licensed under their respective
+open-source licenses. All third-party license texts and attributions are
+provided in the [licenses/](licenses/) directory.
 
-Unless otherwise noted, modifications and original code in this repository are licensed under the Apache License 2.0.
+Unless otherwise noted, modifications and original code in this repository
+are licensed under the Apache License 2.0.
