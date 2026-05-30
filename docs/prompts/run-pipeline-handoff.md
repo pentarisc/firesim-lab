@@ -356,7 +356,7 @@ pipelines.
 
 Build-side `host` and run-side `host` then point to different concrete
 instance configs naturally — `z1d.2xlarge` for synthesis,
-`f2.4xlarge` for runtime — without any schema gymnastics.
+`f2.6xlarge` for runtime — without any schema gymnastics.
 
 The build side already follows "leave as found" lifecycle semantics
 (launched→terminate, started-from-stopped→stop, found-running→leave).

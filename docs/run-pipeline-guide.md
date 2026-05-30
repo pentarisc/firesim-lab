@@ -37,7 +37,7 @@ target:
       iam_instance_profile: fslab-fpga-runner
       lifecycle: spot_one_time
       ami_id: ami-082c5db2375456e1a
-      instance_type: f2.4xlarge
+      instance_type: f2.6xlarge
       ssh_key: ~/.ssh/fslab_ed25519
       ssh_user: ubuntu
       key_name: firesim-lab
