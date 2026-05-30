@@ -1,12 +1,19 @@
 // =============================================================================
 //  AXIUARTPrinter.v — verilog-blackbox example DUT
 //
-//  Issues a single AXI4 read burst (1 beat, 8 bytes) from address 0x0 and
-//  serialises the returned bytes over UART 8N1 at 115200 baud.
+//  Sequentially reads DATA_W-bit words from FASED memory, starting at address
+//  0x0 and advancing one word per beat, and serialises each word's bytes over
+//  UART 8N1. It never stops on its own — bound the run with the simulator's
+//  +max-cycles to print as much of the pre-loaded payload as you need.
 //
 //  Pre-load FASED memory at address 0 with your payload.
-//  Default FASED uninitialised fill (0xDEADBEEF_DEADBEEF) is useful for
-//  smoke-testing that the AXI4 → FASED → UART pipeline is working.
+//  Beyond the loaded region FASED returns its default uninitialised fill,
+//  which is handy for smoke-testing that the AXI4 → FASED → UART pipeline works.
+//
+//  AXI4 widths that map to FASED bridge parameters are parameterised
+//  (ADDR_W↔addr_bits, DATA_W↔data_bits, ID_W↔id_bits, USER_W↔user_bits). The
+//  AXI4 qualifier widths (lock/cache/prot/qos/region) are fixed by the protocol
+//  and hard-coded by the bridge, so they mirror those fixed widths here.
 // =============================================================================
 `timescale 1ns / 1ps
 
@@ -14,6 +21,7 @@ module AXIUARTPrinter #(
   parameter ADDR_W  = 32,
   parameter DATA_W  = 64,
   parameter ID_W    = 4,
+  parameter USER_W  = 1,
   parameter CLK_HZ  = 100_000_000,
   parameter BAUD    = 115_200
 )(
@@ -26,15 +34,23 @@ module AXIUARTPrinter #(
   output wire [7:0]           m_axi_awlen,
   output wire [2:0]           m_axi_awsize,
   output wire [1:0]           m_axi_awburst,
+  output wire                 m_axi_awlock,
+  output wire [3:0]           m_axi_awcache,
+  output wire [2:0]           m_axi_awprot,
+  output wire [3:0]           m_axi_awqos,
+  output wire [USER_W-1:0]    m_axi_awuser,
+  output wire [3:0]           m_axi_awregion,
   output wire                 m_axi_awvalid,
   input  wire                 m_axi_awready,
   output wire [DATA_W-1:0]    m_axi_wdata,
   output wire [DATA_W/8-1:0]  m_axi_wstrb,
   output wire                 m_axi_wlast,
+  output wire [USER_W-1:0]    m_axi_wuser,
   output wire                 m_axi_wvalid,
   input  wire                 m_axi_wready,
   input  wire [ID_W-1:0]      m_axi_bid,
   input  wire [1:0]           m_axi_bresp,
+  input  wire [USER_W-1:0]    m_axi_buser,
   input  wire                 m_axi_bvalid,
   output wire                 m_axi_bready,
 
@@ -44,12 +60,19 @@ module AXIUARTPrinter #(
   output reg  [7:0]           m_axi_arlen,
   output reg  [2:0]           m_axi_arsize,
   output reg  [1:0]           m_axi_arburst,
+  output wire                 m_axi_arlock,
+  output wire [3:0]           m_axi_arcache,
+  output wire [2:0]           m_axi_arprot,
+  output wire [3:0]           m_axi_arqos,
+  output wire [USER_W-1:0]    m_axi_aruser,
+  output wire [3:0]           m_axi_arregion,
   output reg                  m_axi_arvalid,
   input  wire                 m_axi_arready,
   input  wire [ID_W-1:0]      m_axi_rid,
   input  wire [DATA_W-1:0]    m_axi_rdata,
   input  wire [1:0]           m_axi_rresp,
   input  wire                 m_axi_rlast,
+  input  wire [USER_W-1:0]    m_axi_ruser,
   input  wire                 m_axi_rvalid,
   output reg                  m_axi_rready,
 
@@ -58,18 +81,37 @@ module AXIUARTPrinter #(
   input  wire                 uart_rxd
 );
 
+  localparam integer NBYTES     = DATA_W / 8;            // bytes per beat
+  localparam integer BYTE_IDX_W = $clog2(NBYTES + 1);    // holds 0 .. NBYTES
+  localparam [2:0]   AR_SIZE    = 3'($clog2(NBYTES));    // AXI4 size = log2(bytes)
+
   // ── Write channels — permanently tied off ────────────────────────────────
-  assign m_axi_awid    = {ID_W{1'b0}};
-  assign m_axi_awaddr  = {ADDR_W{1'b0}};
-  assign m_axi_awlen   = 8'd0;
-  assign m_axi_awsize  = 3'd0;
-  assign m_axi_awburst = 2'd1;
-  assign m_axi_awvalid = 1'b0;
-  assign m_axi_wdata   = {DATA_W{1'b0}};
-  assign m_axi_wstrb   = {(DATA_W/8){1'b0}};
-  assign m_axi_wlast   = 1'b0;
-  assign m_axi_wvalid  = 1'b0;
-  assign m_axi_bready  = 1'b1;
+  assign m_axi_awid     = {ID_W{1'b0}};
+  assign m_axi_awaddr   = {ADDR_W{1'b0}};
+  assign m_axi_awlen    = 8'd0;
+  assign m_axi_awsize   = 3'd0;
+  assign m_axi_awburst  = 2'd1;
+  assign m_axi_awlock   = 1'b0;
+  assign m_axi_awcache  = 4'd0;
+  assign m_axi_awprot   = 3'd0;
+  assign m_axi_awqos    = 4'd0;
+  assign m_axi_awuser   = {USER_W{1'b0}};
+  assign m_axi_awregion = 4'd0;
+  assign m_axi_awvalid  = 1'b0;
+  assign m_axi_wdata    = {DATA_W{1'b0}};
+  assign m_axi_wstrb    = {(DATA_W/8){1'b0}};
+  assign m_axi_wlast    = 1'b0;
+  assign m_axi_wuser    = {USER_W{1'b0}};
+  assign m_axi_wvalid   = 1'b0;
+  assign m_axi_bready   = 1'b1;
+
+  // ── Read address qualifiers — constant for a simple sequential reader ─────
+  assign m_axi_arlock   = 1'b0;
+  assign m_axi_arcache  = 4'd0;
+  assign m_axi_arprot   = 3'd0;
+  assign m_axi_arqos    = 4'd0;
+  assign m_axi_aruser   = {USER_W{1'b0}};
+  assign m_axi_arregion = 4'd0;
 
   // ── Main state machine ────────────────────────────────────────────────────
   localparam S_IDLE    = 3'd0;
@@ -77,11 +119,10 @@ module AXIUARTPrinter #(
   localparam S_R       = 3'd2;
   localparam S_TX_LOAD = 3'd3;
   localparam S_TX_WAIT = 3'd4;
-  localparam S_DONE    = 3'd5;
 
-  reg [2:0]        state;
-  reg [DATA_W-1:0] data_buf;
-  reg [3:0]        byte_idx;
+  reg [2:0]            state;
+  reg [DATA_W-1:0]     data_buf;
+  reg [BYTE_IDX_W-1:0] byte_idx;
 
   reg              tx_start;
   reg  [7:0]       tx_byte;
@@ -94,11 +135,11 @@ module AXIUARTPrinter #(
       m_axi_arid    <= {ID_W{1'b0}};
       m_axi_araddr  <= {ADDR_W{1'b0}};
       m_axi_arlen   <= 8'd0;
-      m_axi_arsize  <= 3'd3;   // 8 bytes
-      m_axi_arburst <= 2'd1;   // INCR
+      m_axi_arsize  <= AR_SIZE;       // one DATA_W-wide beat per read
+      m_axi_arburst <= 2'd1;          // INCR
       m_axi_rready  <= 1'b0;
       data_buf      <= {DATA_W{1'b0}};
-      byte_idx      <= 4'd0;
+      byte_idx      <= {BYTE_IDX_W{1'b0}};
       tx_start      <= 1'b0;
       tx_byte       <= 8'd0;
     end else begin
@@ -118,31 +159,29 @@ module AXIUARTPrinter #(
         end
         S_R: begin
           if (m_axi_rvalid && m_axi_rready) begin
-            data_buf     <= m_axi_rdata;
-            m_axi_rready <= 1'b0;
-            byte_idx     <= 4'd0;
-            state        <= S_TX_LOAD;
+            data_buf      <= m_axi_rdata;
+            m_axi_rready  <= 1'b0;
+            m_axi_araddr  <= m_axi_araddr + NBYTES;  // advance to next word
+            byte_idx      <= {BYTE_IDX_W{1'b0}};
+            state         <= S_TX_LOAD;
           end
         end
         S_TX_LOAD: begin
-          if (byte_idx < (DATA_W / 8)) begin
+          if (byte_idx < BYTE_IDX_W'(NBYTES)) begin
             tx_byte  <= data_buf[byte_idx*8 +: 8];
             tx_start <= 1'b1;
             state    <= S_TX_WAIT;
           end else begin
-            state <= S_DONE;
+            // Whole word sent — fetch the next one. The reader never stops on
+            // its own; bound the run with the simulator's +max-cycles.
+            state <= S_IDLE;
           end
         end
         S_TX_WAIT: begin
           if (tx_done) begin
-            byte_idx <= byte_idx + 4'd1;
+            byte_idx <= byte_idx + 1'b1;
             state    <= S_TX_LOAD;
           end
-        end
-        S_DONE: begin
-          // All bytes sent.  Park here.
-          // The UARTBridge will have forwarded all bytes to the host.
-          state <= S_DONE;
         end
         default: state <= S_IDLE;
       endcase

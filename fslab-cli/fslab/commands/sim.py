@@ -264,7 +264,8 @@ def _ensure_compiled(
 
     # --- C++ driver ---
     if not skip_driver:
-        _run_cmake_make(config=config, project_root=project_root, jobs=4, sm=sm, build_type=build_type)
+        _run_cmake_make(config=config, project_root=project_root, jobs=4,
+                        extra_args="", debug=False, sm=sm, build_type=build_type)
 
     # Persist updated compile state
     import time
