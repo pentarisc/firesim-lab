@@ -97,7 +97,7 @@ COMPOSE_URL="${REPO_RAW}/docker/docker-compose.yaml"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yaml"
 
 DEFAULT_IMAGE="pentarisc/firesim-lab:latest"
-DEFAULT_VERILATOR_THREADS=$(nproc 2>/dev/null || echo 4)
+DEFAULT_VERILATOR_THREADS=$(sysctl -n hw.logicalcpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 DEFAULT_MEMORY_LIMIT="16g"
 DEFAULT_MEMORY_RESERVE="8g"
 # GID of the firesim-lab-cache group baked into the Docker image.
@@ -276,7 +276,10 @@ _detect_projects() {
 
 echo "$(_cyan "→ Scanning workspace for firesim-lab projects...")"
 
-mapfile -t DETECTED < <(_detect_projects)
+DETECTED=()
+while IFS= read -r _line; do
+  [[ -n "$_line" ]] && DETECTED+=("$_line")
+done < <(_detect_projects)
 
 PROJECT_NAME=""   # empty = new workspace / no project selected
 
@@ -384,7 +387,11 @@ HOST_GID=$(id -g)
 # access to pre-warmed cache directories.  It never leaks to the host, so a
 # collision is harmless in practice — we warn rather than abort.
 CACHE_GID="${CACHE_GID:-$DEFAULT_CACHE_GID}"
-_conflicting_group=$(getent group "${CACHE_GID}" 2>/dev/null | cut -d: -f1 || true)
+if command -v getent >/dev/null 2>&1; then
+  _conflicting_group=$(getent group "${CACHE_GID}" 2>/dev/null | cut -d: -f1 || true)
+else
+  _conflicting_group=""
+fi
 if [[ -n "$_conflicting_group" ]]; then
   echo "  $(_yellow "⚠  Host GID ${CACHE_GID} is already used by group '${_conflicting_group}'.")"
   echo "     The container uses this GID internally for cache directory access."
@@ -548,7 +555,7 @@ _enter_shell() {
   echo "  $(_bold "$(_cyan "[ ENTERING CONTAINER SHELL — type 'exit' to return to host ]")")"
   echo ""
   local rc
-  rc=$(mktemp)
+  rc=$(mktemp "${TMPDIR:-/tmp}/firesim-lab-rc.XXXXXX")
   {
     echo 'source /etc/bash.bashrc 2>/dev/null'
     echo 'source ~/.bashrc 2>/dev/null'

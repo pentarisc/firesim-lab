@@ -1,63 +1,60 @@
 # Host Prerequisites
 
-firesim-lab ships its entire toolchain — Scala/SBT, Verilator, the FireSim Python environment, FPGA tooling — inside a single pinned Docker image. The host machine therefore stays deliberately thin: essentially just **Docker** (plus `curl` on Linux). Everything heavy runs in the container.
+firesim-lab ships its entire toolchain — Scala/SBT, Verilator, the FireSim Python environment, FPGA tooling — inside a single pinned Docker image. The host machine therefore stays deliberately thin: essentially just **Docker**. Everything heavy runs in the container.
 
 This page is the checklist to get your host ready *before* you install firesim-lab. For the actual install and first container start, continue to {doc}`/installation/index`. For why the toolchain is containerized at all and what lives where, see {doc}`/installation/host-vs-container`.
 
 ## Supported platforms
 
-Because the entire toolchain lives in the container, the only real platform requirement is a working Docker installation that can run Linux containers.
+Because the entire toolchain lives in a Linux container, every supported platform converges on the same thing: a Linux shell with Docker. Windows reaches that through WSL2; Linux and macOS get there directly. Once you are at that shell, the install and the `firesim-lab` workflow are **identical on all three** — the same `install.sh`, the same launcher.
 
 - **Linux** — any modern distribution with a current Docker Engine. The primary, most-tested platform.
-- **Windows 10 / 11** — via [Docker Desktop](https://www.docker.com/products/docker-desktop/) on the WSL2 backend. firesim-lab ships native PowerShell installer and launcher scripts, so you drive it from a normal Windows prompt — no manual WSL gymnastics required.
-- **macOS** — on the roadmap; not yet supported with first-class launcher scripts.
-
-The required software differs slightly per platform; both are covered below.
+- **Windows 10 (21H2+) / 11** — via **WSL2** (Windows Subsystem for Linux) with Docker Desktop's WSL2 backend. You install firesim-lab and run it *inside* a WSL2 Linux distro (Ubuntu), so from the container's point of view it is just Linux. There are no Windows-native firesim-lab scripts.
+- **macOS 12 (Monterey) or newer** — Intel or Apple Silicon, with Docker Desktop for Mac. The standard Linux installer runs directly in Terminal.
 
 ## Required software
 
-firesim-lab runs as a Docker Compose service. What you install to get there depends on your platform.
+firesim-lab runs as a Docker Compose service launched from a Linux shell. The prerequisites below get you to that shell on each platform. The detailed, step-by-step setup lives in {doc}`/installation/index` — this page only lists what must be in place.
 
-### On Linux
+### Linux and macOS
 
-You need exactly two things:
+Two things, in the shell you already have (bash on Linux, zsh on macOS):
 
-Docker Engine (with the Compose v2 plugin)
-: Docker Engine 20.10 or newer with the bundled `docker compose` (v2) plugin. Verify both:
+Docker
+: A running Docker Engine (Linux) or Docker Desktop (macOS) with the Compose v2 plugin. Verify:
 : ```bash
   docker --version
   docker compose version
   ```
-: If `docker compose version` errors, install the Compose plugin (`docker-compose-plugin` on most distributions) — the standalone legacy `docker-compose` binary is not required.
+: On Linux, install the Compose plugin (`docker-compose-plugin`) if `docker compose version` errors — the legacy standalone `docker-compose` binary is not required.
 
 curl
-: The installer is fetched and piped to your shell with `curl`, and the launcher uses it to download files. Verify:
-: ```bash
-  curl --version
-  ```
+: Used to fetch the installer and download files. Present by default on macOS; install via your package manager on Linux if missing. Verify with `curl --version`.
 
-The bootstrap installer checks for both and stops with a clear error if either is missing.
-
-**Run Docker without sudo.** The launcher and the container's bind-mount logic expect to invoke `docker` as your normal user. Add yourself to the `docker` group once (then log out and back in), and confirm it works:
+On **Linux**, also add yourself to the `docker` group once so the launcher can invoke Docker as your normal user (Docker Desktop on macOS handles this for you):
 
 ```bash
-sudo usermod -aG docker "$USER"
+sudo usermod -aG docker "$USER"   # then log out and back in
 docker run --rm hello-world
 ```
 
-### On Windows
+:::{note}
+**Apple Silicon (M-series).** The firesim-lab image is x86-64 (amd64) and runs under emulation on Apple Silicon, which is slower for SBT/Verilator builds. Enable Docker Desktop's **Use Rosetta for x86/amd64 emulation** for the best available speed (Intel Macs run the image natively). This is a performance caveat, not a blocker.
+:::
 
-Docker Desktop for Windows
-: [Docker Desktop](https://www.docker.com/products/docker-desktop/) on the **WSL2 backend** (the default). It bundles the Compose v2 plugin, so there is nothing else to install for Compose. Docker Desktop must be **running** before you launch firesim-lab — the launcher checks for it and exits with a clear message if it is not. Verify from any prompt:
-: ```powershell
-  docker --version
-  docker compose version
-  ```
+### Windows (WSL2)
 
-Windows PowerShell 5.1
-: Built into Windows 10 and 11 — **no separate PowerShell 7 install is required**. The installer and the `firesim-lab` launcher are PowerShell scripts invoked through a `.cmd` shim that runs them with `-ExecutionPolicy Bypass`, so you do not need to change your machine's execution policy. You can run `firesim-lab` from `cmd.exe`, PowerShell, or Windows Terminal interchangeably.
+On Windows you do not run firesim-lab natively — you run it inside a WSL2 Linux distro, where the Linux prerequisites above apply. What Windows itself must provide:
 
-`curl` is **not** required on Windows — the installer uses PowerShell's built-in `Invoke-WebRequest`. There is also no `docker` group step: Docker Desktop manages access for your Windows user.
+- **Windows 10 version 21H2 or later, or Windows 11.**
+- **Hardware virtualization enabled** in BIOS/UEFI (Intel VT-x / AMD-V, sometimes labelled *Virtualization Technology* or *SVM*). This is the single most common blocker — WSL2 and Docker Desktop will not start without it.
+- **Administrator rights** for the one-time `wsl --install`.
+- **WSL2 with a Linux distro** (Ubuntu is installed by default by `wsl --install`).
+- **Docker Desktop for Windows** with the **WSL2 backend** enabled and **WSL Integration** turned on for your distro, so `docker` is available *inside* the WSL shell.
+
+:::{warning}
+Keep your workspace inside the **WSL2 Linux filesystem** (under your Linux home, `~`), **not** on a Windows drive (`/mnt/c/...`). The Windows↔Linux filesystem boundary is slow for the many-small-file operations SBT and Verilator perform, and a `/mnt/c` workspace appears root-owned inside the VM, which forces the container to run as root. A workspace under `~` is both fast and correctly owned. See {doc}`/installation/index` for the full walkthrough.
+:::
 
 ## Recommended hardware
 
@@ -87,33 +84,23 @@ A frequent source of confusion: none of the simulation toolchain belongs on the 
 - Python or the FireSim Python environment
 - The AWS CLI — even for FPGA builds and runs. The installer creates a self-contained `.aws` directory under your install location that is bind-mounted into the container, so you run `aws configure sso` / `aws sso login` *inside* the container. This is exactly why the AWS setup pages instruct you to run their commands in the container (see {doc}`aws/index`).
 - Xilinx Vivado or any FPGA vendor tooling
-- On Windows: `curl` and PowerShell 7 — the built-in `Invoke-WebRequest` and Windows PowerShell 5.1 are sufficient.
 
 ### git is optional
 
-`git` is **not** required to install or run firesim-lab — the installer downloads files directly rather than cloning. You only need `git` on the host if you intend to clone the firesim-lab repository for development, or to version-control your own scaffolded projects (recommended, since each `fslab new` project is a standalone repo). If you want it, `git --version` should succeed; install it from your distro package manager (Linux) or [git-scm.com](https://git-scm.com/download/win) (Windows).
+`git` is **not** required to install or run firesim-lab — the installer downloads files directly rather than cloning. You only need `git` if you intend to clone the firesim-lab repository for development, or to version-control your own scaffolded projects (recommended, since each `fslab new` project is a standalone repo). If you want it, `git --version` should succeed; install it via your Linux/WSL package manager or, on macOS, with Homebrew or the Xcode command-line tools.
 
 ## Quick verification
 
-Run this before moving on — every line should succeed.
-
-**Linux:**
+Run this in your target shell before moving on — bash on Linux, Terminal on macOS, or the **WSL Ubuntu shell** on Windows. Every line should succeed:
 
 ```bash
-docker --version          # Docker Engine present
-docker compose version    # Compose v2 plugin present
-curl --version            # curl present
-docker run --rm hello-world   # Docker usable without sudo
-```
-
-**Windows** (any prompt, with Docker Desktop running):
-
-```powershell
-docker --version          # Docker Desktop present
+docker --version          # Docker present
 docker compose version    # Compose v2 present
-$PSVersionTable.PSVersion # PowerShell 5.1+ (built in)
-docker run --rm hello-world   # Docker usable
+curl --version            # curl present
+docker run --rm hello-world   # Docker usable as your user
 ```
+
+On Windows, run these from *inside* WSL (not PowerShell). If `docker` is not found there, enable Docker Desktop's **WSL Integration** for your distro.
 
 ## Next steps
 

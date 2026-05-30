@@ -60,9 +60,37 @@ locally or full FPGA simulations on AWS F2 — with one CLI.
 
 ---
 
+## Prerequisites
+
+firesim-lab ships its entire toolchain — Java/SBT/Scala, Verilator, the FireSim
+Python environment, and FPGA tooling — inside a single Docker image, so the host
+stays thin. You need:
+
+- **Docker** (Engine on Linux, or Docker Desktop on macOS/Windows) with the
+  Compose v2 plugin, plus **`curl`**.
+- **A Linux shell to run from.** Linux and macOS have one natively; on **Windows**
+  you run firesim-lab inside a **WSL2** Ubuntu distro (with Docker Desktop's WSL
+  integration) — there are no Windows-native scripts.
+- **~16 GB RAM and ~30 GB free disk** recommended — Chisel elaboration and
+  Verilator builds are memory- and disk-heavy.
+- **FPGA-accelerated simulation only:** an AWS account with F2 access and the
+  required IAM setup. Metasimulation needs none of this.
+
+Full platform-by-platform setup — Docker install, WSL2, Apple Silicon notes,
+hardware sizing, and AWS — is in the
+[setup guide](https://firesim-lab.readthedocs.io/en/latest/setup/index.html).
+
+---
+
 ## Quick start
 
-You need Docker and `curl` on a Linux host. That's it.
+firesim-lab runs anywhere Docker does — **Linux, macOS, and Windows (via WSL2)**.
+All you need is Docker running and a terminal with `curl`. For platform-specific
+host setup — including installing Docker Desktop and setting up WSL2 on Windows —
+follow the [installation guide](https://firesim-lab.readthedocs.io/en/latest/installation/index.html).
+
+Once Docker is running, the workflow below is the same on every platform — run it
+from your terminal on Linux/macOS, or from your WSL shell on Windows:
 
 ```bash
 # 1. Install the launcher and pull the image
@@ -97,11 +125,10 @@ Full lifecycle reference is below.
 ## Table of Contents
 
 1. [Architecture](#architecture)
-2. [Prerequisites](#prerequisites)
-3. [Project lifecycle](#project-lifecycle)
-4. [Environment variables](#environment-variables)
-5. [Acknowledgements & non-affiliation](#acknowledgements--non-affiliation)
-6. [Licensing](#licensing)
+2. [Project lifecycle](#project-lifecycle)
+3. [Environment variables](#environment-variables)
+4. [Acknowledgements & non-affiliation](#acknowledgements--non-affiliation)
+5. [Licensing](#licensing)
 
 ---
 
@@ -157,19 +184,6 @@ Why three layers?
 | Project isolation      | Each project is its own folder / repo                      |
 | Docker immutability    | Layers 1 & 2 are read-only; only `/target` changes         |
 | Reproducible toolchain | Pinned image tag → identical Scala/Verilator/SBT versions  |
-
----
-
-## Prerequisites
-
-A Linux host with Docker and `curl` installed. Everything else — Java, SBT,
-Scala, Verilator, the FireSim Python environment, FPGA tooling — lives
-inside the image.
-
-For FPGA-accelerated simulation you also need an AWS account with access to
-F2 instances and an IAM setup for build and run hosts. See
-[docs/aws-setup.md](docs/aws-setup.md) and
-[docs/aws-setup-run.md](docs/aws-setup-run.md).
 
 ---
 
