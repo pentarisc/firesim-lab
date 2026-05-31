@@ -110,9 +110,9 @@ design:
 #  blackbox_ports:
 #    clk: "in clock"
 #    rst: "in reset"
-#    uart_tx: "out 1"
-#    uart_rx: "in 1"
-#    mem_addr: "out AXI_ADDR_WIDTH"
+#    uart_tx: "out logic"
+#    uart_rx: "in logic"
+#    mem_addr: "out logic[31:0]"
 
 ## Host side driver that controls the simulation. This is firesim related.
 ## Specifying an emulator as "verilator" or "vcs", "xceleium" will allow you to

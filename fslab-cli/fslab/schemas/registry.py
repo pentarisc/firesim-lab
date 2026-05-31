@@ -92,11 +92,16 @@ _ORIGINS = {"firesim", "fslab", "custom"}
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _validate_alpha_num(value: str, key: str, entity: str) -> str:
-    """[REG-01] Validate that a value matches the allowed character set."""
+def _validate_alpha_num(value: str, key: str, entity: str, code: str = "REG-01") -> str:
+    """[REG-01] Validate that a value matches the allowed character set.
+
+    ``code`` selects the tag emitted on failure so entities that document
+    their own id-format requirement (Bitbuilder=BB-01, Runner=RUN-01) surface
+    that code while sharing this implementation.
+    """
     if not rx.ID_RE.match(value):
         raise ValueError(
-            f"[REG-01] {entity} {key} '{value}' is invalid. " +
+            f"[{code}] {entity} {key} '{value}' is invalid. " +
             regex_msg(rx.ID_RE)
         )
     return value
@@ -352,7 +357,7 @@ class BitbuilderEntry(BaseModel):
     @classmethod
     def validate_id(cls, v: str) -> str:
         """[BB-01]"""
-        return _validate_alpha_num(v, "id", "Bitbuilder")
+        return _validate_alpha_num(v, "id", "Bitbuilder", code="BB-01")
 
     @field_validator("python_class", "args_schema", "params_schema", mode="before")
     @classmethod
@@ -427,7 +432,7 @@ class RunnerEntry(BaseModel):
     @classmethod
     def validate_id(cls, v: str) -> str:
         """[RUN-01]"""
-        return _validate_alpha_num(v, "id", "Runner")
+        return _validate_alpha_num(v, "id", "Runner", code="RUN-01")
 
     @field_validator("python_class", "args_schema", "params_schema", mode="before")
     @classmethod

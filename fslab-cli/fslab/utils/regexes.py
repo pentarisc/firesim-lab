@@ -16,10 +16,12 @@ PROJECT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 # [PROJ-02] Scala/Java-style qualified identifiers (dots allowed for packages)
 MODULE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
 
-# [PROJ-05] Blackbox port definition: "in|out <width_token>"
-#   width_token may be: clock, reset, a decimal number, or a Verilog identifier
+# [PROJ-05] Blackbox port definition: "in|out <type_token>"
+#   type_token may be: clock, reset, enable, or a Verilog type — e.g. logic,
+#   reg, logic[7:0]. Bare bit-widths (e.g. "out 1") are not accepted; use a
+#   Verilog type. The base-type / range semantics are enforced by [PROJ-09].
 BB_PORT_RE = re.compile(
-    r"^(in|out)\s+(clock|reset|\d+|[a-zA-Z_][a-zA-Z0-9_\[\]:]*)$"
+    r"^(in|out)\s+(clock|reset|enable|[a-zA-Z_][a-zA-Z0-9_\[\]:]*)$"
 )
 
 # [REG-01] IDs: alphanumerics, underscores, hyphens.

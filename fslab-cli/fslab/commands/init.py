@@ -185,9 +185,9 @@ def cmd_init(
 
     project_dir = Path(".").resolve()
 
-    ports: None
-    params: None
-    sources: None
+    ports = None
+    params = None
+    sources = None
 
     if top_module is not None:
 

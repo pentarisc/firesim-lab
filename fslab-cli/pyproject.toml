@@ -60,3 +60,18 @@ select = ["E", "F", "I", "UP"]
 python_version = "3.10"
 strict = true
 ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Pytest configuration
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["fslab/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-ra --strict-markers"
+markers = [
+    "unit: pure in-process unit test, no external tooling (default)",
+    "integration: drives a CLI command end-to-end against the filesystem",
+    "slow: exercises orchestration with mocked subprocess/AWS/SSH boundaries",
+]

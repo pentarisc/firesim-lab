@@ -152,7 +152,7 @@ class DesignConfig(BaseModel):
     ) -> Optional[dict[str, str]]:
         """
         [PROJ-05] Each value in blackbox_ports must match:
-                  ^(in|out)\\s+(clock|reset|\\d+|[a-zA-Z_][a-zA-Z0-9_[]:]*)$
+                  ^(in|out)\\s+(clock|reset|enable|[a-zA-Z_][a-zA-Z0-9_[]:]*)$
         """
         if v is None:
             return v
@@ -755,11 +755,11 @@ class FSLabConfig(BaseModel):
                 full_path = target_dir / f
 
                 if not full_path.is_file():
-                    raise ValueError(f"Source file '{full_path}' not found.")
+                    raise ValueError(f"[PROJ-14] Source file '{full_path}' not found.")
 
                 self.design.sources[i] = str(full_path)
         else:
             if self.design.type == "blackbox":
-                raise ValueError("Source files must be provided when design type is 'blackbox'.")
+                raise ValueError("[PROJ-14] Source files must be provided when design type is 'blackbox'.")
 
         return self
