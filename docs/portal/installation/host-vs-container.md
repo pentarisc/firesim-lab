@@ -38,7 +38,7 @@ Tiers 1 and 2 are immutable: they ship in the image and are identical for every 
 Only two things live on the host, and `install.sh` is responsible for both:
 
 - **Docker** — the engine that runs the container. Docker Engine on Linux, Docker Desktop on macOS/Windows. This is the one real dependency, confirmed in {doc}`/setup/host-prerequisites`.
-- **The `firesim-lab` launcher** — a small Bash script placed on your `PATH`. It starts/enters the container for the current workspace, writes per-workspace settings, and forwards a handful of lifecycle commands (`--down`, `--pull`, `--status`, `--reconfigure`, `--clean-cache`) to Docker Compose. It is the *only* firesim-lab command you run on the host.
+- **The `firesim-lab` launcher** — a small Bash script placed on your `PATH`. It starts/enters the container for the current workspace, writes per-workspace settings, and forwards a handful of lifecycle commands (`--down`, `--pull`, `--status`, `--reconfigure`, `--upgrade`, `--clean-cache`) to Docker Compose. It is the *only* firesim-lab command you run on the host.
 
 Alongside the launcher, the installer also stages the Compose file and a self-contained `.aws` and `.ssh` directory under the install location — but these are configuration the launcher consumes, not tools you invoke.
 

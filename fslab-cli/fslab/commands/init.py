@@ -23,6 +23,7 @@ from typing import Optional
 import json
 from jinja2 import Environment, PackageLoader, select_autoescape
 
+from fslab import __version__
 from fslab.utils.display import console, error, info, section, success, warning, regex_msg
 from fslab.utils.rtl_parser import extract_module_info
 import fslab.utils.regexes as rx
@@ -103,9 +104,8 @@ def cmd_new(
 
         # 4. Generate the state/meta file inside .fslab/
         meta_data = {
-            "project_name": project_name
-            # You can add other defaults here in the future if needed
-            # e.g., "fslab_version": "1.0.0"
+            "project_name": project_name,
+            "fslab_version": __version__,
         }
 
         with open(meta_file, "w") as f:
@@ -293,7 +293,8 @@ def _write_default_yaml(
             top_module=top_module,
             ports=ports,
             params=params,
-            sources=sources
+            sources=sources,
+            fslab_version=__version__,
         )
         out = project_dir / "fslab.yaml"
         out.write_text(content, encoding="utf-8")

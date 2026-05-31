@@ -9,6 +9,11 @@
 #  following the same schema.
 # =============================================================================
 
+# fslab_version: the registry schema version this file is authored for. fslab
+# refuses to load a registry whose MAJOR.MINOR differs from the installed CLI.
+# Bump this together with the fslab version whenever the registry schema changes.
+fslab_version: "0.7.0"
+
 bridges:
 
   - id: uart

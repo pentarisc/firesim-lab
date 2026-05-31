@@ -473,6 +473,13 @@ class FSLabConfig(BaseModel):
     dict (key: ``"registry"``).
     """
 
+    # Pins the project to the fslab CLI version that generated it.  Kept
+    # optional here so that legacy files (no version field) reach the dedicated
+    # version gate in parser.py and get a friendly migration message rather
+    # than a generic pydantic "field required" error.  Compatibility itself is
+    # enforced in parser.py before this model is validated.
+    fslab_version: Optional[str] = None
+
     project: ProjectConfig
     design: DesignConfig
     target: TargetConfig

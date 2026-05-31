@@ -31,7 +31,7 @@ set -euo pipefail
 _first_arg="${1:-}"
 _non_interactive_safe=0
 case "$_first_arg" in
-  -h|--help|--down|--pull|--clean-cache|--status) _non_interactive_safe=1 ;;
+  -h|--help|--down|--pull|--clean-cache|--status|--upgrade) _non_interactive_safe=1 ;;
 esac
 
 if [[ ! -t 0 && $_non_interactive_safe -eq 0 ]]; then
@@ -42,7 +42,7 @@ if [[ ! -t 0 && $_non_interactive_safe -eq 0 ]]; then
   It uses interactive prompts and must be run from a local installation.
   The correct entry point is install.sh:
 
-    curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/install.sh | bash
+    curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash
 
 PIPE_ERR
   exit 1
@@ -91,12 +91,44 @@ WORKSPACE_DIR="$(pwd)"
 WORKSPACE_BASENAME="$(basename "$WORKSPACE_DIR")"
 ENV_FILE="$WORKSPACE_DIR/.firesim-lab.env"
 
+# ── Explicit image override (CI / advanced) ──────────────────────────────────
+# Captured before the installed manifest is sourced below (the manifest also
+# sets FIRESIM_IMAGE).  A non-empty value here means the caller deliberately
+# pinned an image via the environment; it wins over the workspace/manifest pin
+# and bypasses the version-skew gate.
+_IMAGE_OVERRIDE="${FIRESIM_IMAGE:-}"
+
+# ── Installed manifest ────────────────────────────────────────────────────────
+# Written by install.sh.  Pins the firesim-lab version, git ref, and Docker
+# image this installation was set up for.  New workspaces inherit these values;
+# existing workspaces are checked against INSTALLED_VERSION for skew.
+MANIFEST_FILE="$INSTALL_DIR/.firesim-lab-installed"
+INSTALLED_VERSION=""
+INSTALLED_REF="main"
+INSTALLED_IMAGE=""
+if [[ -f "$MANIFEST_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$MANIFEST_FILE"
+  set +a
+  INSTALLED_VERSION="${FIRESIM_LAB_VERSION:-}"
+  INSTALLED_REF="${FIRESIM_LAB_REF:-main}"
+  INSTALLED_IMAGE="${FIRESIM_IMAGE:-}"
+  # Drop the manifest-sourced values so they cannot masquerade as a workspace
+  # pin (FIRESIM_LAB_VERSION) or an explicit override (FIRESIM_IMAGE) later.
+  unset FIRESIM_IMAGE FIRESIM_LAB_VERSION
+fi
+
 # ── Static configuration ──────────────────────────────────────────────────────
-REPO_RAW="https://raw.githubusercontent.com/pentarisc/firesim-lab/main"
+# REPO_RAW tracks the installed ref so any version-correct re-fetch (e.g. the
+# compose file below) stays pinned instead of silently pulling from `main`.
+REPO_RAW="https://raw.githubusercontent.com/pentarisc/firesim-lab/${INSTALLED_REF}"
 COMPOSE_URL="${REPO_RAW}/docker/docker-compose.yaml"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yaml"
 
-DEFAULT_IMAGE="pentarisc/firesim-lab:latest"
+# Default image for new workspaces: the installed image from the manifest,
+# falling back to :latest only when no manifest is present (legacy install).
+DEFAULT_IMAGE="${INSTALLED_IMAGE:-pentarisc/firesim-lab:latest}"
 DEFAULT_VERILATOR_THREADS=$(sysctl -n hw.logicalcpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 DEFAULT_MEMORY_LIMIT="16g"
 DEFAULT_MEMORY_RESERVE="8g"
@@ -132,6 +164,7 @@ usage() {
     $(_cyan "firesim-lab --down")           # stop the container
     $(_cyan "firesim-lab --pull")           # pull latest image and restart
     $(_cyan "firesim-lab --reconfigure")    # re-prompt all settings
+    $(_cyan "firesim-lab --upgrade")        # re-pin workspace to installed version
     $(_cyan "firesim-lab --status")         # show container status
     $(_cyan "firesim-lab --clean-cache")    # remove SBT/ccache volumes
     $(_cyan "firesim-lab --help")           # show this message
@@ -157,6 +190,7 @@ DO_PULL=0
 DO_CLEAN_CACHE=0
 DO_RECONFIGURE=0
 DO_STATUS=0
+DO_UPGRADE=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -166,6 +200,7 @@ for arg in "$@"; do
     --clean-cache)  DO_CLEAN_CACHE=1 ;;
     --reconfigure)  DO_RECONFIGURE=1 ;;
     --status)       DO_STATUS=1 ;;
+    --upgrade)      DO_UPGRADE=1 ;;
     *)
       echo "$(_red "Unknown option:") $arg"
       usage
@@ -340,12 +375,95 @@ if [[ -f "$ENV_FILE" && $DO_RECONFIGURE -eq 0 ]]; then
   echo ""
 fi
 
-if [[ $_env_loaded -eq 0 || $DO_RECONFIGURE -eq 1 ]]; then
-  # ── Docker image ──────────────────────────────────────────────────────────────
-  if [[ -z "${FIRESIM_IMAGE:-}" ]]; then
-    read -e -p "  $(_bold "Docker image name:tag") [$DEFAULT_IMAGE]: " FIRESIM_IMAGE
+# The version this workspace was pinned to (empty for legacy env files written
+# before version pinning existed).
+WORKSPACE_VERSION="${FIRESIM_LAB_VERSION:-}"
+
+# An explicit FIRESIM_IMAGE env override always wins over the workspace pin.
+if [[ -n "$_IMAGE_OVERRIDE" ]]; then
+  FIRESIM_IMAGE="$_IMAGE_OVERRIDE"
+fi
+
+# ── Version-skew gate (fail-safe) ─────────────────────────────────────────────
+# A workspace is pinned to the firesim-lab version that created it.  Running an
+# existing workspace against a different installed version is refused — the host
+# launcher/compose and the container image are a matched set, and host↔container
+# backward compatibility is not guaranteed.  The remedy is an explicit
+# `firesim-lab --upgrade` (adopt the installed version) or reinstalling the
+# version this workspace was pinned to.  Skipped for --upgrade/--reconfigure
+# (which re-pin deliberately) and when an explicit FIRESIM_IMAGE override is set.
+if [[ $_env_loaded -eq 1 && $DO_UPGRADE -eq 0 && $DO_RECONFIGURE -eq 0 \
+      && -z "$_IMAGE_OVERRIDE" && -n "$INSTALLED_VERSION" \
+      && "$WORKSPACE_VERSION" != "$INSTALLED_VERSION" ]]; then
+  echo "  $(_red "✗ firesim-lab version mismatch.")"
+  echo ""
+  echo "     This workspace is pinned to : $(_bold "${WORKSPACE_VERSION:-<unknown / legacy>}")"
+  echo "     Installed version is        : $(_bold "${INSTALLED_VERSION}")"
+  echo ""
+  echo "     The host scripts and the container image must match.  Choose one:"
+  echo ""
+  echo "       $(_cyan "firesim-lab --upgrade")   migrate this workspace to ${INSTALLED_VERSION}"
+  echo "                              (re-pins the image; preserves your other settings)"
+  echo ""
+  if [[ -n "$WORKSPACE_VERSION" ]]; then
+  echo "       or reinstall the matching version to keep this workspace unchanged:"
+  echo "       $(_cyan "curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash -s -- v${WORKSPACE_VERSION}")"
+  echo ""
   fi
-  FIRESIM_IMAGE="${FIRESIM_IMAGE:-$DEFAULT_IMAGE}"
+  exit 1
+fi
+
+# ── Handle --upgrade ──────────────────────────────────────────────────────────
+# Re-pin this workspace's image + version to the installed manifest, preserving
+# all other settings (threads, memory, plugins, volumes, UID mapping).
+if [[ $DO_UPGRADE -eq 1 ]]; then
+  if [[ $_env_loaded -eq 0 ]]; then
+    echo "$(_red "Error:") No .firesim-lab.env found in $WORKSPACE_DIR — nothing to upgrade."
+    echo "Run 'firesim-lab' here first to create the workspace."
+    exit 1
+  fi
+  if [[ -z "$INSTALLED_IMAGE" || -z "$INSTALLED_VERSION" ]]; then
+    echo "$(_red "Error:") No installed manifest found ($MANIFEST_FILE)."
+    echo "Reinstall firesim-lab so the installed version is recorded, then retry."
+    exit 1
+  fi
+  if [[ "$WORKSPACE_VERSION" == "$INSTALLED_VERSION" ]]; then
+    echo "  $(_green "✓") Workspace already at the installed version ($INSTALLED_VERSION). Nothing to upgrade."
+    exit 0
+  fi
+  echo "  $(_yellow "⚠  Upgrading workspace pin:")"
+  echo "       version : ${WORKSPACE_VERSION:-<unknown>}  →  ${INSTALLED_VERSION}"
+  echo "       image   : ${FIRESIM_IMAGE:-<unknown>}  →  ${INSTALLED_IMAGE}"
+  echo ""
+  echo "  $(_yellow "Note:") if the SBT/Scala toolchain changed between versions, run"
+  echo "        $(_cyan "firesim-lab --clean-cache") afterwards to re-seed the build caches."
+  echo ""
+  read -p "     Proceed? [Y/n]: " yn
+  yn="${yn:-Y}"
+  if [[ ! "$yn" =~ ^[Yy]$ ]]; then
+    echo "  $(_yellow "Aborted — workspace left unchanged.")"
+    exit 0
+  fi
+  FIRESIM_IMAGE="$INSTALLED_IMAGE"
+  FIRESIM_LAB_VERSION="$INSTALLED_VERSION"
+  WORKSPACE_VERSION="$INSTALLED_VERSION"
+
+  # Remove any existing container so the lifecycle below recreates it on the
+  # newly-pinned image — a running or stopped container still uses the old one.
+  if docker ps -a --filter "name=^/${CONTAINER_NAME}$" -q | grep -q .; then
+    echo "  $(_cyan "→ Removing old container so it is recreated on the new image...")"
+    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  fi
+  echo ""
+fi
+
+if [[ $_env_loaded -eq 0 || $DO_RECONFIGURE -eq 1 ]]; then
+  # ── Docker image + version (pinned, not prompted) ─────────────────────────────
+  # New workspaces inherit the installed image/version from the manifest.  An
+  # explicit FIRESIM_IMAGE override (captured earlier) takes precedence.  The
+  # image is never prompted for: it is a matched pair with the host scripts.
+  FIRESIM_IMAGE="${_IMAGE_OVERRIDE:-$DEFAULT_IMAGE}"
+  FIRESIM_LAB_VERSION="${INSTALLED_VERSION:-${FIRESIM_LAB_VERSION:-unknown}}"
 
   # ── Verilator threads ─────────────────────────────────────────────────────────
   if [[ -z "${VERILATOR_THREADS:-}" ]]; then
@@ -404,6 +522,11 @@ unset _conflicting_group
 # ── Write .firesim-lab.env into the workspace ─────────────────────────────────
 echo "$(_cyan "→ Writing settings to $ENV_FILE...")"
 
+# Ensure the version pin is always defined before it is written (covers legacy
+# workspaces loaded on a host with no installed manifest, which skip both the
+# skew gate and the settings-prompt block above).
+FIRESIM_LAB_VERSION="${FIRESIM_LAB_VERSION:-${INSTALLED_VERSION:-unknown}}"
+
 cat > "$ENV_FILE" <<ENV
 # ===========================================================================
 # .firesim-lab.env — workspace settings for firesim-lab
@@ -415,6 +538,11 @@ cat > "$ENV_FILE" <<ENV
 # ===========================================================================
 
 # ── Docker image and container ──────────────────────────────────────────────
+# FIRESIM_LAB_VERSION pins this workspace to the firesim-lab version that
+# created it.  The launcher refuses to start if the installed version differs
+# (run 'firesim-lab --upgrade' to migrate).  Keeping it alongside the image
+# also aids workspace migration between hosts.
+FIRESIM_LAB_VERSION=${FIRESIM_LAB_VERSION}
 FIRESIM_IMAGE=${FIRESIM_IMAGE}
 CONTAINER_NAME=${CONTAINER_NAME}
 
@@ -473,6 +601,7 @@ echo ""
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo "  $(_bold "Configuration")"
 echo "  ─────────────────────────────────────────────────────────"
+echo "  Version        : $(_cyan "${FIRESIM_LAB_VERSION:-unknown}")"
 echo "  Image          : $(_cyan "$FIRESIM_IMAGE")"
 echo "  Container      : $CONTAINER_NAME"
 echo "  Workspace      : $WORKSPACE_DIR  →  /target"
@@ -497,7 +626,9 @@ _try_pull() {
     if docker image inspect "$FIRESIM_IMAGE" &>/dev/null; then
       echo "  $(_green "✓") Image pulled successfully."
     else
-      echo "  $(_yellow "⚠  Pull failed — docker-compose will attempt a local build.")"
+      echo "  $(_red "✗  Pull failed — the image could not be retrieved.")"
+      echo "     This compose file is pull-only (no local build).  Check the image"
+      echo "     name/tag, your network, and 'docker login' if it is private."
     fi
   fi
 }
@@ -512,7 +643,7 @@ if ! docker image inspect "$FIRESIM_IMAGE" &>/dev/null; then
     if [[ "$yn" =~ ^[Yy]$ ]]; then
       _try_pull
     else
-      echo "  $(_yellow "⚠  Skipping pull — will attempt local build if needed.")"
+      echo "  $(_yellow "⚠  Skipping pull — container start will fail if the image is absent.")"
     fi
   fi
 else

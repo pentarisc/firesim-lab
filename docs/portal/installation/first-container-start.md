@@ -92,6 +92,7 @@ The first run is interactive; day-to-day you use the launcher's subcommands from
 | `firesim-lab --down` | Stop and remove the container for this workspace |
 | `firesim-lab --pull` | Pull the latest image and restart |
 | `firesim-lab --reconfigure` | Re-prompt the first-run settings and rewrite `.firesim-lab.env` |
+| `firesim-lab --upgrade` | Re-pin this workspace to the installed firesim-lab version (see {doc}`versioning`) |
 | `firesim-lab --status` | Show the container's status for this workspace |
 | `firesim-lab --clean-cache` | Remove this workspace's SBT/ccache volumes (forces re-seed) |
 | `firesim-lab --help` | Show usage |

@@ -209,13 +209,14 @@ firesim-lab --down          # stop the container for the current workspace
 firesim-lab --clean-cache   # remove this workspace's SBT/ccache volumes
 ```
 
-The full set of launcher subcommands is documented in {doc}`first-container-start`.
+The full set of launcher subcommands is documented in {doc}`first-container-start`. For upgrading to a newer firesim-lab release — and migrating an existing workspace and its `fslab.yaml` — see {doc}`versioning`.
 
 ## What's next
 
 - {doc}`host-vs-container` — what runs where, and why the toolchain is containerized.
 - {doc}`mountpoints` — how host paths map into the container, plus the environment-variable reference.
 - {doc}`first-container-start` — a step-by-step of your first `firesim-lab` run.
+- {doc}`versioning` — the versioning scheme, and how to upgrade the install, a workspace, and a project.
 - {doc}`/quickstart/index` — scaffold and simulate your first design.
 
 ```{toctree}
@@ -224,4 +225,5 @@ The full set of launcher subcommands is documented in {doc}`first-container-star
 host-vs-container
 mountpoints
 first-container-start
+versioning
 ```

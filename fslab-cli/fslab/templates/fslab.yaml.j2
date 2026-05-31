@@ -59,6 +59,14 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
+# fslab_version: pins this project to the fslab CLI version that generated it.
+# fslab refuses to operate on a project whose MAJOR.MINOR differs from the
+# installed CLI. After upgrading firesim-lab, migrate this file per the
+# "Versioning & Upgrading" guide in the docs, then update this value.
+# ------------------------------------------------------------------------------
+fslab_version: "{{ fslab_version }}"
+
+# ------------------------------------------------------------------------------
 # project:  Top-level project metadata
 #   name          ^[a-zA-Z0-9_-]+$
 #   package_name  ^[a-zA-Z_][a-zA-Z0-9_.]*$  (dots OK for packages)

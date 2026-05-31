@@ -228,6 +228,7 @@ commands for the container itself:
 | `firesim-lab --down`         | Stop and remove the container                          |
 | `firesim-lab --pull`         | Pull the latest image and restart                      |
 | `firesim-lab --reconfigure`  | Re-prompt workspace settings                           |
+| `firesim-lab --upgrade`      | Re-pin this workspace to the installed version         |
 | `firesim-lab --status`       | Show container status for this workspace              |
 | `firesim-lab --clean-cache`  | Remove SBT and ccache volumes (forces re-download)     |
 | `firesim-lab --help`         | Show usage information                                 |

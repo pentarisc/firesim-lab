@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from fslab import __version__
 from fslab.schemas.registry import MasterRegistry, RegistryFile
 from fslab.schemas.parser import _get_live_config_model
 
@@ -51,6 +52,7 @@ def make_registry_file_dict() -> dict:
     """
     return copy.deepcopy(
         {
+            "fslab_version": __version__,
             "bridges": [
                 {
                     "id": "uart",
@@ -187,6 +189,7 @@ def make_project_dict(project_dir: str | Path, *, sources: list[str] | None = No
     """
     return copy.deepcopy(
         {
+            "fslab_version": __version__,
             "project": {
                 "name": "my-design-02",
                 "package_name": "com.example",

@@ -46,6 +46,11 @@ from pydantic import ValidationError, create_model, Field, model_validator
 from .registry import MasterRegistry, RegistryFile
 from .project import AdvancedConfig, FSLabConfig
 from .resolvers import BRIDGE_CFG_REGISTRY
+from fslab.utils.versioning import (
+    VERSION_FIELD,
+    check_project_version,
+    check_registry_version,
+)
 
 # Default registry path:
 _DEFAULT_REGISTRY = Path("/opt/firesim-lab/lib/registry.yaml")
@@ -76,6 +81,10 @@ def _load_registry_file(path: Path) -> RegistryFile:
             f"Registry file not found: {path}"
         )
     raw = _read_yaml(path)
+    # Refuse a registry whose MAJOR.MINOR does not match this CLI (and refuse
+    # legacy files with no version field) before structural validation, so the
+    # user gets a clear migration message instead of a schema error.
+    check_registry_version(raw.get(VERSION_FIELD), source=str(path))
     return RegistryFile.model_validate(raw)
 
 
@@ -316,6 +325,12 @@ def _internal_load_and_validate(
     # we can build the registry *before* fully validating the project.
     # ------------------------------------------------------------------
     raw_project: dict = _read_yaml(project_path)
+
+    # Refuse a project whose MAJOR.MINOR does not match this CLI (and refuse
+    # legacy files with no version field) before any further work, so the user
+    # gets a clear migration message instead of a downstream schema error.
+    check_project_version(raw_project.get(VERSION_FIELD), source=str(project_path))
+
     advanced_raw: dict = raw_project.get("advanced", {})
     advanced = AdvancedConfig.model_validate(advanced_raw)
 

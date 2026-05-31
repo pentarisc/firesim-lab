@@ -43,6 +43,21 @@ fi
 REPO_BASE="https://raw.githubusercontent.com/pentarisc/firesim-lab"
 REPO_RAW="${REPO_BASE}/${VERSION}"
 
+# ── Image tag + contract version resolution ───────────────────────────────────
+# The install ref maps to a Docker image tag and a firesim-lab contract version:
+#   v0.7.0  → image 0.7.0, version 0.7.0   (release: strip the leading 'v')
+#   main    → image latest, version main   (moving dev image)
+#   <other> → image <ref>,  version <ref>  (branch / sha)
+# Git tags are 'vX.Y.Z'; Docker tags and PEP 440 versions are 'X.Y.Z' (no 'v').
+# The leading 'v' is stripped exactly once, here at the boundary.
+IMAGE_REPO="pentarisc/firesim-lab"
+case "$VERSION" in
+  v[0-9]*) IMAGE_TAG="${VERSION#v}"; FIRESIM_LAB_VERSION="${VERSION#v}" ;;
+  main)    IMAGE_TAG="latest";       FIRESIM_LAB_VERSION="main" ;;
+  *)       IMAGE_TAG="$VERSION";      FIRESIM_LAB_VERSION="$VERSION" ;;
+esac
+FIRESIM_IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
+
 # ── Install location ──────────────────────────────────────────────────────────
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.firesim-lab}"
 
@@ -120,6 +135,46 @@ LAUNCHER_PATH="${INSTALL_DIR}/${LAUNCHER_SCRIPT}"
 chmod +x "$LAUNCHER_PATH"
 echo ""
 echo "  $(_green "✓") Made executable: $LAUNCHER_PATH"
+
+# ── Optional digest pinning ───────────────────────────────────────────────────
+# If the release published a versions.json at this ref, prefer its immutable
+# image digest (pentarisc/firesim-lab@sha256:...) over the mutable tag — Docker
+# tags can be overwritten, digests cannot.  Absent file → keep the tag (no-op).
+# This file is produced by the release CI after the image is built and pushed;
+# it does not exist for arbitrary branches/commits.
+#
+# Schema (flat JSON, single object):
+#   { "version": "0.7.0",
+#     "image":   "pentarisc/firesim-lab@sha256:<digest>",
+#     "firesim_commit": "<shortsha>" }
+_json_get() {
+  # Extract a flat top-level string value for key $1 from JSON file $2.
+  sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$2" | head -n1
+}
+VERSIONS_FILE="${INSTALL_DIR}/versions.json"
+if curl -fsSL "${REPO_RAW}/versions.json" -o "$VERSIONS_FILE" 2>/dev/null; then
+  _digest_image="$(_json_get image "$VERSIONS_FILE")"
+  if [[ -n "$_digest_image" ]]; then
+    FIRESIM_IMAGE="$_digest_image"
+    echo "  $(_green "✓") Pinned to image digest from versions.json"
+  fi
+else
+  rm -f "$VERSIONS_FILE" 2>/dev/null || true
+fi
+
+# ── Write installed manifest ──────────────────────────────────────────────────
+# Records what this installation was set up for.  The firesim-lab launcher reads
+# this to pin new workspaces to the installed image/version and to detect (and
+# refuse) version skew in existing workspaces.
+MANIFEST_FILE="${INSTALL_DIR}/.firesim-lab-installed"
+cat > "$MANIFEST_FILE" <<MANIFEST
+# firesim-lab installed manifest — written by install.sh on $(date "+%Y-%m-%d %H:%M")
+# Consumed by the firesim-lab launcher.  Do not edit by hand; re-run install.sh.
+FIRESIM_LAB_VERSION=${FIRESIM_LAB_VERSION}
+FIRESIM_LAB_REF=${VERSION}
+FIRESIM_IMAGE=${FIRESIM_IMAGE}
+MANIFEST
+echo "  $(_green "✓") Recorded installed version: ${FIRESIM_LAB_VERSION}  (${FIRESIM_IMAGE})"
 
 # ── Create self-contained AWS config directory ───────────────────────────────
 # Bind-mounted into the container as ~/.aws (HOME is fixed to /home/firesim-lab

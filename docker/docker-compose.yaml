@@ -71,20 +71,12 @@
 
 services:
   firesim-lab:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        FIRESIM_COMMIT:     ${FIRESIM_COMMIT:-main}
-        FIRESIM_LAB_COMMIT: ${FIRESIM_LAB_COMMIT:-main}
-        SBT_VERSION:        ${SBT_VERSION:-1.10.1}
-        JAVA_VERSION:       ${JAVA_VERSION:-17}
-        # CACHE_GID controls the group that owns all cache directories.
-        # Only override this when rebuilding locally AND the default GID (2543)
-        # conflicts with an existing group on your host.  Must match the value
-        # baked into the image if pulling from Docker Hub.
-        CACHE_GID:          ${CACHE_GID:-2543}
-
+    # No `build:` block — this is the end-user, pull-only compose file.  The
+    # image is pinned to a published version by FIRESIM_IMAGE (written into
+    # .firesim-lab.env by the firesim-lab launcher).  Building the image from
+    # source is a developer activity; use docker-compose-dev.yaml for that.
+    # Keeping build out of this file prevents a failed pull from silently
+    # rebuilding from `main` and tagging the result with a pinned version name.
     image: ${FIRESIM_IMAGE:-pentarisc/firesim-lab:latest}
     container_name: ${CONTAINER_NAME:-firesim-lab}
 

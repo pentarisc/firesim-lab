@@ -2,12 +2,12 @@
 #  docker-compose-dev.yaml — firesim-lab simulation environment yaml file for
 #                            local development before pushing docker changes to github
 #
-#  /opt/firesim-lab folder by binding local volume to facilitate local development. 
+#  /opt/firesim-lab folder by binding local volume to facilitate local development.
 #
 #  To launch: cd ~/pentarisc/projects/firesim-lab/docker && \
 #             docker compose -f docker-compose-dev.yaml up -d
 #
-#  To get a shell: docker exec -it firesim-lab-dev bash
+#  To get a shell: docker exec --user firesim-lab -it firesim-lab-dev bash
 #
 #
 #  Tier layout (all three tiers present at runtime):
@@ -44,6 +44,20 @@
 #  firesim-lab-cache (GID 2543 by default).  The setgid bit ensures that
 #  files created at runtime by the host user inherit GID 2543, keeping them
 #  writable by future container runs — with no per-start chown required.
+#
+#  AWS configuration (dev mode)
+#  ────────────────────────────
+#  In dev mode HOST_AWS_DIR is typically not exported, so the fallback
+#  ${HOME}/.firesim-lab/.aws is used — the same path install.sh creates on
+#  a normal install.  Override by exporting HOST_AWS_DIR before launching
+#  if you want to point at a different AWS config directory for dev work.
+#
+#  SSH key directory (dev mode)
+#  ────────────────────────────
+#  In dev mode HOST_SSH_DIR is typically not exported, so the fallback
+#  ${HOME}/.firesim-lab/.ssh is used — the same path install.sh creates on
+#  a normal install.  Override by exporting HOST_SSH_DIR before launching
+#  if you want to point at a different SSH key directory for dev work.
 #
 #  Required .env variables (written by run.sh into .firesim-lab.env):
 #    HOST_WORKSPACE_DIR  — absolute host path to the user's target project
@@ -127,6 +141,26 @@ services:
       - type: bind
         source: ${HOST_WORKSPACE_DIR:-${HOME}/pentarisc/projects/firesim-lab/examples}
         target: /target
+
+      # ── AWS configuration (bind mount) ────────────────────────────────────
+      # Mounted at ~/.aws so `aws configure` / `aws sso login` run inside the
+      # container persist credentials to the host.  Fallback default matches
+      # the path install.sh creates so dev sessions share the same AWS state
+      # as a normal install unless HOST_AWS_DIR is explicitly overridden.
+      - type: bind
+        source: ${HOST_AWS_DIR:-${HOME}/.firesim-lab/.aws}
+        target: /home/firesim-lab/.aws
+
+      # ── SSH keys (bind mount) ─────────────────────────────────────────────
+      # Mounted at ~/.ssh so ssh, scp, git, rsync, etc. discover keys at the
+      # conventional location.  Read-write so ssh can update known_hosts and
+      # so ssh-keygen can be run from inside the container; key files are
+      # still protected by their own 600 permissions.  Fallback default
+      # matches the path install.sh creates so dev sessions share the same
+      # SSH state as a normal install unless HOST_SSH_DIR is overridden.
+      - type: bind
+        source: ${HOST_SSH_DIR:-${HOME}/.firesim-lab/.ssh}
+        target: /home/firesim-lab/.ssh
 
       # ── SBT / Ivy artifact cache ──────────────────────────────────────────
       # Pre-warmed during image build; persisted across container restarts.

@@ -1073,6 +1073,12 @@ class RegistryFile(BaseModel):
     [REG-06] IDs must be unique per category within a single file.
     """
 
+    # Pins the registry to the fslab CLI version it was authored for.  Optional
+    # at the model level so legacy files reach the version gate in parser.py
+    # and get a friendly migration message; compatibility is enforced there
+    # before this model is validated.
+    fslab_version: Optional[str] = None
+
     bridges: list[BridgeEntry] = Field(default_factory=list)
     bitbuilders: list[BitbuilderEntry] = Field(default_factory=list)
     runners: list[RunnerEntry] = Field(default_factory=list)
