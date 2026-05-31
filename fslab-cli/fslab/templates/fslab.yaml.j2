@@ -252,8 +252,8 @@ design:
 #   bitbuilder_args  per-bitbuilder tunables; schema chosen by the platform's
 #                    bitbuilder. Most bitbuilders take {} today.
 #   host             host-acquisition config; discriminated by host.type.
-#                    Today: 'external' (SSH to a pre-provisioned box).
-#                    Reserved: 'ec2_launch' (framework-managed EC2).
+#                    'external'   — SSH to a host you provisioned yourself.
+#                    'ec2_launch' — framework-launched/torn-down EC2 instance.
 #   publish          post-build artifact handling; discriminated by publish.type.
 #                    Today: 'none', 'local_tarball', 'aws_afi'.
 #

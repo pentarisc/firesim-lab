@@ -75,6 +75,25 @@ chmod 600 ~/.ssh/fslab_ed25519
 
 The `--key-name` value (`firesim-lab`) maps to `key_name:` in `fslab.yaml`; the saved private-key path maps to `ssh_key:`. The account's **default VPC** is sufficient for fslab — you only need the instance reachable over inbound SSH (port 22), which the default security group permits from within the VPC; widen it to your workstation's IP if you launch into a security group that does not already allow SSH.
 
+### Alternative — generate the key locally and import it
+
+If you would rather hold the private key from the outset (it never transits AWS) or already have an SSH key you use, generate one locally and import only the **public** half:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/fslab_ed25519        # if you don't already have a key
+aws ec2 import-key-pair \
+    --key-name firesim-lab \
+    --public-key-material fileb://~/.ssh/fslab_ed25519.pub \
+    --region us-west-2 \
+    --profile $ADMIN_PROFILE
+```
+
+Either path leaves you with the same two `fslab.yaml` values: the EC2 key-pair name (`key_name:`) and the local private-key path (`ssh_key:`).
+
+:::{note}
+This key pair is for the `ec2_launch` host model, where AWS installs the public key on the instance at launch. For `host.type: external` — a host you provision yourself — there is **no** `key_name`; you install your public key in the host's `~/.ssh/authorized_keys` directly and point `ssh_key:` at the matching private key. See {doc}`/setup/external-host`.
+:::
+
 ## Step 4 — Build-host instance-profile role
 
 The build host needs S3 (to stage the design checkpoint) and EC2 FPGA (to register the AFI). These permissions are carried by an IAM role, attached to the instance through an instance profile.

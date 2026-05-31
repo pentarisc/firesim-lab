@@ -189,6 +189,8 @@ A discriminated union keyed on `type`. The build host is where Vivado runs.
 `remote_platform_path`
 : Absolute path to the platform HDK on the build host `[HMOD-04]`. Required for `external` — the framework ships no default because layout varies per install.
 
+See {doc}`/setup/external-host` for what a `type: external` build host must provide: SSH access, the platform HDK, the FPGA toolchain, and AWS credentials.
+
 #### `type: ec2_launch` — a framework-managed EC2 build host
 
 Two sub-modes selected by `instance_id`:

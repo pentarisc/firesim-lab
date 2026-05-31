@@ -44,6 +44,9 @@ You do not need to be an AWS expert, but it helps to recognize the handful of se
 EC2 (Elastic Compute Cloud)
 : Virtual machines. fslab launches an EC2 instance to build the bitstream and an F2 instance to run it. The **FPGA Developer AMI** — a prebuilt machine image with Xilinx Vivado, the AWS CLI, and the `aws-fpga` tooling — is what these instances boot from. New to EC2? Walk through AWS's [Get started with Amazon EC2](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EC2_GetStarted.html) tutorial (launch, connect, terminate) on a free-tier instance first.
 
+EC2 key pairs
+: How fslab authenticates over SSH to the build and run instances. You create one in {doc}`firesim-lab-aws-setup` (AWS generates it and you download the private key) or import a key you generated locally. A framework-launched (`ec2_launch`) instance trusts the key at launch; for a host you manage yourself ({doc}`/setup/external-host`) you install the public key on the host directly.
+
 EC2 FPGA images (AFI / AGFI)
 : When a build finishes, the design is registered as an **Amazon FPGA Image (AFI)**, identified by an **AGFI** id. The run host loads an AGFI onto the FPGA with `fpga-load-local-image`. AFIs are region-scoped, like other resources. For background on the FPGA workflow, see the [AWS EC2 FPGA Development Kit](https://github.com/aws/aws-fpga) repository and the [F2 Developer Kit documentation](https://awsdocs-fpga-f2.readthedocs-hosted.com/). fslab automates these steps for you — you do not run the kit by hand.
 

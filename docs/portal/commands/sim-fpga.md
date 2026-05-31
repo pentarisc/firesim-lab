@@ -78,6 +78,8 @@ Same discriminated union as `target.build.host` (`external` / `ec2_launch`) and 
 - A run host needs a **smaller IAM policy** than a build host — only `DescribeFpgaImages` + `AssociateFpgaImage`, so `fpga-load-local-image` can fetch and verify the AGFI. No S3 write, no `CreateFpgaImage`.
 - The run host **must** carry an `fpga_slot` block `[FSLOT-03]`.
 
+For provisioning a `type: external` run host (SSH access, the FPGA runtime tooling, and AWS credentials), see {doc}`/setup/external-host`.
+
 ### `host.fpga_slot:` — the FPGA slot
 
 ```yaml

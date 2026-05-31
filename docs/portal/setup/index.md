@@ -8,10 +8,12 @@ Work through the section in this order:
 
 1. {doc}`host-prerequisites` — the checklist for the host machine: Docker, curl, supported platforms, and recommended hardware. **Everyone needs this.**
 2. {doc}`aws/index` — prepare an AWS account, a login identity, and the IAM roles firesim-lab attaches to its EC2 build and run hosts. **FPGA path only** — skip it if you are only running metasimulations.
+3. {doc}`external-host` — provisioning a build or run host you manage yourself (the `external` host model), instead of letting fslab launch EC2. **FPGA path only, optional** — skip it if you use the framework-managed `ec2_launch` host.
 
 ```{toctree}
 :maxdepth: 2
 
 host-prerequisites
 aws/index
+external-host
 ```
