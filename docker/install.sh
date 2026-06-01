@@ -185,7 +185,12 @@ fi
 # Records what this installation was set up for.  The firesim-lab launcher reads
 # this to pin new workspaces to the installed image/version and to detect (and
 # refuse) version skew in existing workspaces.
-MANIFEST_FILE="${INSTALL_DIR}/.firesim-lab-installed"
+#
+# It MUST sit next to the launcher: the launcher resolves its own directory as
+# INSTALL_DIR and reads "$INSTALL_DIR/.firesim-lab-installed".  Since the
+# launcher lives at $INSTALL_DIR/docker/firesim-lab, the manifest belongs in
+# that same docker/ directory — not at the install root.
+MANIFEST_FILE="$(dirname "$LAUNCHER_PATH")/.firesim-lab-installed"
 cat > "$MANIFEST_FILE" <<MANIFEST
 # firesim-lab installed manifest — written by install.sh on $(date "+%Y-%m-%d %H:%M")
 # Consumed by the firesim-lab launcher.  Do not edit by hand; re-run install.sh.
