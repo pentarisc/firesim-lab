@@ -288,6 +288,40 @@ if [[ $DO_DOWN -eq 1 ]]; then
   exit 0
 fi
 
+# ── Version-skew gate (fail fast, before any prompt or output) ────────────────
+# A workspace is pinned to the firesim-lab version that created it.  Reject a
+# mismatched workspace up front — before the banner, project detection, or
+# loading settings — so the user is never asked to pick a project or shown stale
+# settings for a workspace that cannot run.  The host launcher/compose and the
+# container image are a matched set; host↔container backward compatibility is
+# not guaranteed.  Skipped for --upgrade/--reconfigure (which re-pin
+# deliberately) and when an explicit FIRESIM_IMAGE override is set.  Only the
+# version line is read here; the full settings load happens later.
+if [[ -f "$ENV_FILE" && $DO_UPGRADE -eq 0 && $DO_RECONFIGURE -eq 0 \
+      && -z "$_IMAGE_OVERRIDE" && -n "$INSTALLED_VERSION" ]]; then
+  _ws_version="$(sed -n 's/^[[:space:]]*FIRESIM_LAB_VERSION=//p' "$ENV_FILE" | tail -n1)"
+  _ws_version="${_ws_version%\"}"; _ws_version="${_ws_version#\"}"   # strip optional quotes
+  if [[ "${_ws_version:-}" != "$INSTALLED_VERSION" ]]; then
+    echo ""
+    echo "  $(_red "✗ firesim-lab version mismatch.")"
+    echo ""
+    echo "     This workspace is pinned to : $(_bold "${_ws_version:-<unknown / legacy>}")"
+    echo "     Installed version is        : $(_bold "${INSTALLED_VERSION}")"
+    echo ""
+    echo "     The host scripts and the container image must match.  Choose one:"
+    echo ""
+    echo "       $(_cyan "firesim-lab --upgrade")   migrate this workspace to ${INSTALLED_VERSION}"
+    echo "                              (re-pins the image; preserves your other settings)"
+    echo ""
+    if [[ -n "$_ws_version" ]]; then
+    echo "       or reinstall the matching version to keep this workspace unchanged:"
+    echo "       $(_cyan "curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash -s -- v${_ws_version}")"
+    echo ""
+    fi
+    exit 1
+  fi
+fi
+
 # ── Banner ────────────────────────────────────────────────────────────────────
 echo ""
 echo "  $(_bold "firesim-lab") — workspace: $(_cyan "$WORKSPACE_DIR")"
@@ -384,34 +418,9 @@ if [[ -n "$_IMAGE_OVERRIDE" ]]; then
   FIRESIM_IMAGE="$_IMAGE_OVERRIDE"
 fi
 
-# ── Version-skew gate (fail-safe) ─────────────────────────────────────────────
-# A workspace is pinned to the firesim-lab version that created it.  Running an
-# existing workspace against a different installed version is refused — the host
-# launcher/compose and the container image are a matched set, and host↔container
-# backward compatibility is not guaranteed.  The remedy is an explicit
-# `firesim-lab --upgrade` (adopt the installed version) or reinstalling the
-# version this workspace was pinned to.  Skipped for --upgrade/--reconfigure
-# (which re-pin deliberately) and when an explicit FIRESIM_IMAGE override is set.
-if [[ $_env_loaded -eq 1 && $DO_UPGRADE -eq 0 && $DO_RECONFIGURE -eq 0 \
-      && -z "$_IMAGE_OVERRIDE" && -n "$INSTALLED_VERSION" \
-      && "$WORKSPACE_VERSION" != "$INSTALLED_VERSION" ]]; then
-  echo "  $(_red "✗ firesim-lab version mismatch.")"
-  echo ""
-  echo "     This workspace is pinned to : $(_bold "${WORKSPACE_VERSION:-<unknown / legacy>}")"
-  echo "     Installed version is        : $(_bold "${INSTALLED_VERSION}")"
-  echo ""
-  echo "     The host scripts and the container image must match.  Choose one:"
-  echo ""
-  echo "       $(_cyan "firesim-lab --upgrade")   migrate this workspace to ${INSTALLED_VERSION}"
-  echo "                              (re-pins the image; preserves your other settings)"
-  echo ""
-  if [[ -n "$WORKSPACE_VERSION" ]]; then
-  echo "       or reinstall the matching version to keep this workspace unchanged:"
-  echo "       $(_cyan "curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash -s -- v${WORKSPACE_VERSION}")"
-  echo ""
-  fi
-  exit 1
-fi
+# (The version-skew gate runs earlier, before the banner — see above. By this
+# point a mismatched workspace has already been rejected, unless this is an
+# --upgrade/--reconfigure or an explicit FIRESIM_IMAGE override.)
 
 # ── Handle --upgrade ──────────────────────────────────────────────────────────
 # Re-pin this workspace's image + version to the installed manifest, preserving
