@@ -1,7 +1,9 @@
-> [!WARNING]
-> This repository is under active development and is not yet ready for use.
-> Functionality may be incomplete, broken, or subject to breaking changes
-> without notice. Do not use this in production or for any critical work.
+> [!NOTE]
+> firesim-lab is pre-1.0 and under active development. It is usable today, but
+> the CLI, `fslab.yaml` schema, and registry format may change between minor
+> releases until 1.0 — pin a version for reproducible setups. See the
+> [Versioning & Upgrading guide](https://firesim-lab.readthedocs.io/en/latest/installation/versioning.html)
+> for how to upgrade safely.
 
 # firesim-lab
 
