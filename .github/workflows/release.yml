@@ -30,6 +30,12 @@ on:
 permissions:
   contents: write
 
+# Opt every JavaScript action into Node 24 now (becomes the runner default on
+# 2026-06-16). Silences the Node 20 deprecation warnings from the docker/* and
+# softprops actions without chasing per-action version bumps.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   release:
     runs-on: ubuntu-latest

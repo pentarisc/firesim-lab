@@ -93,7 +93,7 @@ Once Docker is running, the workflow below is the same on every platform — run
 from your terminal on Linux/macOS, or from your WSL shell on Windows:
 
 ```bash
-# 1. Install the launcher and pull the image
+# 1. Install the launcher and pull the image (installs the latest release)
 curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash
 
 # 2. Enter a workspace and open the container shell
@@ -116,6 +116,13 @@ fslab sim metasim  # local Verilator/VCS metasimulation
 # Or, for FPGA-accelerated simulation on AWS F2:
 fslab build fpga
 fslab sim fpga
+```
+
+The installer with no arguments pins to the **latest stable release**. To install
+a specific version (or the moving `main` dev image) instead, pass it explicitly:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash -s -- v0.7.0
 ```
 
 Full lifecycle reference is below.

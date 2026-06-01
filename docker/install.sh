@@ -33,10 +33,27 @@
 set -euo pipefail
 
 # ── Version handling ──────────────────────────────────────────────────────────
-# Priority: CLI arg > ENV var > default (main)
+# Priority: CLI arg > ENV var > latest published stable release > main.
+# With no explicit version, install the most recent *stable* GitHub release so
+# `curl ... | bash` always tracks the latest release without README edits
+# (prereleases are excluded by GitHub's releases/latest).  Falls back to 'main'
+# when no stable release exists yet or the lookup fails (e.g. offline).
+_latest_release_tag() {
+  # Resolve the tag by following the releases/latest redirect (no API token,
+  # no rate-limit concerns).  Final URL looks like .../releases/tag/v0.7.0.
+  local url
+  url="$(curl -fsSL -o /dev/null -w '%{url_effective}' \
+        https://github.com/pentarisc/firesim-lab/releases/latest 2>/dev/null)" || return 1
+  local tag="${url##*/tag/}"
+  [ -n "$tag" ] && [ "$tag" != "$url" ] && printf '%s' "$tag"
+}
+
 if [ $# -ge 1 ]; then
   VERSION="$1"
+elif [ -n "${VERSION:-}" ]; then
+  VERSION="$VERSION"
 else
+  VERSION="$(_latest_release_tag || true)"
   VERSION="${VERSION:-main}"
 fi
 

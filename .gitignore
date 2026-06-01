@@ -32,3 +32,5 @@ project/project/
 .vscode/
 tests/build/
 CLAUDE.md
+__pycache__
+*.drawio.bkp
