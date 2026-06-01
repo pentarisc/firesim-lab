@@ -1,0 +1,142 @@
+# =============================================================================
+#  release.yml — build & publish a pinned firesim-lab release on tag push
+#
+#  Trigger: pushing a tag of the form v<PEP440-version>, e.g.
+#    v0.7.0        → stable release   → pushes :0.7.0 and :latest
+#    v0.7.0rc1     → prerelease        → pushes :0.7.0rc1 only (NOT :latest)
+#
+#  What it does
+#  ────────────
+#   1. Verifies the tag matches fslab-cli/pyproject.toml (single source of truth).
+#   2. Frees runner disk + adds swap (the image is large; the sbt assembly is
+#      memory-hungry).
+#   3. Builds the image with FIRESIM_LAB_COMMIT=<tag> (FireSim / aws-fpga refs
+#      stay pinned in the Dockerfile) and pushes to Docker Hub.
+#   4. Captures the pushed image digest, writes versions.json, and attaches it
+#      to the GitHub Release so installers can pin by immutable digest.
+#
+#  Required repository secrets:
+#    DOCKERHUB_USERNAME   Docker Hub user / org with push access to the repo
+#    DOCKERHUB_TOKEN      Docker Hub access token (NOT the account password)
+# =============================================================================
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Needed to create the GitHub Release and upload the versions.json asset.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository at the tag
+        uses: actions/checkout@v4
+
+      - name: Resolve version and verify it matches pyproject
+        id: ver
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"          # e.g. v0.7.0 or v0.7.0rc1
+          VERSION="${TAG#v}"                # 0.7.0 / 0.7.0rc1
+
+          PYV="$(grep -Po '(?m)^\s*version\s*=\s*"\K[^"]+' fslab-cli/pyproject.toml | head -n1)"
+          if [ "$VERSION" != "$PYV" ]; then
+            echo "::error::git tag ($VERSION) does not match pyproject version ($PYV)"
+            exit 1
+          fi
+
+          # Stable = a bare X.Y.Z; anything else (rc/a/b/dev/post…) is a prerelease.
+          if printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            PRERELEASE=false
+          else
+            PRERELEASE=true
+          fi
+
+          # The pinned FireSim commit, recorded in versions.json for traceability.
+          FIRESIM_COMMIT="$(grep -Po '(?m)^ARG FIRESIM_COMMIT=\K\S+' docker/Dockerfile | head -n1)"
+
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "prerelease=$PRERELEASE"
+            echo "firesim_commit=$FIRESIM_COMMIT"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $VERSION (prerelease=$PRERELEASE, firesim=$FIRESIM_COMMIT)"
+
+      - name: Free up runner disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Add swap (insurance for the sbt assembly heap)
+        run: |
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          REPO="pentarisc/firesim-lab"
+          TAGS="${REPO}:${{ steps.ver.outputs.version }}"
+          if [ "${{ steps.ver.outputs.prerelease }}" = "false" ]; then
+            TAGS="${TAGS},${REPO}:latest"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+          echo "Image tags: $TAGS"
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: docker
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            FIRESIM_LAB_COMMIT=${{ steps.ver.outputs.tag }}
+          # Single-arch (F2 is x86_64); a plain manifest keeps a clean pull-by-digest.
+          provenance: false
+
+      - name: Write versions.json (immutable digest manifest)
+        run: |
+          set -euo pipefail
+          cat > versions.json <<EOF
+          {
+            "version": "${{ steps.ver.outputs.version }}",
+            "image": "pentarisc/firesim-lab@${{ steps.build.outputs.digest }}",
+            "firesim_commit": "${{ steps.ver.outputs.firesim_commit }}"
+          }
+          EOF
+          cat versions.json
+
+      - name: Create GitHub Release and attach versions.json
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          prerelease: ${{ steps.ver.outputs.prerelease }}
+          generate_release_notes: true
+          files: versions.json

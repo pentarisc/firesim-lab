@@ -42,14 +42,20 @@
 #
 #  Build arguments
 #  ───────────────
-#  FIRESIM_COMMIT     git ref for firesim          (default: main)
-#  FIRESIM_LAB_COMMIT git ref for firesim-lab       (default: main)
+#  FIRESIM_COMMIT     git ref for firesim          (default: pinned SHA below)
+#  AWS_FPGA_F2_REF    git ref for aws-fpga-firesim-f2 fork (default: pinned SHA)
+#  FIRESIM_LAB_COMMIT git ref for firesim-lab       (default: main; CI passes the
+#                     release tag so the image carries the tagged source)
 #  SBT_VERSION        SBT launcher version          (default: 1.10.1)
 #  JAVA_VERSION       OpenJDK major version         (default: 17)
 #  CACHE_GID          GID for firesim-lab-cache     (default: 2543)
 #                     Override only if 2543 collides with a host group and
 #                     you are rebuilding the image locally — the entrypoint
 #                     reads CACHE_GID from the environment at runtime.
+#
+#  The FireSim / aws-fpga refs are pinned in-Dockerfile (they are an
+#  implementation detail of a given firesim-lab version); only FIRESIM_LAB_COMMIT
+#  varies per release and is supplied by the release workflow.
 #
 #  Example build commands
 #  ──────────────────────
@@ -202,8 +208,8 @@ ENV CACHE_GID=${CACHE_GID}
 # =============================================================================
 FROM base AS firesim-stage
 
-ARG FIRESIM_COMMIT=main
-ARG AWS_FPGA_F2_REF=main
+ARG FIRESIM_COMMIT=ef2051a94e903e7e4f2fe583c91fb1d44ac60a06
+ARG AWS_FPGA_F2_REF=f4c4980c3ee1d5add25a8aefcf38720ff22d73c2
 
 # /opt/firesim is root-owned, world-readable (755).  No chown required.
 # We also overwrite the aws-fpga-firesim-f2 fork with our own to support ubuntu 24.04.

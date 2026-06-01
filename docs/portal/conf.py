@@ -5,6 +5,27 @@ project = "firesim-lab"
 author = "firesim-lab contributors"
 copyright = "2026, firesim-lab contributors"
 
+
+# -- Version (single-sourced from fslab-cli/pyproject.toml) ------------------
+# Keeps the documented version in lockstep with the package version. On Read
+# the Docs the URL/flyout version still comes from the built branch/tag; this
+# only controls the value Sphinx substitutes for |release| / |version|.
+def _fslab_version() -> str:
+    import re
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parents[2] / "fslab-cli" / "pyproject.toml"
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', text)
+    return match.group(1) if match else ""
+
+
+release = _fslab_version()
+version = ".".join(release.split(".")[:2]) if release else ""
+
 extensions = [
     "myst_parser",
 ]

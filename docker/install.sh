@@ -137,11 +137,12 @@ echo ""
 echo "  $(_green "✓") Made executable: $LAUNCHER_PATH"
 
 # ── Optional digest pinning ───────────────────────────────────────────────────
-# If the release published a versions.json at this ref, prefer its immutable
-# image digest (pentarisc/firesim-lab@sha256:...) over the mutable tag — Docker
-# tags can be overwritten, digests cannot.  Absent file → keep the tag (no-op).
-# This file is produced by the release CI after the image is built and pushed;
-# it does not exist for arbitrary branches/commits.
+# If this version's GitHub Release published a versions.json asset, prefer its
+# immutable image digest (pentarisc/firesim-lab@sha256:...) over the mutable tag
+# — Docker tags can be overwritten, digests cannot.  The asset is produced by
+# the release CI after the image is built and pushed, so it exists only for
+# released tags; for branch/commit installs (e.g. main) there is no Release and
+# the fetch 404s, leaving the tag in place (no-op).
 #
 # Schema (flat JSON, single object):
 #   { "version": "0.7.0",
@@ -152,11 +153,12 @@ _json_get() {
   sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$2" | head -n1
 }
 VERSIONS_FILE="${INSTALL_DIR}/versions.json"
-if curl -fsSL "${REPO_RAW}/versions.json" -o "$VERSIONS_FILE" 2>/dev/null; then
+VERSIONS_URL="https://github.com/pentarisc/firesim-lab/releases/download/${VERSION}/versions.json"
+if curl -fsSL "$VERSIONS_URL" -o "$VERSIONS_FILE" 2>/dev/null; then
   _digest_image="$(_json_get image "$VERSIONS_FILE")"
   if [[ -n "$_digest_image" ]]; then
     FIRESIM_IMAGE="$_digest_image"
-    echo "  $(_green "✓") Pinned to image digest from versions.json"
+    echo "  $(_green "✓") Pinned to image digest from the release manifest"
   fi
 else
   rm -f "$VERSIONS_FILE" 2>/dev/null || true
