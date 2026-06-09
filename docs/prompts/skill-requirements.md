@@ -68,11 +68,14 @@ skill"; Sim's preflight says "run Setup first" if the stamp shows it is missing.
 Because the skills are **separate invocations** (possibly separate sessions),
 they cannot share in-memory state. Each skill **bootstraps from a persisted
 project stamp**: *read stamp → know what is done → do its part → update stamp*.
-The stamp records setup completion, AWS readiness, the configured design, whether
-**metasim passed** (+ its evidence), and any AGFI/image. The hard metasim→F2 gate
-is enforced by `firesim-lab-sim` **reading the stamp**, not by in-memory flow
-order — which makes the gate robust across sessions and direct invocation. The
-stamp's exact location and schema are an open design item (§14).
+The stamp records the **active version** (§2.5), setup completion, AWS readiness,
+the configured design, whether **metasim passed** (+ its evidence), and any
+AGFI/image. The hard metasim→F2 gate is enforced by `firesim-lab-sim` **reading
+the stamp**, not by in-memory flow order — which makes the gate robust across
+sessions and direct invocation. fslab already writes per-project metadata to
+`.fslab/meta.json` (carrying `__version__`), so that is the natural home: the
+stamp extends it. Exact schema (and whether to keep it in `.fslab/meta.json` vs a
+sibling file) is an open design item (§14).
 
 ### 2.4 Skill vs. sub-agent (the dividing rule)
 
@@ -85,6 +88,44 @@ cannot pause to ask the user anything.** So:
   a summary): the verbose build execution, and the long background build/run
   monitors (§10). Interaction always stays in the skill; only non-interactive
   execution is delegated.
+
+### 2.5 Version awareness (bind to the installed tool, never "latest")
+
+**Principle: the installed tool is the single source of truth for version.** The
+skills are a thin orchestration layer over whatever fslab + image is installed;
+they must never assume a version or reference `latest`/`stable`. firesim-lab
+already single-sources the version (`fslab-cli/pyproject.toml` → `fslab
+--version`) and pins it per workspace (`.firesim-lab.env` `FIRESIM_LAB_VERSION`)
+and per project (`.fslab/meta.json` `__version__`); the launcher **hard-fails** on
+host↔container↔workspace skew. The skills **read** these — they do not invent a
+new version mechanism.
+
+Required behaviors (all three skills):
+
+1. **Detect the active version** at preflight from `fslab --version`,
+   cross-checked with `FIRESIM_LAB_VERSION` / `.fslab/meta.json`. This is the
+   **active version** — never `latest`.
+2. **All three skills bind to that one version — for free.** Because the
+   workspace pin is already enforced as a matched set, Help/Setup/Sim reading
+   `FIRESIM_LAB_VERSION` are guaranteed consistent. The stamp (§2.3) records it.
+3. **Bind every RTD doc link to the active version:** `…/en/v<active>/…` (RTD
+   keeps the `v`). If that exact slug isn't published, fall back to the **nearest
+   published patch of the same MAJOR.MINOR**; if none, **warn and link the version
+   list** — never silently use `latest`/`stable`. (A literal `main` install, whose
+   version resolves to `latest`, is the one case that maps to `/en/latest/`, with
+   a note.)
+4. **Skill↔tool compatibility at MAJOR.MINOR (reusing `is_compatible`):** each
+   skill carries an `fslab_version` and is compatible with any installed tool of
+   the same **MAJOR.MINOR** (patch always OK) — exactly the rule
+   `fslab.yaml`/`registry.yaml` already use (`fslab/utils/versioning.py`). On a
+   MINOR mismatch the skill **halts** with the same `firesim-lab --upgrade`
+   migration message the tool already gives, rather than operating a tool it does
+   not understand. Skill patch-level fixes ship as independent skill releases; a
+   new tool MINOR triggers a new skill MINOR.
+
+This makes "all three skills stick to one version, never `latest`" a property of
+the existing pins rather than new bookkeeping; the only net-new check is the
+skill↔tool MAJOR.MINOR gate in item 4.
 
 ---
 
@@ -145,6 +186,8 @@ SETUP skill — run once per host/account; writes the stamp ──────�
      └─ DETECT + OFFER TO RUN (per-step confirm) — may run install.sh / pull image
  S2. Workspace init: is .firesim-lab.env present? if absent, run the launcher
  S3. Container running? discover it; establish firesim-lab-shell path (§3)
+     └─ detect the active tool version (fslab --version / FIRESIM_LAB_VERSION;
+        §2.5) and pin it in the stamp — all skills bind to it; never "latest"
  S4. AWS provisioning — OPT-IN, only if the user wants F2 (ask intent first; §9):
      ├─ console/quota/account = EXPLAIN + LINK + VERIFY — incl. request the slow
      │  F2 quota EARLY (approval can take a day or two); metasim-only users skip
@@ -153,7 +196,7 @@ SETUP skill — run once per host/account; writes the stamp ──────�
      └─ first-time `aws configure sso` (create the login profile)
      → stamp: setup done; AWS provisioned (or skipped)
 
-SIMULATION skill — every iteration; self-orchestrates from the stamp ───────────
+SIMULATION skill — every iteration; self-orchestrates; binds to stamp version §2.5
   metasim ─────────────────────────────────────────────────────────────────────
  1. Inputs: RTL path(s) + top module        [ASK / propose from open VSCode file]
  2. Project: ask name → fslab new → docker cp RTL + payload into /target/<proj>
@@ -540,17 +583,24 @@ this spec.
 4. **Plugin manifest + marketplace plumbing** — `plugin.json` fields, marketplace
    manifest location (this repo vs a dedicated marketplace repo), and the
    versioning relationship to the existing `install.sh`/manifest machinery (§4).
-5. **State-stamp location & schema** — the inter-skill contract (§2.3) is now
-   load-bearing: a dedicated `.fslab/skill-state.*` vs a block in `fslab.yaml` vs
-   reusing fslab's existing `build_stamp.py` / `run_stamp.py`. Decide at design
-   time; define the fields (setup done, AWS provisioned, metasim passed +
-   evidence, AGFI/image).
+5. **State-stamp location & schema** — the inter-skill contract (§2.3) is
+   load-bearing. Leading candidate: **extend the existing `.fslab/meta.json`**
+   (already written by `fslab init`, already carries `__version__`); alternatives
+   are a sibling `.fslab/skill-state.*` or reusing `build_stamp.py`/`run_stamp.py`.
+   Decide at design time; define the fields (active version, setup done, AWS
+   provisioned, metasim passed + evidence, AGFI/image).
 6. **Solo-vs-org capability detection** — whether to trust the Setup intent answer
    alone or also probe IAM-write capability (e.g. `iam:CreateRole` via a dry-run
    / `simulate-principal-policy`) before offering the admin-CLI scripts (§9.2).
 7. **AWS verification probe specifics** — exact CLI for the F2 **quota** check
    ("Running On-Demand F instances" > 0) and the per-region FPGA Developer **AMI**
    lookup, plus how to surface a *pending* (not-yet-approved) quota request (§9.3).
+8. **RTD slug availability & fallback** — how to determine whether `/en/v<active>/`
+   is published (RTD versions API vs an HTTP probe) and implement the
+   nearest-published-patch fallback before warning (§2.5).
+9. **Skill `fslab_version` declaration** — where each skill records its compatible
+   MAJOR.MINOR (a `plugin.json` field vs a skill metadata file) and how it invokes
+   the tool's `is_compatible` and surfaces the standard `--upgrade` message (§2.5).
 
 ---
 
@@ -576,6 +626,10 @@ this spec.
 | 15 | AWS seam: provisioning + first-time configure-sso + quota nudge in Setup; recurring login + verify-only in Simulation | One-time vs recurring; the slow F2 quota must be requestable early |
 | 16 | Heavy autonomous work → sub-agents inside Simulation (build-runner, build/run monitors); interaction stays in the skill | Sub-agents are non-interactive + isolate context; absorbs verbose build/monitor output |
 | 17 | Inter-skill state stamp is the contract; metasim→F2 gate enforced by reading the stamp | Separate invocations can't share memory; gate robust across sessions / direct invocation |
+| 18 | Version awareness = detect-and-bind to the installed tool (single source of truth); never reference `latest`/`stable` | Skills are a thin layer over whatever tool/image is installed |
+| 19 | Skill↔tool compatibility at MAJOR.MINOR, reusing the tool's `is_compatible`; skill patches ship independently | Consistent with fslab.yaml/registry.yaml gating; same `--upgrade` UX |
+| 20 | RTD links pinned to `/en/v<active>/`; fallback = nearest published patch, else warn | Guidance must match the installed version; never silently drift to latest |
+| 21 | All three skills bind to the one workspace-pinned version (`FIRESIM_LAB_VERSION`); stamp likely extends `.fslab/meta.json` | The existing matched-set pin makes "one version" free; reuse, don't reinvent |
 
 ---
 
