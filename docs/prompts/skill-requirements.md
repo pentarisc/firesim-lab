@@ -4,7 +4,7 @@
 **Project:** firesim-lab
 **Status:** Requirements **defined**. No skill built yet. This document is the
 agreed operating model and the **complete, self-contained** spec to build the
-skill from — it folds in the proven metasim flow (§17), the command sequence
+skills from — it folds in the proven metasim flow (§17), the command sequence
 (§18), the engineering gotchas (§13), and the repo reference index (§19), so no
 other document is needed.
 
@@ -12,9 +12,9 @@ other document is needed.
 
 ## 1. Purpose & scope
 
-A Claude Code **skill** that drives a **fully AI-accelerated firesim-lab flow**,
-end to end, for **end users who write only Verilog/SystemVerilog** and never
-touch Chisel/Scala:
+A Claude Code **plugin — three cooperating skills (Help, Setup, Simulation)** —
+that drives a **fully AI-accelerated firesim-lab flow**, end to end, for **end
+users who write only Verilog/SystemVerilog** and never touch Chisel/Scala:
 
 - **Phase 1 — Metasim** (the proven backbone): onboard the host, scaffold a
   project, place user RTL + payload, configure `fslab.yaml` (bridges, clk/reset/
@@ -29,19 +29,62 @@ time/money.
 
 ---
 
-## 2. Vehicle decision (why a skill, packaged as a plugin)
+## 2. Vehicle & skill decomposition
 
-A Claude Code **Skill** is the vehicle, **packaged as a plugin and distributed
-via a marketplace**. Alternatives considered and rejected:
+### 2.1 Vehicle: skills bundled as one plugin
+
+The vehicle is **Claude Code Skills**, **bundled together as a single plugin and
+distributed via a marketplace**. Alternatives considered and rejected:
 
 | Option | Verdict | Reason |
 |---|---|---|
-| **Skill (plugin / marketplace)** | **Chosen** | Workflow orchestration with progressive disclosure, runs in the user's main conversation, bundles companion reference/scripts, native install + `/plugin update`. |
+| **Skills (plugin / marketplace)** | **Chosen** | Workflow orchestration with progressive disclosure, run in the user's main conversation, bundle companion reference/scripts/agents, native install + `/plugin update`. |
 | Slash command | Rejected | A bare prompt template — no progressive disclosure, no bundled reference/scripts. Skills are the strict superset. |
-| Subagent as the top-level surface | Rejected as top-level | Fresh isolated context is wrong for an interactive, stateful flow. **Used internally** for background build/run monitoring (§9). |
+| Subagent as the top-level surface | Rejected as top-level | Fresh isolated context **cannot interact with the user** — wrong for an interactive, stateful flow. **Used internally** for autonomous heavy work (§2.4, §10). |
 | MCP server / Agent-SDK app | Rejected | Heavyweight; wrong audience — users already run Claude Code. |
 | **Project skill** (`<repo>/.claude/skills/`) | Rejected | Only activates when the firesim-lab repo *is* the workspace. End users work in their **own out-of-tree** project folders under `/target`, so they would never see it. |
 | install.sh copies skill → `~/.claude/skills/` | Deferred | Viable personal-skill path, but marketplace gives a better first-touch and native updates. Kept as a possible future fallback; not specified now. |
+
+### 2.2 Decomposition: three skills, by separation of concerns
+
+The flow is **not** one monolithic skill. It splits by *separation of concerns*,
+which also maps to *how often each part runs* — keeping each invocation's context
+small and letting the user run any part directly:
+
+| Skill | Runs | Owns | Interactive? |
+|---|---|---|---|
+| **`firesim-lab-help`** | on demand (pull) | the flow overview / map; names the other two | yes (trivial) |
+| **`firesim-lab-setup`** | once per host/account | one-time provisioning: host prereqs + workspace init (always); AWS account/IAM/roles/quota + first-time `aws configure sso` (opt-in, F2 users; §9) | yes |
+| **`firesim-lab-sim`** | every iteration | the recurring end-to-end flow: metasim (scaffold → configure → compile-fix loop → sim → gate) **and** F2 (verify AWS + recurring SSO login → configure target → build → run → cleanup) | yes |
+
+**No separate router/orchestrator.** `firesim-lab-sim` *self-orchestrates*: on
+entry it reads the state stamp (§2.3) and resumes or jumps (e.g. straight to the
+F2 stage when the stamp shows metasim already passed). The three skills navigate
+by **cross-referencing** — Help names them; Setup ends with "now run the sim
+skill"; Sim's preflight says "run Setup first" if the stamp shows it is missing.
+
+### 2.3 The inter-skill state stamp (the contract)
+
+Because the skills are **separate invocations** (possibly separate sessions),
+they cannot share in-memory state. Each skill **bootstraps from a persisted
+project stamp**: *read stamp → know what is done → do its part → update stamp*.
+The stamp records setup completion, AWS readiness, the configured design, whether
+**metasim passed** (+ its evidence), and any AGFI/image. The hard metasim→F2 gate
+is enforced by `firesim-lab-sim` **reading the stamp**, not by in-memory flow
+order — which makes the gate robust across sessions and direct invocation. The
+stamp's exact location and schema are an open design item (§14).
+
+### 2.4 Skill vs. sub-agent (the dividing rule)
+
+A sub-agent runs **autonomously in isolated context and returns one result — it
+cannot pause to ask the user anything.** So:
+
+- **Interactive work → a skill** (main context): all questionnaires, consent,
+  clk/reset/port-map veto, spend confirmation, the SSO show-code-and-wait.
+- **Verbose or long *autonomous* work → a sub-agent** (isolated context, returns
+  a summary): the verbose build execution, and the long background build/run
+  monitors (§10). Interaction always stays in the skill; only non-interactive
+  execution is delegated.
 
 ---
 
@@ -62,79 +105,79 @@ via a marketplace**. Alternatives considered and rejected:
 
 ## 4. Delivery model
 
-- **Source location:** skill authored under a neutral **`skills/`** folder at the
+- **Source location:** skills authored under a neutral **`skills/`** folder at the
   **repo root** (not `.claude/skills/`), separating *authoring location* from
   *deployment location*. Layout kept **plugin-compatible**
-  (`.claude-plugin/plugin.json`, marketplace manifest).
-- **Distribution:** **marketplace / plugin** is the front door. README documents
-  the two-line install:
+  (`.claude-plugin/plugin.json`, marketplace manifest; §12).
+- **Distribution:** **marketplace / plugin** is the front door. Installing the one
+  plugin makes all three skills available. README documents the two-line install:
   ```
   /plugin marketplace add pentarisc/firesim-lab
-  /plugin install firesim-lab-sim
+  /plugin install firesim-lab
   ```
 - **Relationship to `install.sh`:** the host toolchain (the `firesim-lab`
-  launcher at `~/.local/bin/firesim-lab` + the Docker image) and the **skill** are
+  launcher at `~/.local/bin/firesim-lab` + the Docker image) and the **skills** are
   **independent installs**. `install.sh` remains **as-is** as the toolchain
-  installer; the skill does *not* ship through it. The skill's **Stage 0** detects
-  the toolchain and, with per-step permission, can **run `install.sh` / pull the
-  image / configure** the host itself (§5, §6) — so the skill is the single
+  installer; the skills do *not* ship through it. The **`firesim-lab-setup`** skill
+  detects the toolchain and, with per-step permission, can **run `install.sh` /
+  pull the image / configure** the host itself (§5) — so the plugin is the single
   AI-native entry point and can bootstrap a fresh host.
-- **Maintainer/dev note:** because the skill can install/configure directly (with
+- **Maintainer/dev note:** because Setup can install/configure directly (with
   permission), maintainers can validate the onboarding path without `install.sh`.
-  For testing the skill *inside this repo*, optionally symlink `skills/<name>` into
-  the repo's `.claude/skills/` (maintainer-only nicety, not part of user delivery).
+  For testing the skills *inside this repo*, optionally symlink them into the
+  repo's `.claude/skills/` (maintainer-only nicety, not part of user delivery).
 
 ---
 
 ## 5. State machine (gated, idempotent, resumable)
 
-Every node is a **checkpoint**. Because every `fslab` step is hash-aware and
-idempotent, the skill can re-enter at any node. The ordering is the intended
-happy path, not a rigid lockstep.
+The flow spans the three skills. Every node is a **checkpoint**; because every
+`fslab` step is hash-aware and idempotent, any skill can re-enter at any node by
+reading the state stamp (§2.3). The ordering is the intended happy path, not a
+rigid lockstep.
 
 ```
-0. Onboarding / preflight
-   0a. First-run help: check the per-user ~/.firesim-lab onboarding marker;
-       if absent, ask "new to firesim-lab? want a 60-second tour?" → show the
-       overview (§16) → offer "don't show again" (writes the marker).
-       Inline per-question help stays on regardless. (See §16.)
-   0b. Host prereqs: Docker running? firesim-lab launcher? image pulled?
-       └─ mode: DETECT + OFFER TO RUN (per-step confirmation) — may run
-          install.sh / pull image with the user's permission
-   0c. Workspace init: is .firesim-lab.env present in the current folder?
-       └─ if absent, run the firesim-lab launcher to initialize it
-   0d. Container running? discover it; establish firesim-lab-shell path
-   0e. AWS intent (lightweight): plan to use F2? AWS already set up?
-       solo-developer (own admin) or org-developer (admin provisions)?
-       └─ informational only; nudge: request the slow F2 quota NOW if F2 is
-          intended (approval can take a day or two). No heavy AWS work here.
-1. Inputs: RTL path(s) + top module     [ASK / propose from open VSCode file]
-2. Project: ask name → fslab new → docker cp RTL + payload into /target/<proj>
-3. Bridges: ask which → check DUT ports vs registry required ports
-   └─ missing required ports = HARD STOP (report; needs user RTL change)
-4. Configure fslab.yaml: clk/reset/enable, port_map, ref: params, mem_base
-                                          [INFER + SHOW; user vetoes]
-5. fslab generate → fslab build metasim
-   ├─ logic/semantic/elaboration error = REPORT, do not fix, wait, rebuild
-   └─ Verilator -Wall width-lint        = skill MAY apply minimal sized-literal
-                                           fix, SHOW the diff; never logic
-6. Success criterion: ask what counts as pass → fslab sim → evaluate
-   ════════════════ HARD GATE: metasim must pass ════════════════
-7. AWS preflight & guided setup (Phase 2 entry; re-checks even if deferred at 0d)
-   ├─ verify readiness via read-only probes (roles, key pair, PassRole, quota,
-   │  SSO session) → report each gap
-   ├─ console/quota/account gaps = EXPLAIN + LINK + VERIFY (cannot script)
-   ├─ admin-CLI gaps (roles, key pair, PassRole) = OFFER TO RUN bundled scripts,
-   │  per-step confirm — ONLY for solo-developer with an admin profile;
-   │  org-developer path = direct to their admin, verify-only
-   └─ developer login = aws configure sso (first run) + device-code login (§9.4)
-8. F2 questionnaire: AWS profile/region, SSO mode, build/run host models,
-   fpga_slot, publish mode, spend ack  → patch fslab.yaml target.*
-9. fslab build fpga   (EC2 launch / AFI create = HARD SPEND CONFIRM)
-   └─ background sub-agent: fslab monitor build → on image ready:
-      pull logs/artifacts → TERMINATE build EC2
-10. Patch fslab.yaml with AGFI/image → fslab sim fpga (detached) →
-    sub-agent monitors → on completion: pull output → STOP F2 host → report
+HELP skill — on demand (pull) ────────────────────────────────────────────────
+ H. Show the flow overview (§16) and name the other skills. No marker, no state.
+
+SETUP skill — run once per host/account; writes the stamp ─────────────────────
+ S1. Host prereqs: Docker running? firesim-lab launcher? image pulled?
+     └─ DETECT + OFFER TO RUN (per-step confirm) — may run install.sh / pull image
+ S2. Workspace init: is .firesim-lab.env present? if absent, run the launcher
+ S3. Container running? discover it; establish firesim-lab-shell path (§3)
+ S4. AWS provisioning — OPT-IN, only if the user wants F2 (ask intent first; §9):
+     ├─ console/quota/account = EXPLAIN + LINK + VERIFY — incl. request the slow
+     │  F2 quota EARLY (approval can take a day or two); metasim-only users skip
+     ├─ admin-CLI (roles, key pair, PassRole) = OFFER TO RUN scripts, per-step
+     │  confirm — solo-developer admin only; org-developer = direct to their admin
+     └─ first-time `aws configure sso` (create the login profile)
+     → stamp: setup done; AWS provisioned (or skipped)
+
+SIMULATION skill — every iteration; self-orchestrates from the stamp ───────────
+  metasim ─────────────────────────────────────────────────────────────────────
+ 1. Inputs: RTL path(s) + top module        [ASK / propose from open VSCode file]
+ 2. Project: ask name → fslab new → docker cp RTL + payload into /target/<proj>
+ 3. Bridges: ask which → check DUT ports vs registry required ports
+    └─ missing required ports = HARD STOP (report; needs user RTL change)
+ 4. Configure fslab.yaml: clk/reset/enable, port_map, ref: params, mem_base
+                                             [INFER + SHOW; user vetoes]
+ 5. fslab generate → build (compile-fix loop; build via build-runner sub-agent §10)
+    ├─ logic/semantic/elaboration error = REPORT to user, do not fix, wait, rebuild
+    └─ Verilator -Wall width-lint        = MAY apply minimal sized-literal fix,
+                                           SHOW the diff; never logic
+ 6. Success criterion: ask what counts as pass → fslab sim → evaluate
+    → stamp: metasim PASSED (+ evidence)
+    ═══════════ HARD GATE: stamp must show metasim passed ═══════════
+  F2 ──────────────────────────────────────────────────────────────────────────
+ 7. AWS preflight (VERIFY-ONLY; §9): probe roles/key/PassRole/quota/SSO session
+    └─ gap = point back to `firesim-lab-setup`; do NOT provision here
+ 8. Recurring SSO login (device-code; §9.4) — show code, user approves, poll
+ 9. F2 questionnaire: profile/region, SSO mode, build/run host models, fpga_slot,
+    publish mode, spend ack  → patch fslab.yaml target.*
+10. fslab build fpga (EC2 launch / AFI create = HARD SPEND CONFIRM)
+    └─ background build-monitor sub-agent → on image: pull artifacts → TERMINATE EC2
+11. Patch fslab.yaml with AGFI/image → fslab sim fpga (detached) →
+    background run-monitor sub-agent → on completion: pull output → STOP F2 → report
 ```
 
 ---
@@ -157,25 +200,28 @@ Every input the flow needs falls in exactly one tier:
 
 ### 6.2 Staged questionnaires (Option A — staged, not one upfront form)
 
-The user interacts through **staged questionnaires**, because some answers only
-become meaningful after a prior step runs:
+The user interacts through **staged questionnaires** across the Setup and
+Simulation skills, because some answers only become meaningful after a prior step
+runs:
 
-- **Stage-0 questionnaire** — prereq remediation consent (per step) + workspace
-  init + **AWS intent** (plan to use F2? already set up? **solo-developer vs
-  org-developer**). The AWS answers are recorded and drive the Phase 2 preflight
-  (§9); they impose no AWS work during Phase 1.
-- **Project/RTL questionnaire** — RTL path(s), top module (propose from the
-  open VSCode file when possible), project name.
-- **Bridge questionnaire** — which bridges; presented before the port check.
-- **Post-`init` configuration** — clk/reset/enable + `port_map` are presented
-  **after** `fslab init` parses the real ports, **pre-filled with the skill's
-  INFER proposals** for the user to veto. (This is the "edit post-init" strategy:
-  the skill patches `fslab.yaml`; it does not author it from scratch.)
-- **Success-criterion question** — what constitutes a passing metasim (the gate
-  contract; see §7).
-- **F2 questionnaire** — appears **only after the gate passes**: AWS profile/
-  region, SSO mode, build/run host models, publish mode, `fpga_slot`, spend
-  acknowledgement.
+- **Setup questionnaire** (`firesim-lab-setup`) — prereq remediation consent (per
+  step) + workspace init + **AWS intent** (plan to use F2? **solo-developer vs
+  org-developer**). On "F2 yes" it drives the opt-in AWS provisioning (S4, §9);
+  metasim-only users skip all AWS.
+- **Project/RTL questionnaire** (`firesim-lab-sim`) — RTL path(s), top module
+  (propose from the open VSCode file when possible), project name.
+- **Bridge questionnaire** (`firesim-lab-sim`) — which bridges; before the port
+  check.
+- **Post-`init` configuration** (`firesim-lab-sim`) — clk/reset/enable +
+  `port_map` are presented **after** `fslab init` parses the real ports,
+  **pre-filled with the skill's INFER proposals** for the user to veto. (The
+  "edit post-init" strategy: the skill patches `fslab.yaml`, it does not author it
+  from scratch.)
+- **Success-criterion question** (`firesim-lab-sim`) — what constitutes a passing
+  metasim (the gate contract; see §7).
+- **F2 questionnaire** (`firesim-lab-sim`) — appears **only after the gate
+  passes**: AWS profile/region, SSO mode, build/run host models, publish mode,
+  `fpga_slot`, spend acknowledgement.
 
 ---
 
@@ -244,14 +290,20 @@ Notes the skill must encode when evaluating:
 
 ---
 
-## 9. AWS readiness, guided setup & SSO (Phase 2 preflight)
+## 9. AWS readiness, provisioning & SSO (Setup provisions, Simulation verifies)
 
-AWS is needed **only** for Phase 2; the AWS setup docs themselves say everything
-here can be deferred until the design works in metasim. The skill therefore does
-**no AWS work in Phase 1** beyond the Stage-0 intent question (§5 0e). All real
-AWS verification and setup happens in the **Phase 2 preflight** (state-machine
-step 7), which runs even when the user deferred at Stage 0. Source of truth:
-[docs/portal/setup/aws/](../portal/setup/aws/) —
+AWS is needed **only** for the F2 path; the AWS setup docs themselves say
+everything here can be deferred until the design works in metasim. AWS work is
+**split across two skills by frequency**:
+
+- **Provisioning (once) → `firesim-lab-setup`, step S4** (opt-in): account/IAM/
+  roles/key pair/quota + first-time `aws configure sso`. Done early so the slow F2
+  quota can be approving while the user iterates in metasim.
+- **Login + verify (every F2 run) → `firesim-lab-sim`, steps 7–8**: a verify-only
+  readiness probe and the recurring `aws sso login`. It **does not provision** —
+  on a gap it points the user back to Setup.
+
+Source of truth: [docs/portal/setup/aws/](../portal/setup/aws/) —
 [index](../portal/setup/aws/index.md),
 [aws-primer](../portal/setup/aws/aws-primer.md),
 [identity-center-sso](../portal/setup/aws/identity-center-sso.md),
@@ -270,7 +322,12 @@ profile).
 | **Developer login** | `aws configure sso` (first run), `aws sso login` device-code, `aws_profile:` in `fslab.yaml` | **Guide + run** (device-code, §9.4) |
 | **Verification** | `get-caller-identity`, `get-instance-profile`, `get-role-policy`, quota query, F2 region/AMI check | **Run freely** (read-only) |
 
-### 9.2 Solo-developer vs org-developer (from the Stage-0 answer)
+**Which skill runs which layer:** the **Console/quota**, **Admin-CLI**, and
+*first-time* `aws configure sso` layers run in **`firesim-lab-setup`** (S4,
+once). The **Verification** probes and the *recurring* `aws sso login` run in
+**`firesim-lab-sim`** (steps 7–8, every F2 run).
+
+### 9.2 Solo-developer vs org-developer (from the Setup intent answer)
 
 - **Solo developer** (own admin, personal account): the skill may run the
   admin-CLI scripts (role/key-pair/PassRole creation) under the admin profile,
@@ -305,23 +362,31 @@ a questionnaire field**, offering:
   URL/code/result back; the skill stays hands-off on the login itself.
 - **`already-logged-in`**: skip login; verify credentials are valid.
 
-First-run-with-no-profile falls back to guiding `aws configure sso`. Credentials
-persist via the `~/.aws` bind mount; there is no AWS CLI on the host.
+The first-time `aws configure sso` (creating the login profile) is part of
+**Setup** (S4); `firesim-lab-sim` performs only the **recurring** `aws sso login`
+here. Credentials persist via the `~/.aws` bind mount; there is no AWS CLI on the
+host.
 
 ---
 
-## 10. Background sub-agents
+## 10. Sub-agents (inside `firesim-lab-sim`)
 
-Long F2 build/run phases survive laptop sleep via **detached + monitor**. The
-skill spawns **background sub-agents** that:
+Per the §2.4 rule, `firesim-lab-sim` delegates **verbose or long autonomous**
+work to sub-agents, keeping all user interaction in the skill itself:
 
-- **Build monitor:** poll `fslab monitor build`; on image-ready, pull
-  logs/artifacts, then **terminate the build EC2** (§8.4).
-- **Run monitor:** after `fslab sim fpga --detach`, poll `fslab monitor run`; on
-  completion pull the output, **stop the F2 host**, and report back to the user.
+- **`build-runner`** (metasim, step 5): runs the verbose `fslab build` (sbt /
+  Golden Gate / Verilator) in isolated context and returns a **distilled verdict**
+  — pass, a width-lint diff it applied, or a concise logic-error diagnostic. The
+  hundreds of lines of build output never enter the skill's context; the
+  compile-fix loop control and the user hand-off stay in the skill (§8.1).
+- **`build-monitor`** (F2, step 10, background): poll `fslab monitor build`; on
+  image-ready, pull logs/artifacts, then **terminate the build EC2** (§8.4).
+- **`run-monitor`** (F2, step 11, background): after `fslab sim fpga --detach`,
+  poll `fslab monitor run`; on completion pull the output, **stop the F2 host**,
+  and report back.
 
-Sub-agents are the appropriate use of the subagent primitive here (isolated,
-long-lived polling), distinct from the top-level interactive skill.
+These are the right use of the sub-agent primitive (isolated, non-interactive,
+context-absorbing). Anything needing user input stays in the skill.
 
 ---
 
@@ -345,30 +410,46 @@ intended post-`init` configuration step.** Two columns:
 
 ---
 
-## 12. Skill file layout (progressive disclosure)
+## 12. Plugin layout (three skills + sub-agents, progressive disclosure)
 
 ```
-skills/firesim-lab-sim/
-  .claude-plugin/plugin.json   # plugin manifest (for marketplace packaging)
-  SKILL.md                     # trigger + state machine + tier-1 interaction rules
-  reference/
-    help.md                    # §16: first-run overview copy + on-demand help text
-    onboarding.md              # Stage 0: prereq detection, install.sh guidance, .firesim-lab.env
-    metasim.md                 # Parts B/C distilled: port_map, ref:, mem_base, lint, max-cycles
-    fpga-f2.md                 # F2 build/run pipelines, target.build/target.run, cleanup
-    aws-setup-sso.md           # §9 layered model: verify probes, solo/org paths, device-code SSO
-  scripts/                     # deterministic helpers, run only with confirmation
-    detect-context.sh          #   in-container vs host-driving-container; container discovery
-    verify-aws.sh              #   §9.3 read-only readiness probes (roles/keypair/PassRole/quota)
-    aws-create-build-role.sh   #   firesim-lab-aws-setup Step 4 (solo-admin only)
-    aws-create-run-role.sh     #   firesim-lab-aws-setup Step 5 (solo-admin only)
-    aws-create-keypair.sh      #   firesim-lab-aws-setup Step 3 (solo-admin only)
-    aws-grant-passrole.sh      #   identity-center-sso PassRole grant (solo-admin only)
-    scrape-sso-code.sh         #   §9.4 extract verification URL + code from backgrounded login
+firesim-lab/                       # the plugin (marketplace entry)
+  .claude-plugin/plugin.json       # one manifest bundling all skills + agents
+  skills/
+    firesim-lab-help/
+      SKILL.md                     # the overview/map; names the other skills (§16)
+      reference/overview.md        # §16.1 canonical overview copy
+    firesim-lab-setup/
+      SKILL.md                     # run-once provisioning; reads/writes the stamp
+      reference/
+        prereqs.md                 # host prereq detection, install.sh guidance, .firesim-lab.env
+        aws-provisioning.md        # §9 console/quota + admin-CLI + first-time configure-sso
+      scripts/
+        detect-context.sh          # in-container vs host-driving-container; container discovery
+        verify-aws.sh              # §9.3 read-only readiness probes
+        aws-create-build-role.sh   # firesim-lab-aws-setup Step 4 (solo-admin only)
+        aws-create-run-role.sh     # firesim-lab-aws-setup Step 5 (solo-admin only)
+        aws-create-keypair.sh      # firesim-lab-aws-setup Step 3 (solo-admin only)
+        aws-grant-passrole.sh      # identity-center-sso PassRole grant (solo-admin only)
+    firesim-lab-sim/
+      SKILL.md                     # the recurring flow; self-orchestrates from the stamp
+      reference/
+        metasim.md                 # port_map, ref:, mem_base, lint, max-cycles (§13)
+        fpga.md                    # F2 build/run pipelines, target.build/target.run, cleanup
+        aws-login.md               # §9.4 recurring device-code login + verify-only preflight
+      scripts/
+        detect-context.sh          # (shared helper, mirrored or symlinked)
+        verify-aws.sh              # verify-only readiness probes
+        scrape-sso-code.sh         # §9.4 extract verification URL + code from backgrounded login
+  agents/
+    build-runner.md                # §10 metasim build executor (distilled verdict)
+    build-monitor.md               # §10 background F2 build monitor + cleanup
+    run-monitor.md                 # §10 background F2 run monitor + cleanup
 ```
 
-`SKILL.md` stays lean; `reference/` files load only when the relevant
-phase/stage is entered.
+Each `SKILL.md` stays lean; `reference/` files load only when that stage is
+entered (a metasim-only run never loads `fpga.md`). Shared scripts
+(`detect-context.sh`, `verify-aws.sh`) are factored to one place and reused.
 
 ---
 
@@ -384,7 +465,7 @@ this spec.
    writes. `firesim-lab-shell` uses `gosu` to drop to the host UID (detected from
    `/target` ownership) *with* full supplementary groups. If the skill itself runs
    *inside* the container with `fslab` on `PATH`, call `fslab` directly and skip
-   the docker layer — detect this first. **→ §3; §5 node 0d.**
+   the docker layer — detect this first. **→ §3; §5 step S3.**
 
 2. **`fslab init` does NOT infer clock/reset.** It parses RTL verbatim (pyslang)
    and emits ports as-is (e.g. `clk: "in logic"`). The Chisel shim templates pick
@@ -453,15 +534,18 @@ this spec.
    success vs expiry vs denial when polling a backgrounded login; exact poll
    command and timeout values (§9).
 2. **Prereq detection specifics** — the exact probes for "Docker running",
-   "launcher installed", "image pulled" on the host (§5 node 0b).
+   "launcher installed", "image pulled" on the host (§5 step S1).
 3. **Port-check semantics** — how strictly to match DUT ports against registry
    `input_ports`/`output_ports`, and how to present a partial mismatch (§5 node 3).
 4. **Plugin manifest + marketplace plumbing** — `plugin.json` fields, marketplace
    manifest location (this repo vs a dedicated marketplace repo), and the
    versioning relationship to the existing `install.sh`/manifest machinery (§4).
-5. **Where the skill persists per-project decisions** — rely on `fslab.yaml`
-   alone, or keep a side stamp.
-6. **Solo-vs-org capability detection** — whether to trust the Stage-0 answer
+5. **State-stamp location & schema** — the inter-skill contract (§2.3) is now
+   load-bearing: a dedicated `.fslab/skill-state.*` vs a block in `fslab.yaml` vs
+   reusing fslab's existing `build_stamp.py` / `run_stamp.py`. Decide at design
+   time; define the fields (setup done, AWS provisioned, metasim passed +
+   evidence, AGFI/image).
+6. **Solo-vs-org capability detection** — whether to trust the Setup intent answer
    alone or also probe IAM-write capability (e.g. `iam:CreateRole` via a dry-run
    / `simulate-principal-policy`) before offering the admin-CLI scripts (§9.2).
 7. **AWS verification probe specifics** — exact CLI for the F2 **quota** check
@@ -476,38 +560,40 @@ this spec.
 |---|---|---|
 | 1 | Vehicle = Skill, packaged as plugin, marketplace-distributed | Progressive disclosure, bundling, native updates; project skill rejected (out-of-tree audience) |
 | 2 | Audience = end users; skill host = host driving the container | Users work in their own folders; Claude Code runs in host VSCode |
-| 3 | Delivery = marketplace front door; `install.sh` unchanged, driven by Stage 0 | Single AI-native entry point; toolchain install stays decoupled |
-| 4 | Stage 0 = detect + offer to run (per-step consent) | Skill can bootstrap a fresh host without being reckless |
+| 3 | Delivery = marketplace front door; `install.sh` unchanged, driven by the Setup skill | Single AI-native entry point; toolchain install stays decoupled |
+| 4 | Setup prereqs = detect + offer to run (per-step consent) | Setup can bootstrap a fresh host without being reckless |
 | 5 | Scope = full two-phase, F2 hard-gated behind metasim | Don't spend FPGA time/money on an unproven design |
 | 6 | `fslab.yaml` = edit post-`init` (patch, not author) | Matches the validated flow + the `init` contract |
 | 7 | Questionnaires = staged (Option A) | Port-map/clk-reset only meaningful after `init` parses ports |
 | 8 | Gate criterion = user-defined via questionnaire | Different DUTs define "success" differently |
 | 9 | RTL = read-only except narrow width-lint sized-literal fixes (diff-shown) | Never alter user logic; mechanical lint fixes are safe and shown |
 | 10 | AWS = hard spend-confirm; verify-first; never *silently* create IAM, but may run setup scripts per-step-confirmed (solo-admin); console/quota = explain-only | End-user cost/safety; admin-CLI layer is scriptable per the setup docs |
-| 10a | AWS gated behind Phase 2: Stage-0 intent question only; real verify+setup in Phase 2 preflight | Metasim needs no AWS; quota approval is slow so nudge early |
+| 10a | AWS gated behind F2: intent + opt-in provisioning in Setup (S4); verify-only + recurring login in Simulation | Metasim needs no AWS; quota approval is slow so provision early in Setup |
 | 11 | Cloud cleanup = fully automatic, evidence-preserving | Cost safety without destroying diagnostics |
 | 12 | Long F2 build/run = background sub-agents (detached + monitor) | Survive sleep; isolated polling |
-| 13 | Help = 3 tiers (suppressible first-run tour + always-on inline per-question help + on-demand keyword); tour flag per-user (~/.firesim-lab) | Newcomers find the questions confusing; tour is about the *person*, not the project |
+| 13 | Help = always-on inline per-question help + on-demand keyword + a pull-only Help skill for the overview (no marker) | Newcomers find questions confusing; decomposition makes the overview pull-based, eliminating the suppression marker |
+| 14 | Decompose into 3 skills by separation-of-concerns / run-frequency: Help (pull), Setup (once), Simulation (each iteration); bundled as one plugin | Smaller per-invocation context; direct invocation of any part; no marker; self-orchestrating Sim |
+| 15 | AWS seam: provisioning + first-time configure-sso + quota nudge in Setup; recurring login + verify-only in Simulation | One-time vs recurring; the slow F2 quota must be requestable early |
+| 16 | Heavy autonomous work → sub-agents inside Simulation (build-runner, build/run monitors); interaction stays in the skill | Sub-agents are non-interactive + isolate context; absorbs verbose build/monitor output |
+| 17 | Inter-skill state stamp is the contract; metasim→F2 gate enforced by reading the stamp | Separate invocations can't share memory; gate robust across sessions / direct invocation |
 
 ---
 
 ## 16. User help & onboarding
 
-Skills have **no native help UI** — "help" is skill-authored behavior. Because the
-skill is a conversation (not a rigid wizard), it provides **three tiers**, all
-specified as requirements:
+Skills have **no native help UI** — "help" is skill-authored behavior. The
+decomposition (§2.2) makes help **pull-based**, which removes the need for any
+"don't show again" marker. Three tiers:
 
-1. **First-run overview (suppressible).** On entry (§5 0a) the skill checks a
-   **per-user** marker (`~/.firesim-lab/skill-onboarded` or equivalent). If
-   absent, it asks *"New to firesim-lab? Want a 60-second tour?"*; on yes, shows
-   the overview below; then offers **"don't show this again"**, which writes the
-   marker. Per-user (not per-workspace) because it reflects the *person's*
-   familiarity across all their projects. There is no native "remember this
-   choice" control — the marker file **is** the mechanism.
+1. **The `firesim-lab-help` skill (pull).** The user invokes it deliberately to
+   get the flow overview (§16.1) and a map of the other two skills. Because it is
+   pull-not-push, there is **nothing to suppress** — the per-user onboarding
+   marker from the earlier monolithic design is **gone**. (`firesim-lab-setup` and
+   `firesim-lab-sim` also point the user at it on entry when the stamp shows a
+   first run.)
 2. **Inline per-question help (always on).** Every staged question carries
    plain-language `description` text per option plus a one-line *why we're asking*
-   — so a newcomer is never stranded on a confusing question **even if they
-   skipped or suppressed the tour**. This tier is never suppressed.
+   — so a newcomer is never stranded on a confusing question. Never suppressed.
 3. **On-demand help (any time).** The user can type `help` / *"what does this
    do?"* / *"why are you asking this?"* at any stage; the skill explains the
    current stage and, on request, re-shows the overview. No special command is
@@ -528,8 +614,8 @@ specified as requirements:
 >    instance. This **costs money and takes time**, so we always confirm before
 >    spending and shut the cloud machines down for you when done.
 
-This copy lives in `reference/help.md` (loaded for the tour and on-demand
-re-show), keeping `SKILL.md` lean.
+This copy lives in `firesim-lab-help/reference/overview.md`, loaded on demand and
+re-shown by the `help` keyword in the other skills.
 
 ---
 
