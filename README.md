@@ -136,8 +136,9 @@ Full lifecycle reference is below.
 1. [Architecture](#architecture)
 2. [Project lifecycle](#project-lifecycle)
 3. [Environment variables](#environment-variables)
-4. [Acknowledgements & non-affiliation](#acknowledgements--non-affiliation)
-5. [Licensing](#licensing)
+4. [Help & support](#help--support)
+5. [Acknowledgements & non-affiliation](#acknowledgements--non-affiliation)
+6. [Licensing](#licensing)
 
 ---
 
@@ -275,6 +276,26 @@ Host-side (consumed by the launcher, written to `<workspace>/.firesim-lab.env`):
 | `HOST_AWS_DIR`       | Bind-mounted at `~/.aws` so `aws sso login` etc. persist credentials                 |
 | `HOST_SSH_DIR`       | Bind-mounted at `~/.ssh` so ssh / scp / git / rsync find keys at the conventional path |
 | `HOST_UID`, `HOST_GID` | Detected from the workspace mount; used by the entrypoint to drop privileges       |
+
+---
+
+## Help & support
+
+- **Questions, usage help, ideas, and show & tell** — head to
+  [GitHub Discussions](https://github.com/pentarisc/firesim-lab/discussions).
+  Not sure whether something is a bug? Start there; it can always be promoted
+  to an issue.
+- **Reproducible bugs and concrete defects** — open a
+  [GitHub Issue](https://github.com/pentarisc/firesim-lab/issues).
+- **Documentation** — the
+  [docs portal](https://firesim-lab.readthedocs.io/en/latest/) covers the full
+  lifecycle, including a
+  [troubleshooting guide](https://firesim-lab.readthedocs.io/en/latest/troubleshooting/index.html)
+  and tips on
+  [asking a good question](https://firesim-lab.readthedocs.io/en/latest/help-and-support.html).
+
+Please bring firesim-lab questions here rather than to the upstream FireSim or
+Chipyard channels — see the non-affiliation note below.
 
 ---
 

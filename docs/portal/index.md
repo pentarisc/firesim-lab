@@ -42,6 +42,7 @@ developer/index
 :maxdepth: 1
 :caption: Reference
 
+help-and-support
 contributing
 changelog
 appendix/glossary
