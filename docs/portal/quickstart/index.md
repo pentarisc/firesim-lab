@@ -9,6 +9,10 @@ The walkthrough uses the **AXIUARTPrinter** example that ships with firesim-lab.
 
 Pre-load a file at address `0x0`, run the simulation, and the bytes come back out over UART. That is the whole demo — and it exercises the entire pipeline: blackbox wrapping, bridge wiring, Golden Gate elaboration, and the host driver.
 
+:::{tip}
+**Prefer to drive this with AI?** The {doc}`/skill/index` runs this same flow through Claude Code — see the {doc}`/skill/walkthrough` for the AXIUARTPrinter example done conversationally. This page is the manual, copy-paste version.
+:::
+
 ## Before you start
 
 You need a working firesim-lab install and a container shell:

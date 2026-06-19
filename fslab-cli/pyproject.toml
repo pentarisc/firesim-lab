@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fslab"
-version = "0.7.0"
+version = "0.8.0"
 description = "A CLI orchestrator for the MIDASII/GoldenGate hardware compiler"
 readme = "README.md"
 license = { text = "MIT" }

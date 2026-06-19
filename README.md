@@ -84,6 +84,28 @@ hardware sizing, and AWS — is in the
 
 ---
 
+## AI-accelerated flow (Claude Code skill)
+
+Prefer to drive firesim-lab conversationally? An optional **[Claude Code](https://claude.com/claude-code)
+plugin** takes you from a blank host to a passing metasimulation — and on to an
+AWS F2 FPGA — by asking what you want and running the steps for you: scaffolding
+the project, filling in `fslab.yaml`, building with a compile-fix loop, checking
+the output against a success criterion you define, and (only after that passes)
+orchestrating the F2 build/run with SSO, optional notifications when a long task
+finishes or needs you, and automatic, cost-safe cleanup.
+
+```
+/plugin marketplace add pentarisc/firesim-lab
+/plugin install firesim-lab@pentarisc
+```
+
+It is a thin layer over the same `fslab` CLI and image documented below — fully
+optional, and it never spends on AWS or changes your RTL logic without asking.
+See the [skill docs](https://firesim-lab.readthedocs.io/en/latest/skill/index.html)
+and the [end-to-end walkthrough](https://firesim-lab.readthedocs.io/en/latest/skill/walkthrough.html).
+
+---
+
 ## Quick start
 
 firesim-lab runs anywhere Docker does — **Linux, macOS, and Windows (via WSL2)**.
@@ -124,7 +146,7 @@ The installer with no arguments pins to the **latest stable release**. To instal
 a specific version (or the moving `main` dev image) instead, pass it explicitly:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash -s -- v0.7.0
+curl -sSL https://raw.githubusercontent.com/pentarisc/firesim-lab/main/docker/install.sh | bash -s -- v0.8.0
 ```
 
 Full lifecycle reference is below.
