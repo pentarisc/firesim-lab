@@ -169,6 +169,7 @@ target:
 `fpga_sim`
 : FPGA-level simulator id; must exist in the registry `[PROJ-16]`. `xsim` (Xilinx XSIM) is the shipped value.
 
+(bridges-optional)=
 ### `bridges:` — optional
 
 Connects your design's ports to host-modelled bridges (UART, FASED memory, BlockDev). `fslab init` does not generate this block — you add it. Each entry maps **bridge port → design port**.

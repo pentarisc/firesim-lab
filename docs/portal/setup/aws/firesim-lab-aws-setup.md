@@ -67,13 +67,15 @@ fslab connects to the launched instance over SSH. Create an EC2 key pair in your
 ```bash
 aws ec2 create-key-pair \
     --key-name firesim-lab \
+    --key-type ed25519 \
     --region us-west-2 \
     --query 'KeyMaterial' --output text \
     --profile $ADMIN_PROFILE > ~/.ssh/fslab_ed25519
 chmod 600 ~/.ssh/fslab_ed25519
 ```
 
-The `--key-name` value (`firesim-lab`) maps to `key_name:` in `fslab.yaml`; the saved private-key path maps to `ssh_key:`. The account's **default VPC** is sufficient for fslab — you only need the instance reachable over inbound SSH (port 22), which the default security group permits from within the VPC; widen it to your workstation's IP if you launch into a security group that does not already allow SSH.
+`--key-type ed25519` makes the key match the `fslab_ed25519` filename (the
+`create-key-pair` default is RSA). The `--key-name` value (`firesim-lab`) maps to `key_name:` in `fslab.yaml`; the saved private-key path maps to `ssh_key:`. The account's **default VPC** is sufficient for fslab — you only need the instance reachable over inbound SSH (port 22), which the default security group permits from within the VPC; widen it to your workstation's IP if you launch into a security group that does not already allow SSH.
 
 ### Alternative — generate the key locally and import it
 

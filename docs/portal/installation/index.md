@@ -217,6 +217,7 @@ The full set of launcher subcommands is documented in {doc}`first-container-star
 - {doc}`mountpoints` — how host paths map into the container, plus the environment-variable reference.
 - {doc}`first-container-start` — a step-by-step of your first `firesim-lab` run.
 - {doc}`versioning` — the versioning scheme, and how to upgrade the install, a workspace, and a project.
+- {doc}`skill-plugin` — install the optional Claude Code skill that drives the whole flow conversationally.
 - {doc}`/quickstart/index` — scaffold and simulate your first design.
 
 ```{toctree}
@@ -226,4 +227,5 @@ host-vs-container
 mountpoints
 first-container-start
 versioning
+skill-plugin
 ```

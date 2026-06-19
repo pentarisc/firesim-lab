@@ -6,6 +6,7 @@
 
 - **New to FireSim or cycle-accurate simulation?** Begin with {doc}`/concepts/index` for the mental model, then {doc}`/setup/index` and {doc}`/installation/index`.
 - **Have a Verilog design and want to see it run?** Jump to {doc}`/quickstart/index` — a copy-paste walkthrough using the AXIUARTPrinter example.
+- **Prefer to drive it with AI?** The {doc}`/skill/index` runs the whole flow — scaffold, configure, build, simulate, and (gated) AWS F2 — through Claude Code.
 - **Looking up an `fslab` command?** See {doc}`/commands/index`.
 - **Extending firesim-lab itself** — adding a bridge, changing the container, hacking on the CLI? Start with {doc}`/developer/index`.
 
@@ -20,6 +21,7 @@ concepts/index
 setup/index
 installation/index
 quickstart/index
+skill/index
 ```
 
 ```{toctree}
