@@ -72,10 +72,15 @@ The stamp records the **active version** (§2.5), setup completion, AWS readines
 the configured design, whether **metasim passed** (+ its evidence), and any
 AGFI/image. The hard metasim→F2 gate is enforced by `firesim-lab-sim` **reading
 the stamp**, not by in-memory flow order — which makes the gate robust across
-sessions and direct invocation. fslab already writes per-project metadata to
-`.fslab/meta.json` (carrying `__version__`), so that is the natural home: the
-stamp extends it. Exact schema (and whether to keep it in `.fslab/meta.json` vs a
-sibling file) is an open design item (§14).
+sessions and direct invocation. fslab already single-sources per-project metadata
+in `.fslab/meta.json` and generation state in `.fslab/state.json`, and the whole
+`.fslab/` dir is gitignored (local-only) — so the stamp lives **alongside** these
+as **skill-owned JSON sibling files**, split by scope into a **two-level stamp**
+(§2.6): a **workspace-root** file for host/AWS/version facts (written by Setup) and
+a **per-project** `.fslab/skill-state.json` for design/metasim/F2 facts (written by
+Sim). The stamp is skill-owned — the CLI never reads or writes it — and the
+metasim→F2 gate is tied to the CLI's existing `config_hash`, so stale evidence
+re-opens it automatically (§2.6).
 
 ### 2.4 Skill vs. sub-agent (the dividing rule)
 
@@ -127,6 +132,93 @@ This makes "all three skills stick to one version, never `latest`" a property of
 the existing pins rather than new bookkeeping; the only net-new check is the
 skill↔tool MAJOR.MINOR gate in item 4.
 
+### 2.6 State-stamp design (decided)
+
+**Two skill-owned JSON files, split by scope.** The facts differ in *who writes
+them* and *what they're scoped to*, so they live in two places; both sit in
+already-gitignored, **local-only** locations, so "metasim passed" / "AWS
+provisioned" never leak into the user's VCS or a teammate's clone. The skill
+reads/writes them directly as plain files — **no new `fslab` command** (keeps the
+skills a thin layer over the tool, §2.5). Conventions are borrowed from the
+existing build/run stamps: a `schema_version`, a carried `fslab_version`,
+ISO8601-UTC `created_at`/`updated_at`, and atomic `*.tmp`→rename writes.
+
+**Workspace-level — `<workspace>/.firesim-lab.skill-state.json`** (next to
+`.firesim-lab.env`; written by **Setup**, read by all three). Host/account/version
+facts that outlive any single project:
+
+```json
+{
+  "schema_version": 1,
+  "fslab_version": "0.8.0",
+  "skill_version": "0.8.0",
+  "created_at": "2026-06-11T12:00:00Z",
+  "updated_at": "2026-06-11T12:00:00Z",
+  "setup": { "host_prereqs_ok": true, "workspace_initialized": true, "container_discovered": true },
+  "aws": {
+    "intent": "f2",                 // "f2" | "metasim_only"
+    "developer_kind": "solo",       // "solo" | "org" | null
+    "provisioned": true,            // true | false | "skipped"
+    "sso_profile_configured": true,
+    "profile_name": "firesim-lab",
+    "region": "us-east-1"
+  },
+  "notifications": {                // §20; written by Setup, read by Sim
+    "enabled": true,                // false is remembered → Setup never re-asks
+    "events": ["needs_attention", "completion"],   // which report kinds push (§20)
+    "channel": {
+      "type": "webhook",            // "webhook" | "mcp" | "local"
+      "ref": "$FSLAB_NOTIFY_WEBHOOK",   // env-var name / tool ref — NEVER a secret value
+      "env": ["FSLAB_NOTIFY_WEBHOOK"]   // names only; secrets stay in env / MCP config
+    }
+  }
+}
+```
+
+(Setup adds this file to the workspace `.gitignore` — it is host-local, like
+`.firesim-lab.env`. fslab only gitignores the per-project `.fslab/` dir, not the
+workspace root.)
+
+**Project-level — `<project>/.fslab/skill-state.json`** (written by **Sim**, per
+project). Design + gate + F2 pointers:
+
+```json
+{
+  "schema_version": 1,
+  "fslab_version": "0.8.0",
+  "skill_version": "0.8.0",
+  "created_at": "...",
+  "updated_at": "...",
+  "design": {
+    "project_name": "uart-print-test",
+    "top_module": "AXIUARTPrinter",
+    "rtl_paths": ["user_rtl/AXIUARTPrinter.v"],
+    "bridges": ["fased", "uart"]
+  },
+  "metasim": {
+    "passed": true,
+    "config_hash": "<sha256 copied from .fslab/state.json at pass time>",
+    "criterion": { "type": "expected_output", "value": "Hello fr" },
+    "evidence": { "matched": true, "captured_excerpt": "Hello frfom FiReim!…", "max_cycles": 100000 },
+    "passed_at": "..."
+  },
+  "f2": { "last_build_id": null, "last_run_id": null, "agfi": null }
+}
+```
+
+**Gate rule (§7).** F2 is unlocked **iff** `metasim.passed === true` **and**
+`metasim.config_hash` equals the *current* `config_hash` in `.fslab/state.json`.
+Editing RTL or `fslab.yaml` changes that hash and **re-opens the gate
+automatically** — the skill never trusts stale evidence. This reuses the CLI's
+existing hash mechanism (`state.json` `config_hash` / build-stamp `quintuplet`)
+rather than inventing a new freshness check.
+
+**Live F2 state is read, not copied.** AGFI, build status, and run status come
+from the existing `build/fpga/.fslab/build.yaml` and `run/fpga/.fslab/run.yaml`
+stamps; `f2.last_build_id` / `last_run_id` are only **pointers** so the skill can
+find the right stamp. One source of truth per fact — the skill-state file never
+duplicates lifecycle state the CLI already owns.
+
 ---
 
 ## 3. Audience, host, and runtime context
@@ -142,20 +234,63 @@ skill↔tool MAJOR.MINOR gate in item 4.
   In-container → call `fslab` directly. Host → go through `firesim-lab-shell`
   (never bare `docker exec`, which runs as root and breaks SBT/ccache writes).
 
+### 3.1 Forward-compat: multi-runtime (deferred to a later MINOR)
+
+Multi–container-runtime support (rootful Podman, nerdctl/containerd, Finch; then
+rootless as a tested follow-on) is **deferred to a MINOR after this SKILL's
+debut.** Build the SKILL **docker-only now**, but leave these four seams so the
+later change is a near one-file edit rather than a scattered one (this is also why
+the host wording above and in §13 #1, §18 says "container runtime" where possible):
+
+1. **Single container-CLI seam.** All container invocation resolves one `$RUNTIME`
+   variable in `scripts/detect-context.sh`, and all exec'ing flows through **one**
+   helper. The literal string `docker` must appear in **exactly one place**
+   (`detect-context.sh`). `SKILL.md` and the `reference/` files reference the
+   helper — they must **never inline** `docker exec <container> firesim-lab-shell …`
+   in prose/examples. (The inlined forms in §3 above, §13 #1, and §18 are the ones
+   to route through the seam when the SKILL is authored.)
+2. **Read `CONTAINER_RUNTIME` with a `docker` fallback.** `detect-context.sh`
+   sources `CONTAINER_RUNTIME` from `.firesim-lab.env`, defaulting to `docker` when
+   absent — so the day the launcher begins writing that field, the SKILL already
+   honors it with no change.
+3. **Reserve the stamp field.** The workspace skill-state (§2.6) carries
+   `setup.container_runtime` (value `"docker"` today) so adding runtimes later needs
+   **no `schema_version` bump**.
+4. **Runtime-neutral prose.** Phrase the §5 S1 prereq check and §3 context
+   detection as "the container runtime" with docker as the current concrete
+   example, so the later edit is wording, not logic.
+
+Only seam 1 is load-bearing; 2–4 are cheap insurance that keep the env/stamp
+schemas and doc prose from churning. The actual multi-runtime change set (launcher,
+compose, entrypoint, docs/portal) is tracked outside this spec; per the project's
+**Version & SKILL synchronization** rule, the MINOR that introduces it must update
+this spec first, then the SKILL.
+
 ---
 
 ## 4. Delivery model
 
-- **Source location:** skills authored under a neutral **`skills/`** folder at the
-  **repo root** (not `.claude/skills/`), separating *authoring location* from
-  *deployment location*. Layout kept **plugin-compatible**
-  (`.claude-plugin/plugin.json`, marketplace manifest; §12).
-- **Distribution:** **marketplace / plugin** is the front door. Installing the one
+- **Location — this repo doubles as the marketplace *and* the plugin.** Skills
+  live under **`skills/`** at the repo root (not `.claude/skills/`, which would
+  only activate inside this repo); sub-agents under **`agents/`**. The marketplace
+  manifest sits at the fixed **`.claude-plugin/marketplace.json`** (the file
+  `/plugin marketplace add` reads), and the plugin manifest at
+  **`.claude-plugin/plugin.json`** with `source: "."`. Full tree + the
+  `marketplace.json` contents are in §12.
+- **Why same repo:** the skills are **tagged and released with the tool** (one set
+  of git tags, the one `release.yml`), so the plugin content at tag `vX.Y.Z`
+  matches the tool at that tag — making the §2.5 MAJOR.MINOR binding *structural*
+  rather than a manual cross-repo sync. A separate repo would reintroduce exactly
+  that skew.
+- **Distribution:** **marketplace / plugin** is the front door; installing the one
   plugin makes all three skills available. README documents the two-line install:
   ```
   /plugin marketplace add pentarisc/firesim-lab
-  /plugin install firesim-lab
+  /plugin install firesim-lab@firesim-lab
   ```
+- **Portability:** the `skills/<name>/SKILL.md` layout is the portable Agent-Skills
+  convention — other tools can consume `skills/` directly; the `.claude-plugin/`
+  wrapper is Claude Code's installer layer and is inert elsewhere.
 - **Relationship to `install.sh`:** the host toolchain (the `firesim-lab`
   launcher at `~/.local/bin/firesim-lab` + the Docker image) and the **skills** are
   **independent installs**. `install.sh` remains **as-is** as the toolchain
@@ -184,6 +319,10 @@ HELP skill — on demand (pull) ────────────────
 SETUP skill — run once per host/account; writes the stamp ─────────────────────
  S1. Host prereqs: Docker running? firesim-lab launcher? image pulled?
      └─ DETECT + OFFER TO RUN (per-step confirm) — may run install.sh / pull image
+     └─ launcher is TTY-guarded: only --pull/--status/--down/--clean-cache/--upgrade/
+        --help run non-interactively; bare `firesim-lab` (init/start) needs a TTY —
+        drive it by pre-seeding the prompted fields (VERILATOR_THREADS,
+        ENABLE_CUSTOM_PLUGINS; both have defaults) or hand the command to the user
  S2. Workspace init: is .firesim-lab.env present? if absent, run the launcher
  S3. Container running? discover it; establish firesim-lab-shell path (§3)
      └─ detect the active tool version (fslab --version / FIRESIM_LAB_VERSION;
@@ -195,6 +334,10 @@ SETUP skill — run once per host/account; writes the stamp ──────�
      │  confirm — solo-developer admin only; org-developer = direct to their admin
      └─ first-time `aws configure sso` (create the login profile)
      → stamp: setup done; AWS provisioned (or skipped)
+ S5. Notifications — OPT-IN (ask intent; §20): want a ping when a task finishes or
+     needs attention? → existing channel (reuse) OR scaffold + guide a new one
+     (webhook-first; agent can't complete auth — human pastes URL / OAuths)
+     → stamp: notifications block (enabled + events + channel ref; never a secret)
 
 SIMULATION skill — every iteration; self-orchestrates; binds to stamp version §2.5
   metasim ─────────────────────────────────────────────────────────────────────
@@ -202,8 +345,8 @@ SIMULATION skill — every iteration; self-orchestrates; binds to stamp version 
  2. Project: ask name → fslab new → docker cp RTL + payload into /target/<proj>
  3. Bridges: ask which → check DUT ports vs registry required ports
     └─ missing required ports = HARD STOP (report; needs user RTL change)
- 4. Configure fslab.yaml: clk/reset/enable, port_map, ref: params, mem_base
-                                             [INFER + SHOW; user vetoes]
+ 4. Configure fslab.yaml: top-level host (emulator+driver_name+sources §13#11/#12),
+    clk/reset/enable, port_map, ref: params, mem_base   [INFER + SHOW; user vetoes]
  5. fslab generate → build (compile-fix loop; build via build-runner sub-agent §10)
     ├─ logic/semantic/elaboration error = REPORT to user, do not fix, wait, rebuild
     └─ Verilator -Wall width-lint        = MAY apply minimal sized-literal fix,
@@ -219,8 +362,12 @@ SIMULATION skill — every iteration; self-orchestrates; binds to stamp version 
     publish mode, spend ack  → patch fslab.yaml target.*
 10. fslab build fpga (EC2 launch / AFI create = HARD SPEND CONFIRM)
     └─ background build-monitor sub-agent → on image: pull artifacts → TERMINATE EC2
+       → RETURNS report to skill; the skill (foreground) sends the notification (§20)
 11. Patch fslab.yaml with AGFI/image → fslab sim fpga (detached) →
-    background run-monitor sub-agent → on completion: pull output → STOP F2 → report
+    background run-monitor sub-agent → on completion: pull output → STOP F2 →
+    RETURNS report to skill; the skill (foreground) sends the notification (§20)
+
+Notifications: only the foreground skill ever sends; sub-agents return reports (§20).
 ```
 
 ---
@@ -249,8 +396,9 @@ runs:
 
 - **Setup questionnaire** (`firesim-lab-setup`) — prereq remediation consent (per
   step) + workspace init + **AWS intent** (plan to use F2? **solo-developer vs
-  org-developer**). On "F2 yes" it drives the opt-in AWS provisioning (S4, §9);
-  metasim-only users skip all AWS.
+  org-developer**) + **notification intent** (want pings when a task finishes /
+  needs attention? already have a channel vs scaffold a new one; §20). On "F2 yes"
+  it drives the opt-in AWS provisioning (S4, §9); metasim-only users skip all AWS.
 - **Project/RTL questionnaire** (`firesim-lab-sim`) — RTL path(s), top module
   (propose from the open VSCode file when possible), project name.
 - **Bridge questionnaire** (`firesim-lab-sim`) — which bridges; before the port
@@ -259,7 +407,10 @@ runs:
   `port_map` are presented **after** `fslab init` parses the real ports,
   **pre-filled with the skill's INFER proposals** for the user to veto. (The
   "edit post-init" strategy: the skill patches `fslab.yaml`, it does not author it
-  from scratch.)
+  from scratch.) It must also author the **mandatory top-level `host:` emulator
+  block** (`emulator` + `driver_name`) and list the generated driver in
+  `host.sources` — these are **required** for `generate`/link to succeed, not
+  optional (§13 #11, #12).
 - **Success-criterion question** (`firesim-lab-sim`) — what constitutes a passing
   metasim (the gate contract; see §7).
 - **F2 questionnaire** (`firesim-lab-sim`) — appears **only after the gate
@@ -297,7 +448,10 @@ Notes the skill must encode when evaluating:
 1. **User RTL is read-only — with one narrow exception.**
    - **Logic / semantic / elaboration errors:** the skill **reports and never
      fixes**; it surfaces the diagnostics, waits for the user to fix the RTL, then
-     re-runs `fslab build`.
+     re-runs `fslab build`. The report is structured per §20 — `error_diagnosed`
+     (summary + suggested fix) when the skill can root-cause it from the log,
+     `error_opaque` (summary + the relevant log excerpt, no invented fix) when it
+     cannot.
    - **Verilator `-Wall` width-lint warnings** (the trivial sized-`$clog2`-cast /
      sized-comparison class made fatal by the FireSim Makefrag, §13 #4): the
      skill **may auto-apply a minimal sized-literal fix**, but **shows the diff**
@@ -384,11 +538,37 @@ once). The **Verification** probes and the *recurring* `aws sso login` run in
 
 ### 9.3 Readiness probes the preflight runs
 
-Active SSO session (`get-caller-identity`); build role + instance profile +
-policy (`fslab-fpga-builder`); run role (`fslab-fpga-runner`); `iam:PassRole`
-grant present; SSH key pair exists in the chosen region; **F2 quota > 0**
-(else no instance launches); region is F2-capable and an FPGA Developer **AMI**
-id is available for it. Each gap is reported with its layer and remediation.
+Active SSO session (`get-caller-identity`); build role + instance profile
+(`fslab-fpga-builder`); run role (`fslab-fpga-runner`); `iam:PassRole` grant
+present; SSH key pair exists in the chosen region; **F2 quota > 0** (else no
+instance launches); region is F2-capable and an FPGA Developer **AMI** id is
+available for it.
+
+**Least-privilege + graceful, not admin-assuming (validated live 2026-06-19
+against the `FireSim-Developer` permission set).** The probes must succeed for a
+*normal org developer*, not only an admin, and must distinguish a missing resource
+(GAP) from a probe the identity is not allowed to run (UNKNOWN — informational,
+never a false gap):
+
+- **Roles are checked via their INSTANCE PROFILE** (`iam:GetInstanceProfile`,
+  granted by the PassRole policy), **not `iam:GetRole`** (which the developer lacks
+  — `get-role` returns AccessDenied even when the role exists).
+- **The F2 quota is discovered BY NAME** (`QuotaName` contains
+  `"On-Demand F instances"`) via `service-quotas list-service-quotas` then
+  `list-aws-default-service-quotas` — **no hardcoded, possibly-wrong quota code**.
+  Developers cannot read `servicequotas` at all → report **UNKNOWN and assume the
+  quota is available** (tell the user to verify in the console / ask their admin);
+  never a "quota is 0" gap. (Admin path returns the real value, e.g. 24 vCPU.)
+- **The FPGA Developer AMI is owned by `aws-marketplace`** (owner `679593333241`),
+  **not `amazon`** — `--owners amazon` silently returns nothing. Query
+  `--owners aws-marketplace amazon`, name `FPGA Developer AMI*`.
+- **`iam:PassRole` is NOT self-verifiable** by a developer (`simulate-principal-
+  policy` needs an IAM principal ARN — an SSO assumed-role session ARN is rejected
+  — and the permission is usually denied). Treat it as an info note, not a gap; the
+  real proof is a successful build launch.
+
+Every AccessDenied → UNKNOWN with guidance; only a genuinely absent resource is a
+GAP (reported with its layer + remediation). Readiness fails only on a hard gap.
 
 ### 9.4 SSO device-code UX
 
@@ -421,7 +601,13 @@ work to sub-agents, keeping all user interaction in the skill itself:
   Golden Gate / Verilator) in isolated context and returns a **distilled verdict**
   — pass, a width-lint diff it applied, or a concise logic-error diagnostic. The
   hundreds of lines of build output never enter the skill's context; the
-  compile-fix loop control and the user hand-off stay in the skill (§8.1).
+  compile-fix loop control and the user hand-off stay in the skill (§8.1). The
+  verdict maps onto the §20 report object (`auto_fixed` / `error_diagnosed` /
+  `error_opaque`). When the failure is a **schema/config validation error**, the
+  diagnosis must be attributed to the **actual schema field path that raised it**
+  (resolve against the model), not inferred from a nearby YAML key — a confident
+  wrong attribution is worse than `error_opaque`. (In validation testing the runner
+  mis-blamed a missing **top-level** `host` on `target.build.host`; §13 #11.)
 - **`build-monitor`** (F2, step 10, background): poll `fslab monitor build`; on
   image-ready, pull logs/artifacts, then **terminate the build EC2** (§8.4).
 - **`run-monitor`** (F2, step 11, background): after `fslab sim fpga --detach`,
@@ -430,6 +616,13 @@ work to sub-agents, keeping all user interaction in the skill itself:
 
 These are the right use of the sub-agent primitive (isolated, non-interactive,
 context-absorbing). Anything needing user input stays in the skill.
+
+**Sub-agents never send notifications (§20).** Each returns its report (verdict /
+diagnostic / completion) to the foreground skill; cleanup (terminate/stop) still
+happens autonomously for cost safety, but the **notification is sent by the skill**
+when the harness re-invokes it on the background task's completion. This keeps a
+single notifier, avoids the background-context MCP limitation, and ensures any
+follow-up decision is taken in the interactive skill, not the isolated agent.
 
 ---
 
@@ -453,11 +646,13 @@ intended post-`init` configuration step.** Two columns:
 
 ---
 
-## 12. Plugin layout (three skills + sub-agents, progressive disclosure)
+## 12. Plugin & marketplace layout (three skills + sub-agents)
 
 ```
-firesim-lab/                       # the plugin (marketplace entry)
-  .claude-plugin/plugin.json       # one manifest bundling all skills + agents
+firesim-lab/                       # repo root = marketplace AND plugin
+  .claude-plugin/
+    marketplace.json               # read by `/plugin marketplace add pentarisc/firesim-lab`
+    plugin.json                    # plugin manifest (source "."); bundles all skills + agents
   skills/
     firesim-lab-help/
       SKILL.md                     # the overview/map; names the other skills (§16)
@@ -481,9 +676,11 @@ firesim-lab/                       # the plugin (marketplace entry)
         fpga.md                    # F2 build/run pipelines, target.build/target.run, cleanup
         aws-login.md               # §9.4 recurring device-code login + verify-only preflight
       scripts/
-        detect-context.sh          # (shared helper, mirrored or symlinked)
-        verify-aws.sh              # verify-only readiness probes
-        scrape-sso-code.sh         # §9.4 extract verification URL + code from backgrounded login
+        # detect-context.sh / verify-aws.sh are NOT mirrored here — they are
+        # single-sourced in firesim-lab-setup/scripts/ and referenced via
+        # $CLAUDE_PLUGIN_ROOT, so the `docker` literal stays in exactly one file
+        # (seam 1, §3.1). Only sim-specific scripts live here.
+        scrape-sso-code.sh         # §9.4 device-code login: --launch (scrape URL+code) / --poll / --verify-only
   agents/
     build-runner.md                # §10 metasim build executor (distilled verdict)
     build-monitor.md               # §10 background F2 build monitor + cleanup
@@ -492,7 +689,36 @@ firesim-lab/                       # the plugin (marketplace entry)
 
 Each `SKILL.md` stays lean; `reference/` files load only when that stage is
 entered (a metasim-only run never loads `fpga.md`). Shared scripts
-(`detect-context.sh`, `verify-aws.sh`) are factored to one place and reused.
+(`detect-context.sh`, `verify-aws.sh`) are **single-sourced** in
+`firesim-lab-setup/scripts/` and referenced from `firesim-lab-sim` via
+`$CLAUDE_PLUGIN_ROOT` rather than mirrored/symlinked — this keeps the `docker`
+literal in exactly one place (seam 1, §3.1), which a mirrored copy would violate.
+(Decided at build time, validated against a live account 2026-06-19.)
+
+`marketplace.json` (the repo root doubles as a single-plugin marketplace):
+
+```json
+{
+  "name": "firesim-lab",
+  "owner": { "name": "pentarisc" },
+  "plugins": [
+    { "name": "firesim-lab", "source": ".",
+      "description": "AI-accelerated firesim-lab: Help, Setup, Simulation skills",
+      "version": "0.8.0" }
+  ]
+}
+```
+
+Install from any project:
+
+```
+/plugin marketplace add pentarisc/firesim-lab
+/plugin install firesim-lab@firesim-lab
+```
+
+The plugin `version` tracks the repo tag (§2.5): the plugin content at tag
+`vX.Y.Z` matches the tool at that tag. (If `firesim-lab@firesim-lab` reads
+awkwardly, set `marketplace.json` `name: "pentarisc"` → `firesim-lab@pentarisc`.)
 
 ---
 
@@ -533,7 +759,8 @@ this spec.
    writes the payload at offset 0 of the model; a mismatched base (e.g.
    `0x80000000` when the DUT reads from `0x0`) puts the read outside the modeled
    region → no response → the sim **hangs**
-   (`templates/bridges/fased/wiring.scala.j2`). **→ §8.5.**
+   (`templates/bridges/fased/wiring.scala.j2`). The value's *encoding* matters too
+   — see #14. **→ §8.5.**
 
 6. **Bridge `port_map` direction convention.** Keys are *bridge* port names;
    values are *DUT blackbox* port names. For FASED: `m_*` keys = DUT **master
@@ -549,7 +776,8 @@ this spec.
    Params with no 1:1 design param (`mem_base`, `mem_size`, `memory_region_name`,
    `freq_mhz` — different units from `CLK_HZ`) stay literal. Mechanism:
    `fslab-cli/fslab/schemas/resolvers.py` (`BridgeParam.normalize` /
-   `resolve_refs`); the ref dict is `{ref: NAME}`. **→ §6.1 INFER+SHOW.**
+   `resolve_refs`); the ref dict is `{ref: NAME}`. Literal params must also match
+   the bridge stub's Scala type (see #13). **→ §6.1 INFER+SHOW.**
 
 8. **UART output goes to stdout, interleaved.** The host UART model
    (`lib/bridges/src/main/cc/bridges/uart.cc`) prints received bytes to stdout
@@ -569,6 +797,43 @@ this spec.
     those flags whenever the binary is already current (faster).
     **→ already fixed; skill prefers `--skip-rtl --skip-driver` when current.**
 
+11. **The top-level `host:` (emulator) block is mandatory, but `fslab init` emits
+    it commented out.** `init` writes the top-level `host:` block (`emulator`,
+    `driver_name`) **commented out**, yet `FSLabConfig.host` is a **required**
+    field — so `fslab generate` aborts with `1 validation error for
+    LiveFSLabConfig / host / Field required`. Note the bare `host` path is the
+    **top-level** host, **not** `target.build.host` (a real trap: the active
+    `target.build.host` block is present and unrelated, so the error misleads).
+    The skill must author the block during post-`init` config: minimally
+    `emulator: "verilator"` plus a `driver_name`. **→ §6.2 post-`init` config.**
+
+12. **`host.sources` must list the generated driver, or the metasim link fails.**
+    `USER_CC` in the generated `CMakeLists.txt` comes from `config.host.sources`
+    (`fslab-cli/fslab/commands/context.py`: `user_cc_files =
+    list(config.host.sources)`). The fslab-**generated** driver
+    `src/main/cc/<driver_name>.cc` — which defines `create_simulation()` — is
+    **not** auto-added; with an empty `host.sources` the Verilator link fails with
+    `undefined reference to create_simulation`. The skill must add the generated
+    driver to `host.sources`. **→ §6.2 post-`init` config.**
+
+13. **UART `freq_mhz` must be an integer literal.** `UARTBridge.apply` types
+    `freqMHz: Int`. A float in `fslab.yaml` (`freq_mhz: 100.0`) is rendered
+    verbatim into the generated Scala (`UARTBridge(..., 100.0, ...)`) and sbt fails
+    with `type mismatch; found Double(100.0) required Int`. Write `freq_mhz: 100`.
+    (Sharpens #7: a literal bridge param must also match the bridge stub's Scala
+    type.) **→ §6.1 INFER+SHOW.**
+
+14. **FASED `mem_base`/`mem_size` are rendered as `BigInt("<value>", 16)` — write
+    them as bare hex-digit strings.** `templates/bridges/fased/wiring.scala.j2`
+    emits `BigInt("{{ mem_base.value }}", 16)` / `BigInt("{{ mem_size.value }}",
+    16)`, so the value is parsed as **base-16 digits**. Writing `0x40000000` (YAML
+    parses it to decimal `1073741824`) becomes `BigInt("1073741824", 16)` — a
+    non-power-of-two address mask → Golden Gate elaboration fails with
+    `AXI4SlaveParameters: minAlignment (N) must be >= maxTransfer (M)`. Write bare
+    hex, **no `0x`, not decimal**: `mem_base: "0"`, `mem_size: "40000000"` (= 0x0 /
+    0x40000000). `mem_base: 0x0` only survives by luck ("0" is base-agnostic).
+    (Extends #5 with the encoding format.) **→ §8.5; §6.1 ASK.**
+
 ---
 
 ## 14. Open items deferred to build time
@@ -583,12 +848,13 @@ this spec.
 4. **Plugin manifest + marketplace plumbing** — `plugin.json` fields, marketplace
    manifest location (this repo vs a dedicated marketplace repo), and the
    versioning relationship to the existing `install.sh`/manifest machinery (§4).
-5. **State-stamp location & schema** — the inter-skill contract (§2.3) is
-   load-bearing. Leading candidate: **extend the existing `.fslab/meta.json`**
-   (already written by `fslab init`, already carries `__version__`); alternatives
-   are a sibling `.fslab/skill-state.*` or reusing `build_stamp.py`/`run_stamp.py`.
-   Decide at design time; define the fields (active version, setup done, AWS
-   provisioned, metasim passed + evidence, AGFI/image).
+5. **State-stamp location & schema** — **DECIDED, see §2.6.** Two skill-owned JSON
+   sibling files split by scope: a **workspace-root** `.firesim-lab.skill-state.json`
+   (host/AWS/version, written by Setup) and a **per-project**
+   `.fslab/skill-state.json` (design/metasim/F2, written by Sim). The metasim→F2
+   gate is tied to the CLI's existing `config_hash` (stale evidence re-opens it),
+   and live F2 state is read from the existing build/run stamps, not copied.
+   (Rejected: extending the CLI-owned, immutable `.fslab/meta.json`.)
 6. **Solo-vs-org capability detection** — whether to trust the Setup intent answer
    alone or also probe IAM-write capability (e.g. `iam:CreateRole` via a dry-run
    / `simulate-principal-policy`) before offering the admin-CLI scripts (§9.2).
@@ -601,6 +867,11 @@ this spec.
 9. **Skill `fslab_version` declaration** — where each skill records its compatible
    MAJOR.MINOR (a `plugin.json` field vs a skill metadata file) and how it invokes
    the tool's `is_compatible` and surfaces the standard `--upgrade` message (§2.5).
+10. **Notification channel wiring** — the concrete send mechanism per `channel.type`
+    (webhook `curl` payload shape; which MCP "send" tools to support; the `local`
+    `preferredNotifChannel` fallback), the exact scaffold-and-guide flow for a new
+    channel (what the agent writes vs the human-only auth/reconnect steps), and how
+    the foreground skill picks up a background sub-agent's report to send on (§20).
 
 ---
 
@@ -629,7 +900,9 @@ this spec.
 | 18 | Version awareness = detect-and-bind to the installed tool (single source of truth); never reference `latest`/`stable` | Skills are a thin layer over whatever tool/image is installed |
 | 19 | Skill↔tool compatibility at MAJOR.MINOR, reusing the tool's `is_compatible`; skill patches ship independently | Consistent with fslab.yaml/registry.yaml gating; same `--upgrade` UX |
 | 20 | RTD links pinned to `/en/v<active>/`; fallback = nearest published patch, else warn | Guidance must match the installed version; never silently drift to latest |
-| 21 | All three skills bind to the one workspace-pinned version (`FIRESIM_LAB_VERSION`); stamp likely extends `.fslab/meta.json` | The existing matched-set pin makes "one version" free; reuse, don't reinvent |
+| 21 | All three skills bind to the one workspace-pinned version (`FIRESIM_LAB_VERSION`) | The existing matched-set pin makes "one version" free; reuse, don't reinvent |
+| 22 | State stamp = **two skill-owned JSON files** (workspace-root host/AWS/version + per-project design/metasim/F2), JSON format; gate tied to the CLI `config_hash`; live F2 state read from build/run stamps; no new `fslab` command (§2.6) | Facts split by scope/writer; `.fslab/` already gitignored/local; reusing the hash mechanism makes stale evidence re-open the gate for free; keeps skills a thin layer. Rejected extending the immutable CLI-owned `.fslab/meta.json` |
+| 23 | Errors/notifications = one **report object** (`auto_fixed`/`error_diagnosed`/`error_opaque`/`needs_decision`/`completed`), inline always-on, push optional; **diagnosable→summary+fix, opaque→summary+excerpt (never invent a fix)**; channel **webhook-first** (MCP/local alts), push set = attention+completion, setup = **scaffold+guide** (auth is human-only); **only the foreground skill notifies** — sub-agents return reports (§20) | One taxonomy governs inline + push so the "what" holds even with push off; hooks can't carry composed content; webhook works without OAuth; single notifier dodges the background-MCP limit and keeps decisions interactive |
 
 ---
 
@@ -767,3 +1040,87 @@ fslab sim --args '+loadmem=/target/<proj>/payloads/<file> +max-cycles=<N>'
 **Worked example**
 - [examples/axi-uart/](../../examples/axi-uart/) — `AXIUARTPrinter.v` (tested),
   `sample.hex`, `README.md`
+
+---
+
+## 20. Error reporting & notifications
+
+Two halves: **what** the skill says when something fails or finishes, and **how**
+it optionally pushes that to the user's messaging channel. The unifying principle:
+**there is one report, two transports.** Inline rendering in the conversation is
+**always on**; a push notification is **optional transport of the same content**.
+So the *what* governs how every error/outcome is presented **even when the user
+has notifications off** — turning push on never changes the message, only its
+reach.
+
+### 20.1 The report object (the "what")
+
+Every notify-worthy event produces one structured report. Five `kind`s:
+
+| `kind` | When | Content | Pushes by default? |
+|---|---|---|---|
+| `auto_fixed` | a width-lint sized-literal fix was applied (§8.1) | summary + **the diff** | no — informational, inline-only |
+| `error_diagnosed` | the skill root-causes the failure from the log | summary **+ suggested fix** (the user edits RTL/config) | yes (attention) |
+| `error_opaque` | the skill **cannot** root-cause it | summary of the problem + the relevant **log excerpt / `file:line`** — **never a fabricated fix** | yes (attention) |
+| `needs_decision` | spend gate, SSO code ready, port-check hard stop, success-criterion confirm | summary + exactly what is being asked | yes (attention) |
+| `completed` | metasim passed; F2 image ready; F2 run output ready | summary + where the output/artifact is | yes (completion) |
+
+Common shape (the `build-runner` verdict maps onto this, §10):
+
+```json
+{
+  "kind": "error_diagnosed",
+  "stage": "build:verilator",        // generate | build:sbt | build:golden_gate | build:verilator | sim | f2_build | f2_run | aws_sso | ...
+  "title": "Verilator width-lint failed in AXIUARTPrinter.v",
+  "summary": "…plain-language paragraph…",
+  "suggested_fix": "…concrete next step (error_diagnosed / needs_decision only)…",
+  "log_excerpt": "…relevant lines + file:line (error_* only)…",
+  "needs_user_action": true
+}
+```
+
+**Diagnosable vs opaque is the heart of the "what".** The skill (or the
+`build-runner` sub-agent) **attempts** root-cause from the log: confident →
+`error_diagnosed` with a fix; not confident → `error_opaque`, handing over the raw
+material so the user has what they need, **without inventing a fix**. This
+formalizes the §8.1 "report, never fix" rule for user RTL.
+
+### 20.2 Delivery (the "how")
+
+- **Single sender: the foreground skill.** Only `firesim-lab-sim` (the interactive
+  skill) sends notifications. **Sub-agents never notify** — `build-runner`,
+  `build-monitor`, `run-monitor` return their report to the skill, which sends it
+  when the harness re-invokes the skill on the background task's completion (§10).
+  One notifier; decisions stay interactive; and the channel only ever runs in the
+  main agent's context (sidestepping the known background-context MCP limitation).
+- **Canonical channel = webhook-first.** The skill sends via a Bash `curl` to a
+  webhook URL (token in an env var). Alternatives: an MCP "send message" tool
+  (`channel.type: "mcp"`), or the built-in `preferredNotifChannel` terminal/OS bell
+  (`channel.type: "local"`, zero-setup but generic and local-only).
+- **Hooks are not used for the message body.** A Claude Code `Notification` hook
+  only carries the harness's generic text — it **cannot** carry our composed,
+  classified message. So the skill sends directly; hooks are not the mechanism.
+- **Default push set:** `error_diagnosed` + `error_opaque` + `needs_decision`
+  (attention) **and** `completed` (completion). `auto_fixed` stays inline-only.
+  The user can narrow this; `notifications.events` records the choice (§2.6).
+
+### 20.3 Setup & consent (Setup step S5, §5)
+
+1. **Ask intent:** want a ping when a task finishes or needs attention? `no` is
+   stored (`enabled: false`) so Setup **never re-asks**. Inline reporting still
+   applies regardless.
+2. **Existing vs new channel:** if the user already has a channel (a webhook, an
+   MCP "send" server, a CLI), the skill records a **reference** to it (consented
+   for this workspace). If not, the skill **scaffolds + guides**: it writes the
+   config/env scaffold and walks the user through the **human-only** steps — pasting
+   a webhook URL, OAuth approval, or a session reconnect. **The agent cannot
+   complete auth itself** (no OAuth, no SMTP creds); it is honest about this. For
+   an **env-var-backed** channel, the secret must be exported where
+   **non-interactive** shells read it — for zsh that is `~/.zshenv`, **not**
+   `~/.zshrc` (which only interactive shells source) — because the skill sends from
+   a non-interactive Bash/zsh shell; a value only in `~/.zshrc` is invisible to the
+   sender.
+3. **Store in the workspace stamp** (§2.6 `notifications` block): `enabled`,
+   `events`, and a `channel` **reference** — `type` + an env-var name / tool ref.
+   **Secrets are never written to the stamp**; they live in env or the MCP server
+   config. (The stamp is gitignored, but the principle holds regardless.)

@@ -1,0 +1,11 @@
+{
+  "name": "firesim-lab",
+  "version": "0.8.0",
+  "description": "AI-accelerated firesim-lab flow as three cooperating skills (Help, Setup, Simulation) plus build/run sub-agents. Drives the no-Chisel Verilog/SystemVerilog flow: scaffold -> configure -> metasim -> gate -> AWS F2 build/run, binding to the installed fslab version.",
+  "author": { "name": "pentarisc" },
+  "homepage": "https://github.com/pentarisc/firesim-lab",
+  "repository": "https://github.com/pentarisc/firesim-lab",
+  "license": "Apache-2.0",
+  "keywords": ["firesim", "firesim-lab", "fslab", "rtl", "verilog", "systemverilog", "fpga", "aws-f2", "metasim", "simulation"],
+  "fslab_version": "0.8.0"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "pentarisc",
+  "owner": { "name": "pentarisc" },
+  "plugins": [
+    {
+      "name": "firesim-lab",
+      "source": ".",
+      "description": "AI-accelerated firesim-lab flow: Help, Setup, and Simulation skills that drive the no-Chisel Verilog/SystemVerilog metasim -> AWS F2 pipeline end to end.",
+      "version": "0.8.0"
+    }
+  ]
+}
