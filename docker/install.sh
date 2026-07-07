@@ -103,8 +103,17 @@ need() {
     exit 1
   }
 }
+need_any_runtime() {
+  local rt
+  for rt in docker podman nerdctl finch; do
+    command -v "$rt" &>/dev/null && return 0
+  done
+  echo "$(_red "Error:") No supported container runtime found (docker, podman, nerdctl, finch)."
+  echo "Install one of these before continuing."
+  exit 1
+}
 need curl
-need docker
+need_any_runtime
 
 # ── Download helper ───────────────────────────────────────────────────────────
 download() {
@@ -335,7 +344,7 @@ echo "    $(_cyan "cd ~/my-workspace")"
 echo "    $(_cyan "firesim-lab")"
 echo ""
 echo "  On first run in a new directory, firesim-lab will prompt you for"
-echo "  your project name and settings, then start the Docker container"
+echo "  your project name and settings, then start the container"
 echo "  and drop you straight into a shell."
 echo ""
 echo "  $(_bold "AWS credentials:")"

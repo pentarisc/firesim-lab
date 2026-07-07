@@ -178,27 +178,34 @@ services:
 
     # ── Resource limits ─────────────────────────────────────────────────────
     # Chisel elaboration + Verilator compilation are memory-intensive.
+    # deploy.resources is honored outside swarm mode by docker compose and
+    # nerdctl/finch compose (both built on compose-go); mem_limit/mem_reservation
+    # are the classic fallback for engines that only look at deploy.resources in
+    # swarm mode (e.g. podman-compose).
     deploy:
       resources:
         limits:
           memory: ${CONTAINER_MEMORY_LIMIT:-16g}
         reservations:
           memory: ${CONTAINER_MEMORY_RESERVE:-8g}
+    mem_limit: ${CONTAINER_MEMORY_LIMIT:-16g}
+    mem_reservation: ${CONTAINER_MEMORY_RESERVE:-8g}
 
     # ── Working directory ────────────────────────────────────────────────────
     working_dir: /target
 
 # =============================================================================
 #  Named volumes
-#  Managed by Docker under /var/lib/docker/volumes/.
-#  Persist until explicitly removed with `docker volume rm` or
+#  Managed by the container runtime — under /var/lib/docker/volumes/ for
+#  Docker, or ~/.local/share/containers/storage/volumes/ for Podman.
+#  Persist until explicitly removed with `<runtime> volume rm` or
 #  `firesim-lab --clean-cache`.
 #  Seeded on first use from the corresponding image layer path.
 #
 #  Volume names are user-specific (embed HOST_UID) so that multiple users
-#  on the same Docker host have independent caches.  The names are
+#  on the same host have independent caches.  The names are
 #  pre-composed by the run script and written into .firesim-lab.env as
-#  VOLUME_* variables, which are substituted here by docker-compose's
+#  VOLUME_* variables, which are substituted here by the compose
 #  --env-file mechanism.  Because the values are plain strings (not
 #  expressions involving HOST_UID), substitution is reliable.
 #
