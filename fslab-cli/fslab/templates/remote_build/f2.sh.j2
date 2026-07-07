@@ -194,6 +194,16 @@ fi
 rm -f "$HEAD_ERR"
 
 # ---------------------------------------------------------------------------
+# Give the boot-time data-volume filesystem grow a moment to settle before the
+# build consumes the volume. When fslab.yaml sets `data_volume_gb`, cloud-init
+# UserData (injected at launch) grows the data filesystem to fill the enlarged
+# EBS block device; the resize is sub-second, but this fixed short wait removes
+# any race between SSH-readiness and the grow completing. No-op when the volume
+# was not resized.
+# ---------------------------------------------------------------------------
+sleep 2
+
+# ---------------------------------------------------------------------------
 # 3. Build (delegates to the platform's build-bitstream.sh, same as the
 #    legacy synchronous flow).
 # ---------------------------------------------------------------------------

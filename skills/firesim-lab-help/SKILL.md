@@ -2,8 +2,8 @@
 name: firesim-lab-help
 description: Explains the AI-accelerated firesim-lab flow and points to the other two skills. Use when the user asks "what is firesim-lab", "how does the firesim-lab skill work", "where do I start", or invokes /firesim-lab-help. Pull-only and read-only — it never changes anything; it shows the flow overview and a map of firesim-lab-setup and firesim-lab-sim.
 metadata:
-  fslab_version: "0.8.0"
-  skill_version: "0.8.0"
+  fslab_version: "0.9.0-rc"
+  skill_version: "0.9.0-rc"
 ---
 
 # firesim-lab-help — the flow overview & map

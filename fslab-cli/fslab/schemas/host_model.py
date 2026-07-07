@@ -362,6 +362,41 @@ class Ec2LaunchHostConfig(HostModelConfigBase):
         None, description="HDK version tag for stamp comparison (e.g. v1.4.0-firesim)."
     )
 
+    # --- volume overrides (ephemeral-launch mode) -------------------------
+    # Omitting all three reproduces today's behaviour exactly: the instance
+    # inherits the AMI's baked volumes untouched. The provider resizes by
+    # role (root vs the single data volume) via AMI introspection, so the
+    # user never has to know the AMI's /dev/... layout. Ignored in
+    # managed-reuse mode (instance_id set), like the other launch fields.
+
+    root_volume_gb: Optional[int] = Field(
+        None,
+        description=(
+            "Resize the launched instance's ROOT EBS volume to this many GiB. "
+            "Omit to inherit the AMI's baked root size. EBS can only grow, so "
+            "a value smaller than the AMI's size is rejected at launch."
+        ),
+    )
+    data_volume_gb: Optional[int] = Field(
+        None,
+        description=(
+            "Resize the AMI's secondary/data EBS volume to this many GiB. "
+            "Omit to inherit the AMI's baked size (the default that overflows "
+            "for large designs). Requires the AMI to expose exactly one "
+            "non-root EBS volume; grow-only."
+        ),
+    )
+    volume_type: Optional[
+        Literal["gp3", "gp2", "io1", "io2", "st1", "sc1", "standard"]
+    ] = Field(
+        None,
+        description=(
+            "Override the EBS volume type for whichever volumes are being "
+            "resized (root_volume_gb / data_volume_gb). Applies only to the "
+            "overridden volume(s), so it requires at least one of them set."
+        ),
+    )
+
     # ----------------------------------------------------------------------
     # Validators
     # ----------------------------------------------------------------------
@@ -388,6 +423,33 @@ class Ec2LaunchHostConfig(HostModelConfigBase):
                 + regex_msg(rx.AWS_INSTANCE_TYPE_RE)
             )
         return v
+
+    @field_validator("root_volume_gb", "data_volume_gb", mode="after")
+    @classmethod
+    def _validate_volume_gb(cls, v: Optional[int], info) -> Optional[int]:
+        """[AWS-04] Volume sizes are GiB in the EBS-valid range (1..65536)."""
+        if v is None:
+            return v
+        if v < 1 or v > 65536:
+            raise ValueError(
+                f"[AWS-04] {info.field_name}={v} is out of range. "
+                f"Expected an EBS size in GiB between 1 and 65536."
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _validate_volume_type_requires_size(self) -> "Ec2LaunchHostConfig":
+        """[AWS-04] volume_type only makes sense alongside a resize; it is
+        applied to the overridden volume(s), so at least one of
+        root_volume_gb / data_volume_gb must be set."""
+        if self.volume_type is not None and (
+            self.root_volume_gb is None and self.data_volume_gb is None
+        ):
+            raise ValueError(
+                "[AWS-04] volume_type requires root_volume_gb and/or "
+                "data_volume_gb to be set (it applies to the resized volume)."
+            )
+        return self
 
     @field_validator("ami_id", mode="after")
     @classmethod

@@ -131,6 +131,43 @@ class TestEc2LaunchHost:
         with pytest.raises(ValidationError):
             Ec2LaunchHostConfig.model_validate(d)
 
+    # --- volume overrides -------------------------------------------------
+
+    def test_volumes_default_none(self):
+        h = Ec2LaunchHostConfig.model_validate(ec2_base())
+        assert h.root_volume_gb is None
+        assert h.data_volume_gb is None
+        assert h.volume_type is None
+
+    def test_volumes_valid(self):
+        h = Ec2LaunchHostConfig.model_validate(
+            ec2_base(data_volume_gb=100, root_volume_gb=60, volume_type="gp3")
+        )
+        assert h.data_volume_gb == 100
+        assert h.root_volume_gb == 60
+        assert h.volume_type == "gp3"
+
+    def test_aws04_data_volume_zero(self):
+        with pytest.raises(ValidationError) as ei:
+            Ec2LaunchHostConfig.model_validate(ec2_base(data_volume_gb=0))
+        assert "AWS-04" in str(ei.value)
+
+    def test_aws04_root_volume_too_large(self):
+        with pytest.raises(ValidationError) as ei:
+            Ec2LaunchHostConfig.model_validate(ec2_base(root_volume_gb=99999))
+        assert "AWS-04" in str(ei.value)
+
+    def test_bad_volume_type_rejected(self):
+        with pytest.raises(ValidationError):
+            Ec2LaunchHostConfig.model_validate(
+                ec2_base(data_volume_gb=100, volume_type="gp9")
+            )
+
+    def test_aws04_volume_type_requires_size(self):
+        with pytest.raises(ValidationError) as ei:
+            Ec2LaunchHostConfig.model_validate(ec2_base(volume_type="gp3"))
+        assert "AWS-04" in str(ei.value)
+
 
 # ===========================================================================
 # host_model — FpgaSlotConfig
