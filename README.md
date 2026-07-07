@@ -30,10 +30,10 @@ locally or full FPGA simulations on AWS F2 — with one CLI.
 - **Zero Chisel, zero C++, zero Scala on the user side.** Write Verilog /
   SystemVerilog. Everything else — the Chisel shim, Golden Gate elaboration
   glue, the simulator driver — is generated from templates.
-- **Pinned, self-contained Docker image.** A versioned image ships the full
+- **Pinned, self-contained container image.** A versioned image ships the full
   toolchain (Scala/SBT, Verilator, Python, FPGA tooling). On the host
-  you need only Docker and `curl`. No multi-hour install scripts, no
-  per-distro fiddling.
+  you need only a container runtime (Docker, or rootful Podman/nerdctl on
+  Linux) and `curl`. No multi-hour install scripts, no per-distro fiddling.
 - **Bridges included out of the box.** UART, BlockDevice, and FASED memory
   timing models ship with the framework; more on the way. Bring your own
   via the registry — no upstream PR required.
@@ -65,11 +65,13 @@ locally or full FPGA simulations on AWS F2 — with one CLI.
 ## Prerequisites
 
 firesim-lab ships its entire toolchain — Java/SBT/Scala, Verilator, the FireSim
-Python environment, and FPGA tooling — inside a single Docker image, so the host
-stays thin. You need:
+Python environment, and FPGA tooling — inside a single container image, so the
+host stays thin. You need:
 
-- **Docker** (Engine on Linux, or Docker Desktop on macOS/Windows) with the
-  Compose v2 plugin, plus **`curl`**.
+- **A container runtime** — Docker (Engine on Linux, or Docker Desktop on
+  macOS/Windows) with the Compose v2 plugin, or rootful **Podman**/**nerdctl**
+  on Linux (each needs a small one-time setup — see the setup guide) — plus
+  **`curl`**.
 - **A Linux shell to run from.** Linux and macOS have one natively; on **Windows**
   you run firesim-lab inside a **WSL2** Ubuntu distro (with Docker Desktop's WSL
   integration) — there are no Windows-native scripts.
@@ -78,8 +80,8 @@ stays thin. You need:
 - **FPGA-accelerated simulation only:** an AWS account with F2 access and the
   required IAM setup. Metasimulation needs none of this.
 
-Full platform-by-platform setup — Docker install, WSL2, Apple Silicon notes,
-hardware sizing, and AWS — is in the
+Full platform-by-platform setup — container runtime install, WSL2, Apple
+Silicon notes, hardware sizing, and AWS — is in the
 [setup guide](https://firesim-lab.readthedocs.io/en/latest/setup/index.html).
 
 ---
@@ -108,13 +110,16 @@ and the [end-to-end walkthrough](https://firesim-lab.readthedocs.io/en/latest/sk
 
 ## Quick start
 
-firesim-lab runs anywhere Docker does — **Linux, macOS, and Windows (via WSL2)**.
-All you need is Docker running and a terminal with `curl`. For platform-specific
-host setup — including installing Docker Desktop and setting up WSL2 on Windows —
-follow the [installation guide](https://firesim-lab.readthedocs.io/en/latest/installation/index.html).
+firesim-lab runs anywhere a container runtime does — **Linux, macOS, and
+Windows (via WSL2)**. All you need is a container runtime running (Docker,
+or rootful Podman/nerdctl on Linux) and a terminal with `curl`. For
+platform-specific host setup — including installing Docker Desktop and
+setting up WSL2 on Windows — follow the
+[installation guide](https://firesim-lab.readthedocs.io/en/latest/installation/index.html).
 
-Once Docker is running, the workflow below is the same on every platform — run it
-from your terminal on Linux/macOS, or from your WSL shell on Windows:
+Once your container runtime is running, the workflow below is the same on
+every platform — run it from your terminal on Linux/macOS, or from your WSL
+shell on Windows:
 
 ```bash
 # 1. Install the launcher and pull the image (installs the latest release)
@@ -166,7 +171,7 @@ Full lifecycle reference is below.
 
 ## Architecture
 
-firesim-lab has three layers. The bottom two are baked into the Docker
+firesim-lab has three layers. The bottom two are baked into the container
 image and never modified at runtime; the top one is your project, mounted
 into the container as `/target`.
 
@@ -214,7 +219,7 @@ Why three layers?
 | FireSim upgrades       | Bump the pinned commit in the image; nothing else changes  |
 | Shared bridge code     | Lives once in `lib/`; every project inherits it            |
 | Project isolation      | Each project is its own folder / repo                      |
-| Docker immutability    | Layers 1 & 2 are read-only; only `/target` changes         |
+| Image immutability     | Layers 1 & 2 are read-only; only `/target` changes         |
 | Reproducible toolchain | Pinned image tag → identical Scala/Verilator/SBT versions  |
 
 ---
@@ -251,8 +256,8 @@ Between `fslab init` and `fslab generate` you edit `fslab.yaml` to:
   builds and runs on AWS F2 — see
   [docs/run-pipeline-guide.md](docs/run-pipeline-guide.md).
 
-The Docker launcher (`firesim-lab` on the host) provides the supporting
-commands for the container itself:
+The host launcher (`firesim-lab`) provides the supporting commands for the
+container itself:
 
 | Command                      | Purpose                                                |
 |------------------------------|--------------------------------------------------------|
@@ -285,8 +290,8 @@ need to touch them. They are listed here only for reference.
 | `VERILATOR_THREADS`        | host nproc                  | Verilator parallel-job count; prompted on first run, persisted in `.env`    |
 | `ENABLE_CUSTOM_PLUGINS`    | `0`                         | Opt-in for loading user Python plugins (security-sensitive)                 |
 | `CACHE_GID`                | `2543`                      | GID of the in-image `firesim-lab-cache` group owning the SBT/ccache caches  |
-| `CONTAINER_MEMORY_LIMIT`   | `16g`                       | Docker memory ceiling for the container                                     |
-| `CONTAINER_MEMORY_RESERVE` | `8g`                        | Docker memory reservation                                                   |
+| `CONTAINER_MEMORY_LIMIT`   | `16g`                       | Memory ceiling for the container                                            |
+| `CONTAINER_MEMORY_RESERVE` | `8g`                        | Memory reservation for the container                                        |
 
 Host-side (consumed by the launcher, written to `<workspace>/.firesim-lab.env`):
 

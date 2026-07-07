@@ -2,13 +2,13 @@
 
 firesim-lab draws a hard line between the **host** — your laptop or workstation — and the **container** that does the real work. Understanding that line removes most of the "where do I run this?" confusion that trips up first-time users, especially on Windows where there is an extra WSL2 layer in between.
 
-The short version: **the host runs Docker; everything else runs in the container.** You install almost nothing on the host. You type almost every firesim-lab command *inside* the container.
+The short version: **the host runs a container runtime; everything else runs in the container.** You install almost nothing on the host. You type almost every firesim-lab command *inside* the container. Docker is the default and best-tested runtime; Podman and nerdctl are also supported (rootful) — see {doc}`/setup/host-prerequisites`.
 
 ## Why the toolchain is containerized
 
 A working FireSim/Chipyard environment normally requires a long, version-sensitive toolchain: a specific JDK, SBT and Scala, Verilator built from source, a Python environment for FireSim's tooling, ccache, and FPGA vendor pieces. Installing that natively is the single biggest source of "works on my machine" failures, and it differs across Linux distributions, macOS, and Windows.
 
-firesim-lab sidesteps all of it by shipping the entire toolchain inside one **pinned Docker image**. Because the image is built once and tagged, every user on every platform runs *byte-for-byte the same* Scala, Verilator, and Python. Upgrading the toolchain means bumping an image tag, not rebuilding your machine. The host stays thin and disposable; the reproducibility lives in the image.
+firesim-lab sidesteps all of it by shipping the entire toolchain inside one **pinned container image** (a standard OCI image, published to Docker Hub). Because the image is built once and tagged, every user on every platform runs *byte-for-byte the same* Scala, Verilator, and Python — regardless of which container runtime pulls and runs it. Upgrading the toolchain means bumping an image tag, not rebuilding your machine. The host stays thin and disposable; the reproducibility lives in the image.
 
 This is also what makes the "no-Chisel" promise practical: the Chisel/Scala compiler, FireSim's Golden Gate (MIDAS), and the C++ simulator build all run in the container, generated and driven by the `fslab` CLI. You never install or invoke them directly.
 
@@ -37,8 +37,8 @@ Tiers 1 and 2 are immutable: they ship in the image and are identical for every 
 
 Only two things live on the host, and `install.sh` is responsible for both:
 
-- **Docker** — the engine that runs the container. Docker Engine on Linux, Docker Desktop on macOS/Windows. This is the one real dependency, confirmed in {doc}`/setup/host-prerequisites`.
-- **The `firesim-lab` launcher** — a small Bash script placed on your `PATH`. It starts/enters the container for the current workspace, writes per-workspace settings, and forwards a handful of lifecycle commands (`--down`, `--pull`, `--status`, `--reconfigure`, `--upgrade`, `--clean-cache`) to Docker Compose. It is the *only* firesim-lab command you run on the host.
+- **A container runtime** — the engine that runs the container. Docker Engine on Linux, Docker Desktop on macOS/Windows, or rootful Podman/nerdctl on Linux. This is the one real dependency, confirmed in {doc}`/setup/host-prerequisites`.
+- **The `firesim-lab` launcher** — a small Bash script placed on your `PATH`. It auto-detects the active runtime, starts/enters the container for the current workspace, writes per-workspace settings (including which runtime it pinned to), and forwards a handful of lifecycle commands (`--down`, `--pull`, `--status`, `--reconfigure`, `--upgrade`, `--clean-cache`) to Compose. It is the *only* firesim-lab command you run on the host.
 
 Alongside the launcher, the installer also stages the Compose file and a self-contained `.aws` and `.ssh` directory under the install location — but these are configuration the launcher consumes, not tools you invoke.
 
@@ -68,7 +68,7 @@ To make the boundary concrete, none of the following belong on the host — they
 - The AWS CLI — even for FPGA builds and runs
 - Xilinx Vivado or any FPGA vendor tooling
 
-The full host-side checklist, including what *is* required (Docker, `curl`) and why `git` is optional, is in {doc}`/setup/host-prerequisites`.
+The full host-side checklist, including what *is* required (a container runtime, `curl`) and why `git` is optional, is in {doc}`/setup/host-prerequisites`.
 
 ## Where to go next
 
