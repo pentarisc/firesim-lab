@@ -4,8 +4,8 @@ Show this verbatim when the user wants the overview (the `help` keyword in the
 other skills re-shows it too).
 
 > **What's about to happen — the firesim-lab flow**
-> 1. **Setup (one-time):** check Docker + firesim-lab are installed and your
->    workspace is initialized. Free.
+> 1. **Setup (one-time):** check your container runtime + firesim-lab are
+>    installed and your workspace is initialized. Free.
 > 2. **Metasim — prove your design in software:** scaffold a project, add your
 >    Verilog/SV + a test payload, pick bridges (UART, FASED memory, BlockDev),
 >    and run a fast *desktop* simulation. No FPGA, no cost. We confirm it behaves

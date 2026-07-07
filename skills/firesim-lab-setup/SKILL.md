@@ -56,7 +56,8 @@ Walk these with **detect + offer to run (per-step confirm)**:
   (preflight step 2).
 
 → Update the stamp: `setup.host_prereqs_ok`, `workspace_initialized`,
-`container_discovered`, `container_runtime` (`"docker"` today), and `fslab_version`.
+`container_discovered`, `container_runtime` (`"docker"`, `"podman"`, or
+`"nerdctl"`), and `fslab_version`.
 
 ## S4. AWS provisioning — OPT-IN (only if the user wants F2)
 

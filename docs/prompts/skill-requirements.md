@@ -234,37 +234,50 @@ duplicates lifecycle state the CLI already owns.
   In-container → call `fslab` directly. Host → go through `firesim-lab-shell`
   (never bare `docker exec`, which runs as root and breaks SBT/ccache writes).
 
-### 3.1 Forward-compat: multi-runtime (deferred to a later MINOR)
+### 3.1 Multi-runtime (Phase 1 — rootful — landed in v0.9.0)
 
-Multi–container-runtime support (rootful Podman, nerdctl/containerd, Finch; then
-rootless as a tested follow-on) is **deferred to a MINOR after this SKILL's
-debut.** Build the SKILL **docker-only now**, but leave these four seams so the
-later change is a near one-file edit rather than a scattered one (this is also why
-the host wording above and in §13 #1, §18 says "container runtime" where possible):
+Multi–container-runtime support (rootful **Podman**, **nerdctl**/containerd;
+**Finch** detection is wired but untested) shipped in **v0.9.0**, alongside the
+SKILL update below. Rootless Podman/nerdctl remain a future, tested follow-on
+(Phase 2) — not yet supported.
 
-1. **Single container-CLI seam.** All container invocation resolves one `$RUNTIME`
-   variable in `scripts/detect-context.sh`, and all exec'ing flows through **one**
-   helper. The literal string `docker` must appear in **exactly one place**
-   (`detect-context.sh`). `SKILL.md` and the `reference/` files reference the
-   helper — they must **never inline** `docker exec <container> firesim-lab-shell …`
-   in prose/examples. (The inlined forms in §3 above, §13 #1, and §18 are the ones
-   to route through the seam when the SKILL is authored.)
-2. **Read `CONTAINER_RUNTIME` with a `docker` fallback.** `detect-context.sh`
-   sources `CONTAINER_RUNTIME` from `.firesim-lab.env`, defaulting to `docker` when
-   absent — so the day the launcher begins writing that field, the SKILL already
-   honors it with no change.
-3. **Reserve the stamp field.** The workspace skill-state (§2.6) carries
-   `setup.container_runtime` (value `"docker"` today) so adding runtimes later needs
-   **no `schema_version` bump**.
-4. **Runtime-neutral prose.** Phrase the §5 S1 prereq check and §3 context
-   detection as "the container runtime" with docker as the current concrete
-   example, so the later edit is wording, not logic.
+The four seams this section originally asked the SKILL to leave (so this change
+would be a near one-file edit) held exactly as designed:
 
-Only seam 1 is load-bearing; 2–4 are cheap insurance that keep the env/stamp
-schemas and doc prose from churning. The actual multi-runtime change set (launcher,
-compose, entrypoint, docs/portal) is tracked outside this spec; per the project's
-**Version & SKILL synchronization** rule, the MINOR that introduces it must update
-this spec first, then the SKILL.
+1. **Single container-CLI seam.** `scripts/detect-context.sh` is still the only
+   place the literal string `docker` appears; `SKILL.md` and the `reference/`
+   files still never inline `docker exec …` — confirmed unchanged, **no code
+   edit needed here**.
+2. **`CONTAINER_RUNTIME` with a `docker` fallback.** The launcher
+   (`docker/firesim-lab`) now genuinely writes `CONTAINER_RUNTIME=` into
+   `.firesim-lab.env` (auto-detected as the first of `docker`/`podman`/
+   `nerdctl`/`finch` found on `PATH`, overridable with `--runtime=<name>` or
+   `FIRESIM_RUNTIME=<name>`, and persisted per-workspace). `detect-context.sh`
+   already read this field with a `docker` fallback — **no code edit needed**.
+3. **Stamp field.** `setup.container_runtime` in the workspace skill-state can
+   now hold `"podman"` / `"nerdctl"` / `"finch"` in addition to `"docker"` —
+   **no `schema_version` bump needed**, as designed.
+4. **Runtime-neutral prose.** `SKILL.md` and `reference/prereqs.md` already say
+   "the container runtime" generically — **wording-only** follow-up needed: the
+   S1 prereq table's remediation column, in `skills/firesim-lab-setup/
+   reference/prereqs.md` (§5 above is this spec's higher-level summary and
+   carries no Docker-specific text of its own), still gives Docker-specific
+   remediation ("start Docker Desktop / `systemctl start docker`; join the
+   `docker` group") for the "runtime running" probe. Update it to point at
+   {doc}`/setup/host-prerequisites` for the Podman (rootful socket + group +
+   `CONTAINER_HOST`) and nerdctl (requires actual root — `sudo`) setup, since
+   those aren't a one-line remediation the SKILL should improvise inline.
+
+Two real host-setup facts surfaced by AWS validation, worth the SKILL knowing
+about if S1 ever needs to explain a "runtime not running" failure: Podman
+defaults to **rootless** for any non-root invocation (needs `CONTAINER_HOST` +
+a socket-group setup, or `sudo`, to reach the *rootful* backend this SKILL
+targets); nerdctl's rootful mode requires the invoking process to actually be
+UID 0 (no non-root socket-permission equivalent — `sudo` is the only path).
+
+Finch was not exercised end-to-end (native-Linux Finch runs are a smaller lift
+than its usual macOS/Windows Lima-VM mode, but neither was tested); treat its
+detection as present-but-unverified.
 
 ---
 
@@ -317,7 +330,7 @@ HELP skill — on demand (pull) ────────────────
  H. Show the flow overview (§16) and name the other skills. No marker, no state.
 
 SETUP skill — run once per host/account; writes the stamp ─────────────────────
- S1. Host prereqs: Docker running? firesim-lab launcher? image pulled?
+ S1. Host prereqs: container runtime running? firesim-lab launcher? image pulled?
      └─ DETECT + OFFER TO RUN (per-step confirm) — may run install.sh / pull image
      └─ launcher is TTY-guarded: only --pull/--status/--down/--clean-cache/--upgrade/
         --help run non-interactively; bare `firesim-lab` (init/start) needs a TTY —
