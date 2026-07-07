@@ -7,11 +7,37 @@ Loaded for S1–S3 and for writing the stamp. Everything here runs from the host
 ## S1 — host prereq probes (detect, then offer to remediate)
 
 Use the **container runtime** generically (docker, podman, or nerdctl; the seam
-resolves it via `CONTAINER_RUNTIME` — see `scripts/detect-context.sh`).
+resolves it via `CONTAINER_RUNTIME` — see `scripts/detect-context.sh`). Two
+tiers: is one **installed at all**, then is it **running**.
+
+### Tier 0 — any runtime installed?
+
+Probe: `command -v docker || command -v podman || command -v nerdctl`. If none
+found, **ask which the user wants** (Docker is the recommended default —
+zero extra setup on macOS/Windows and the best-tested Linux path):
+
+- **Docker.** Linux: offer Docker's official convenience script
+  (`curl -fsSL https://get.docker.com | sh`, then
+  `sudo usermod -aG docker "$USER"` — log out/in after). macOS/Windows: Docker
+  Desktop is a GUI installer — **explain + link only**, like the AWS console
+  steps in S4; do not attempt to script it.
+- **Podman** (Linux only). Offer to run
+  `scripts/install-podman-rootful.sh` (per-step confirm — it installs via
+  `apt`, so say so if the host isn't Debian/Ubuntu and hand over the
+  Fedora/Arch package names from the script's own fallback message instead).
+  It ends with "log out and back in" — **you cannot complete this step
+  yourself**; tell the user to do it and re-run S1 afterward to confirm.
+- **nerdctl** (Linux only). Offer to run
+  `scripts/install-nerdctl-rootful.sh` (per-step confirm). It requires actual
+  root for every `firesim-lab` invocation afterward (`sudo firesim-lab ...`)
+  — **never** configure passwordless sudo yourself; if the user wants that,
+  point them at `visudo` and let them decide.
+
+### Tier 1 — running / installed correctly
 
 | Prereq | Probe | Remediation (per-step confirm) |
 |---|---|---|
-| Runtime running | `"$RUNTIME" info >/dev/null 2>&1` | Docker: start the engine (Docker Desktop / `systemctl start docker`) and confirm the user is in the `docker` group. Podman/nerdctl: these need one-time rootful setup this skill should not improvise inline — point the user at the documentation portal's Host Prerequisites page (Podman needs a socket-group + `CONTAINER_HOST`; nerdctl's rootful mode requires actual root, i.e. `sudo`). |
+| Runtime running | `"$RUNTIME" info >/dev/null 2>&1` | Docker: start the engine (Docker Desktop / `systemctl start docker`) and confirm the user is in the `docker` group. Podman/nerdctl: if Tier 0's install script already ran, this usually means the user hasn't logged back in yet (Podman) — re-check after they do; otherwise re-run the Tier 0 script. |
 | Launcher installed | `command -v firesim-lab` | run `install.sh` (the curl-pipe from the README/installation guide), then re-check `firesim-lab --help` |
 | Image pulled | `"$RUNTIME" image inspect <FIRESIM_IMAGE>` (read tag from `.firesim-lab.env`, default `docker.io/pentarisc/firesim-lab:latest`) | `firesim-lab --pull` (non-interactive, TTY-safe) |
 

@@ -258,15 +258,22 @@ would be a near one-file edit) held exactly as designed:
    now hold `"podman"` / `"nerdctl"` / `"finch"` in addition to `"docker"` —
    **no `schema_version` bump needed**, as designed.
 4. **Runtime-neutral prose.** `SKILL.md` and `reference/prereqs.md` already say
-   "the container runtime" generically — **wording-only** follow-up needed: the
-   S1 prereq table's remediation column, in `skills/firesim-lab-setup/
-   reference/prereqs.md` (§5 above is this spec's higher-level summary and
-   carries no Docker-specific text of its own), still gives Docker-specific
-   remediation ("start Docker Desktop / `systemctl start docker`; join the
-   `docker` group") for the "runtime running" probe. Update it to point at
-   {doc}`/setup/host-prerequisites` for the Podman (rootful socket + group +
-   `CONTAINER_HOST`) and nerdctl (requires actual root — `sudo`) setup, since
-   those aren't a one-line remediation the SKILL should improvise inline.
+   "the container runtime" generically. This turned out to need more than
+   wording, though: S1 previously only checked whether an *already-installed*
+   runtime was *running* — there was no path for "no runtime is installed at
+   all, which one do you want?" (unlike the launcher/image checks, which
+   already offer to run `install.sh` / pull). `reference/prereqs.md` S1 is now
+   split into **Tier 0** (is any runtime installed? if not, ask Docker/Podman/
+   nerdctl and offer to run the matching install script) and **Tier 1** (is it
+   running? — the original check, unchanged). Two new bundled scripts do the
+   actual work, `skills/firesim-lab-setup/scripts/install-podman-rootful.sh`
+   and `install-nerdctl-rootful.sh` — host-side scripts (they run before any
+   firesim-lab container exists, so they don't source `detect-context.sh` /
+   use `fslab_exec` the way the AWS provisioning scripts do). Both are
+   idempotent and require per-step confirm like every other mutating action
+   this skill takes. Neither configures passwordless `sudo` for nerdctl, and
+   neither can complete Podman's "log out and back in" step for the user —
+   both are called out explicitly so the SKILL doesn't overreach.
 
 Two real host-setup facts surfaced by AWS validation, worth the SKILL knowing
 about if S1 ever needs to explain a "runtime not running" failure: Podman

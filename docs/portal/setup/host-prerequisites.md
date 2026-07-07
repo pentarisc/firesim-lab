@@ -36,7 +36,11 @@ Container runtime
   docker run --rm hello-world
   ```
 
-**Podman** (Linux only, rootful) — Podman defaults to a **rootless** backend for any non-root invocation, which firesim-lab does not yet support; you need either `sudo` per invocation, or a one-time setup so your normal user reaches the *rootful* backend without `sudo`:
+**Podman** (Linux only, rootful) — install it first:
+: ```bash
+  sudo apt-get update && sudo apt-get install -y podman podman-compose   # Debian/Ubuntu
+  ```
+: (other distros: `dnf install podman podman-compose` on Fedora/RHEL, `pacman -S podman podman-compose` on Arch.) Podman defaults to a **rootless** backend for any non-root invocation, which firesim-lab does not yet support; you need either `sudo` per invocation, or a one-time setup so your normal user reaches the *rootful* backend without `sudo`:
 : ```bash
   sudo systemctl enable --now podman.socket
   sudo groupadd -f podman && sudo usermod -aG podman "$USER"
@@ -45,9 +49,17 @@ Container runtime
   sudo systemctl daemon-reload && sudo systemctl restart podman.socket
   echo 'export CONTAINER_HOST=unix:///run/podman/podman.sock' >> ~/.bashrc   # then log out and back in
   ```
-: Verify with `podman info --format '{{.Host.Security.Rootless}}'` — it should print `false`.
+: Verify with `podman info --format '{{.Host.Security.Rootless}}'` — it should print `false`. (The firesim-lab-setup Claude Code skill can run all of the above for you via `install-podman-rootful.sh`.)
 
-**nerdctl** (Linux only, rootful, via containerd) — nerdctl's rootful mode requires the invoking process to actually be UID 0; unlike Podman there is no socket-group equivalent for non-root access. Run `firesim-lab` with `sudo`, or configure passwordless `sudo` for your user.
+**nerdctl** (Linux only, rootful, via containerd) — nerdctl ships as a single self-contained "full" release bundling containerd, buildkit, and CNI plugins:
+: ```bash
+  VER=2.3.4   # check https://github.com/containerd/nerdctl/releases for the latest
+  curl -fsSL -o /tmp/nerdctl-full.tar.gz \
+    "https://github.com/containerd/nerdctl/releases/download/v${VER}/nerdctl-full-${VER}-linux-amd64.tar.gz"
+  sudo tar Cxzf /usr/local /tmp/nerdctl-full.tar.gz
+  sudo systemctl enable --now containerd buildkit
+  ```
+: nerdctl's rootful mode requires the invoking process to actually be UID 0; unlike Podman there is no socket-group equivalent for non-root access. Run `firesim-lab` with `sudo`. (The firesim-lab-setup skill can run the install above via `install-nerdctl-rootful.sh`, but deliberately does not configure passwordless `sudo` — that's a security-posture change you should make yourself if you want it.)
 
 curl
 : Used to fetch the installer and download files. Present by default on macOS; install via your package manager on Linux if missing. Verify with `curl --version`.
