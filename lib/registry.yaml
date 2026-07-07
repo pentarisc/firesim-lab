@@ -448,9 +448,14 @@ platforms:
         # m4.2xlarge - small design builds, setup testing (generally slower)
         # z1d.2xlarge - for bigger design builds, (8 cpu, 64gb RAM)
         # f2.6xlarge - for fpga simulation. (24 vcpu, 256gb ram), 1 FPGA slot. 
-        instance_type:        "z1d.2xlarge"  
+        instance_type:        "z1d.2xlarge"
         aws_fpga_version:     "v0.1-firesim-lab"
         remote_platform_path: "/home/ubuntu/src/project_data/aws-fpga-firesim-f2"
+        # Volume overrides are intentionally NOT defaulted here: leaving
+        # root_volume_gb / data_volume_gb / volume_type unset makes launched
+        # instances inherit the AMI's baked volumes (today's behaviour). Users
+        # whose designs overflow the AMI's secondary volume set data_volume_gb
+        # in fslab.yaml's target.build.host / target.run.host block.
 
     publish:
       none: {}

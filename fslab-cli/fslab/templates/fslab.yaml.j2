@@ -351,6 +351,14 @@ target:
     #   # instance_type: z1d.2xlarge                  # registry default
     #   # aws_fpga_version: v1.4.0-firesim            # registry default
     #   # remote_platform_path: /home/ubuntu/src/project_data/aws-fpga-firesim-f2
+    #
+    #   # --- volume overrides (optional; omit to inherit the AMI's volumes) ---
+    #   # Resize by role via AMI introspection — no need to know device names.
+    #   # Grow-only (EBS cannot shrink). Large designs that overflow the AMI's
+    #   # default secondary volume set data_volume_gb here.
+    #   # data_volume_gb: 100                         # grow the secondary/data volume (GiB)
+    #   # root_volume_gb: 60                          # grow the root volume (GiB)
+    #   # volume_type: gp3                            # gp3|gp2|io1|io2|st1|sc1|standard; needs a *_volume_gb set
 
     # ------------------------------------------------------------------------
     # ALTERNATIVE publish examples
@@ -425,6 +433,9 @@ target:
   #     key_name: firesim-lab
   #     # subnet_id: subnet-xxxxxxxx
   #     # instance_id: i-0abc1234                 # managed reuse instead of ephemeral
+  #     # data_volume_gb: 100                     # grow secondary volume (GiB); grow-only, omit to inherit AMI
+  #     # root_volume_gb: 60                      # grow root volume (GiB)
+  #     # volume_type: gp3                        # optional; needs a *_volume_gb set
   #     fpga_slot:
   #       id: 0                                     # single-slot today; must be 0
   #       runner_args:

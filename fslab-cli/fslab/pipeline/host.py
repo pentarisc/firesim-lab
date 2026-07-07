@@ -897,6 +897,9 @@ class Ec2LaunchHostProvider(HostProvider):
             subnet_id=host_cfg.subnet_id,
             iam_instance_profile=host_cfg.iam_instance_profile,
             lifecycle=host_cfg.lifecycle,
+            root_volume_gb=host_cfg.root_volume_gb,
+            data_volume_gb=host_cfg.data_volume_gb,
+            volume_type=host_cfg.volume_type,
             tags={
                 "Name": "firesim-lab-build",
                 "firesim-lab/managed": "true",

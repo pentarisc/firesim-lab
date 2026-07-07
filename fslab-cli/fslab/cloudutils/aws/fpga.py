@@ -442,6 +442,131 @@ def wait_for_ssh(
     )
 
 
+# Cloud-init UserData injected when data_volume_gb resizes the AMI's secondary
+# volume. Growing the EBS volume only enlarges the block device; the filesystem
+# on the pre-baked data volume must be grown to make the space usable. This runs
+# as root at first boot and self-targets: it grows any *whole-disk* data
+# filesystem (device holds the FS directly, no partition table) that is smaller
+# than its device. The root disk is partitioned, so it is skipped here and left
+# to the AMI's own cloud-init growpart. Output is logged for post-hoc inspection.
+_GROWFS_USERDATA = r"""#!/bin/bash
+# firesim-lab: grow resized whole-disk data volume(s) to fill the enlarged EBS
+# block device. Root is partitioned and handled by the AMI's own growpart.
+exec >>/var/log/firesim-lab-growfs.log 2>&1
+set -x
+for dev in /dev/nvme*n1 /dev/xvd[b-z]; do
+  [ -b "$dev" ] || continue
+  # Skip devices carrying a partition table (e.g. the root disk).
+  [ -n "$(lsblk -rno NAME "$dev" | tail -n +2)" ] && continue
+  mnt=$(findmnt -rno TARGET --source "$dev" 2>/dev/null) || continue
+  [ -n "$mnt" ] || continue
+  case "$(findmnt -rno FSTYPE --source "$dev" 2>/dev/null)" in
+    ext2|ext3|ext4) resize2fs "$dev" ;;
+    xfs) xfs_growfs "$mnt" ;;
+  esac
+done
+"""
+
+
+def _resolve_block_device_mappings(
+    ec2,
+    ami_id: str,
+    *,
+    root_volume_gb: Optional[int],
+    data_volume_gb: Optional[int],
+    volume_type: Optional[str],
+) -> Optional[list]:
+    """Build a `BlockDeviceMappings` override that resizes/retypes the AMI's
+    volumes, or `None` when the caller requested no override.
+
+    Approach A (AMI introspection): read the AMI's own block-device mappings
+    via `describe_images`, then emit override entries only for the volumes the
+    user asked to change — every unmentioned device keeps its AMI default, so
+    the no-fields case reproduces today's behaviour exactly.
+
+    Volumes are identified by role, not by device name, so the user never has
+    to know the AMI's internal `/dev/...` layout:
+      * root — the mapping whose DeviceName equals the AMI's RootDeviceName.
+      * data — the single non-root EBS-backed mapping. Zero or >1 is ambiguous
+        and raises rather than guessing which volume the user meant.
+
+    `volume_type`, when given, applies to each volume being overridden. EBS
+    volumes can only grow, so a request smaller than the AMI's baked size is
+    refused up front with a clear message instead of a late boto3 error.
+    """
+    if root_volume_gb is None and data_volume_gb is None:
+        return None
+
+    images = ec2.describe_images(ImageIds=[ami_id]).get("Images", [])
+    if not images:
+        raise ValueError(
+            f"Cannot resize volumes: AMI {ami_id} not found or not visible "
+            f"to this account/region."
+        )
+    image = images[0]
+    root_device_name = image.get("RootDeviceName")
+    ebs_mappings = [m for m in image.get("BlockDeviceMappings", []) if "Ebs" in m]
+
+    def _override(mapping: dict, requested_gb: int, role: str) -> dict:
+        existing_gb = mapping["Ebs"].get("VolumeSize")
+        if existing_gb is not None and requested_gb < existing_gb:
+            raise ValueError(
+                f"{role}_volume_gb={requested_gb} is smaller than the AMI's "
+                f"baked {role} volume ({existing_gb} GiB). EBS volumes can "
+                f"only grow, not shrink."
+            )
+        # Copy the AMI's Ebs block and mutate only what we intend to change,
+        # preserving SnapshotId / DeleteOnTermination.
+        new_ebs = dict(mapping["Ebs"])
+        new_ebs["VolumeSize"] = requested_gb
+        # Encrypted / KmsKeyId conflict with an inherited SnapshotId in a
+        # RunInstances override; drop them so the volume inherits the
+        # snapshot's encryption unchanged.
+        if "SnapshotId" in new_ebs:
+            new_ebs.pop("Encrypted", None)
+            new_ebs.pop("KmsKeyId", None)
+        if volume_type is not None:
+            new_ebs["VolumeType"] = volume_type
+            # Iops/Throughput are tied to the old type; let AWS apply the new
+            # type's defaults rather than risk an incompatible carry-over.
+            new_ebs.pop("Iops", None)
+            new_ebs.pop("Throughput", None)
+        return {"DeviceName": mapping["DeviceName"], "Ebs": new_ebs}
+
+    overrides: list = []
+
+    if root_volume_gb is not None:
+        root_mapping = next(
+            (m for m in ebs_mappings if m["DeviceName"] == root_device_name), None
+        )
+        if root_mapping is None:
+            raise ValueError(
+                f"Cannot resize root volume: AMI {ami_id} exposes no EBS root "
+                f"device (RootDeviceName={root_device_name!r})."
+            )
+        overrides.append(_override(root_mapping, root_volume_gb, "root"))
+
+    if data_volume_gb is not None:
+        data_mappings = [
+            m for m in ebs_mappings if m["DeviceName"] != root_device_name
+        ]
+        if not data_mappings:
+            raise ValueError(
+                f"Cannot resize data volume: AMI {ami_id} has no secondary EBS "
+                f"volume (only the root device). Use root_volume_gb instead."
+            )
+        if len(data_mappings) > 1:
+            names = ", ".join(m["DeviceName"] for m in data_mappings)
+            raise ValueError(
+                f"Cannot resize data volume: AMI {ami_id} has {len(data_mappings)} "
+                f"non-root EBS volumes ({names}); which to grow is ambiguous. "
+                f"Per-device selection is not yet supported."
+            )
+        overrides.append(_override(data_mappings[0], data_volume_gb, "data"))
+
+    return overrides
+
+
 def launch_instance(
     session: boto3.Session,
     *,
@@ -452,6 +577,9 @@ def launch_instance(
     iam_instance_profile: Optional[str] = None,
     lifecycle: str = "spot_one_time",
     tags: Optional[dict[str, str]] = None,
+    root_volume_gb: Optional[int] = None,
+    data_volume_gb: Optional[int] = None,
+    volume_type: Optional[str] = None,
 ) -> str:
     """Run a single instance and return its id.
 
@@ -558,6 +686,29 @@ def launch_instance(
                 "Tags": [{"Key": k, "Value": v} for k, v in tags.items()],
             }
         ]
+
+    block_device_mappings = _resolve_block_device_mappings(
+        ec2,
+        ami_id,
+        root_volume_gb=root_volume_gb,
+        data_volume_gb=data_volume_gb,
+        volume_type=volume_type,
+    )
+    if block_device_mappings:
+        params["BlockDeviceMappings"] = block_device_mappings
+        sizes = ", ".join(
+            f"{m['DeviceName']}={m['Ebs']['VolumeSize']}GiB"
+            f"{'/' + m['Ebs']['VolumeType'] if 'VolumeType' in m['Ebs'] and volume_type else ''}"
+            for m in block_device_mappings
+        )
+        info(f"Overriding AMI volumes: {sizes}")
+
+    # A bigger data volume is only usable once its filesystem is grown to fill
+    # the enlarged block device. Inject the boot-time grow (boto3 base64-encodes
+    # UserData for run_instances). Only needed for the whole-disk data volume;
+    # the root filesystem is grown by the AMI's own growpart.
+    if data_volume_gb is not None:
+        params["UserData"] = _GROWFS_USERDATA
 
     resp = ec2.run_instances(**params)
     instance_id = resp["Instances"][0]["InstanceId"]

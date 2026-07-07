@@ -23,6 +23,9 @@ target:
       ssh_key: ~/.ssh/fslab_ed25519
       ssh_user: centos
       key_name: firesim-lab
+      # data_volume_gb: 100                       # optional; grow the AMI's secondary volume (GiB)
+      # root_volume_gb: 60                        # optional; grow the root volume (GiB)
+      # volume_type: gp3                          # optional; needs a *_volume_gb set
     publish: { ... }                              # publish mode
   run:
     host:
@@ -36,8 +39,20 @@ target:
       ssh_key: ~/.ssh/fslab_ed25519
       ssh_user: centos
       key_name: firesim-lab
+      # data_volume_gb: 100                       # optional; grow the AMI's secondary volume (GiB)
     artifact_source: { type: aws_afi, agfi: <agfi from build> }
 ```
+
+**Volume overrides (optional, `ec2_launch` only):** `data_volume_gb` /
+`root_volume_gb` grow the launched host's EBS volumes by role (via AMI
+introspection — no device names needed); omit them to inherit the AMI's baked
+sizes. Grow-only. Reach for `data_volume_gb` when a large design overflows the
+AMI's default secondary volume during build. `volume_type` (gp3/gp2/io1/io2/
+st1/sc1/standard) applies only to a volume you're resizing. `data_volume_gb`
+yields *usable* space, not just a bigger block device: a cloud-init grow runs at
+first boot to expand the data filesystem to fill the enlarged volume (logged to
+`/var/log/firesim-lab-growfs.log` on the host). The root filesystem is grown by
+the AMI's own growpart.
 
 ## Build (step 10)
 
