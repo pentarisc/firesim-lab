@@ -138,7 +138,10 @@ COMPOSE_FILE="$INSTALL_DIR/docker-compose.yaml"
 
 # Default image for new workspaces: the installed image from the manifest,
 # falling back to :latest only when no manifest is present (legacy install).
-DEFAULT_IMAGE="${INSTALLED_IMAGE:-pentarisc/firesim-lab:latest}"
+# Fully qualified (docker.io/...): Podman refuses to guess a short name's
+# registry unless the host has unqualified-search-registries configured,
+# while Docker/nerdctl/Finch accept the qualified form too.
+DEFAULT_IMAGE="${INSTALLED_IMAGE:-docker.io/pentarisc/firesim-lab:latest}"
 DEFAULT_VERILATOR_THREADS=$(sysctl -n hw.logicalcpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 DEFAULT_MEMORY_LIMIT="16g"
 DEFAULT_MEMORY_RESERVE="8g"

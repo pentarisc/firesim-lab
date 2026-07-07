@@ -67,7 +67,10 @@ REPO_RAW="${REPO_BASE}/${VERSION}"
 #   <other> → image <ref>,  version <ref>  (branch / sha)
 # Git tags are 'vX.Y.Z'; Docker tags and PEP 440 versions are 'X.Y.Z' (no 'v').
 # The leading 'v' is stripped exactly once, here at the boundary.
-IMAGE_REPO="pentarisc/firesim-lab"
+# Fully qualified (docker.io/...) rather than a short name: Podman refuses to
+# guess a short name's registry unless the host has unqualified-search-registries
+# configured, while Docker/nerdctl/Finch accept the qualified form too.
+IMAGE_REPO="docker.io/pentarisc/firesim-lab"
 case "$VERSION" in
   v[0-9]*) IMAGE_TAG="${VERSION#v}"; FIRESIM_LAB_VERSION="${VERSION#v}" ;;
   main)    IMAGE_TAG="latest";       FIRESIM_LAB_VERSION="main" ;;
