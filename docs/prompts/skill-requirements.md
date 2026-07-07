@@ -238,8 +238,9 @@ duplicates lifecycle state the CLI already owns.
 
 Multi–container-runtime support (rootful **Podman**, **nerdctl**/containerd;
 **Finch** detection is wired but untested) shipped in **v0.9.0**, alongside the
-SKILL update below. Rootless Podman/nerdctl remain a future, tested follow-on
-(Phase 2) — not yet supported.
+SKILL update below. The SKILL's Setup S1 only ever installs/configures the
+**rootful** path (below); correct behavior when a rootless runtime is already
+present some other way is covered separately in §3.2.
 
 The four seams this section originally asked the SKILL to leave (so this change
 would be a near one-file edit) held exactly as designed:
@@ -275,16 +276,66 @@ would be a near one-file edit) held exactly as designed:
    neither can complete Podman's "log out and back in" step for the user —
    both are called out explicitly so the SKILL doesn't overreach.
 
-Two real host-setup facts surfaced by AWS validation, worth the SKILL knowing
-about if S1 ever needs to explain a "runtime not running" failure: Podman
-defaults to **rootless** for any non-root invocation (needs `CONTAINER_HOST` +
-a socket-group setup, or `sudo`, to reach the *rootful* backend this SKILL
-targets); nerdctl's rootful mode requires the invoking process to actually be
-UID 0 (no non-root socket-permission equivalent — `sudo` is the only path).
+Three real host-setup facts surfaced by AWS validation, worth the SKILL knowing
+about: Podman defaults to **rootless** for any non-root invocation (needs
+`CONTAINER_HOST` + a socket-group setup, or `sudo`, to reach the *rootful*
+backend this SKILL targets); nerdctl's rootful mode requires the invoking
+process to actually be UID 0 (no non-root socket-permission equivalent —
+`sudo` is the only path); and **nerdctl-compose requires a real console/tty
+for `tty: true` services, even for `up -d` / `down`** — unlike Docker/Podman,
+which just warn and continue on a non-tty stdin. This directly affects the
+SKILL, which drives `firesim-lab` non-interactively via a Bash tool: if
+`CONTAINER_RUNTIME=nerdctl`, a plain non-interactive `firesim-lab --pull` (or
+`--down`) can fail with `provided file is not a console` even though the
+launcher's own TTY-guard considers those flags safe to run headless. If S1
+hits this under nerdctl, tell the user to run the command themselves from a
+real terminal rather than retrying it non-interactively.
 
 Finch was not exercised end-to-end (native-Linux Finch runs are a smaller lift
 than its usual macOS/Windows Lima-VM mode, but neither was tested); treat its
 detection as present-but-unverified.
+
+### 3.2 Rootless detection (Phase 2 — landed in v0.9.0)
+
+Scope check first: this is **detection and correct behavior when a rootless
+runtime is already present**, not SKILL-driven rootless *setup* — Setup S1
+(§3.1) only ever installs/configures the **rootful** path. If a user already
+has rootless Podman/nerdctl configured some other way, the container still
+needs to behave correctly under it, which is what this section covers.
+
+`entrypoint.sh` and `firesim-lab-shell` both used to treat "`/target` owned by
+UID 0" as a single case — a warning, then run as root. That conflated two
+different situations: a rootless user namespace (container-UID-0 mapped to the
+real host user by the kernel — files written land back on the host correctly
+owned; running as-is is already correct) and a genuinely root-owned workspace
+under a rootful runtime (e.g. a Windows `/mnt/c` path — a real
+misconfiguration, where running as root really does write root-owned files
+back to the host). Both scripts now distinguish them via `/proc/self/uid_map`
+(non-identity first entry = rootless userns; identity = genuine root) — a
+kernel-level signal, not runtime-specific. The `exec "$@"` behavior is
+unchanged in both branches; only the message (info vs. warning) differs.
+`--userns=keep-id` inverts this mapping and is explicitly not supported.
+
+**Validated end-to-end on real AWS spot instances** (Ubuntu 24.04), for both
+Podman and nerdctl: pulled the image, started a container in rootless mode,
+confirmed a file written from inside the container lands on the host owned by
+the real user (not root), patched the running container with the new
+`entrypoint.sh`/`firesim-lab-shell` and restarted it, and confirmed the
+informational message fires instead of the warning. `firesim-lab-shell` was
+also confirmed to correctly reach `fslab --version` in both cases.
+
+Two setup-only findings surfaced while *manufacturing* a rootless nerdctl test
+environment (irrelevant to firesim-lab's own code, but worth recording since
+they'd otherwise look like this project's bugs if hit during troubleshooting):
+on Ubuntu 23.10+, `apparmor_restrict_unprivileged_userns` blocks
+`containerd-rootless-setuptool.sh install` outright (fixed by the AppArmor
+profile the tool's own error message suggests); and rootless containerd's
+default config fails fatally on `/var/run/nri/nri.sock: permission denied`
+unless the CRI plugin is disabled (`disabled_plugins = ["io.containerd.grpc.v1.cri"]`
+in `~/.config/containerd/config.toml`) — firesim-lab doesn't use CRI, so this
+is a safe deviation from containerd's defaults. Neither of these is something
+firesim-lab's install scripts need to handle, since Setup S1 doesn't install
+rootless mode.
 
 ---
 

@@ -60,6 +60,7 @@ Container runtime
   sudo systemctl enable --now containerd buildkit
   ```
 : nerdctl's rootful mode requires the invoking process to actually be UID 0; unlike Podman there is no socket-group equivalent for non-root access. Run `firesim-lab` with `sudo`. (The firesim-lab-setup skill can run the install above via `install-nerdctl-rootful.sh`, but deliberately does not configure passwordless `sudo` — that's a security-posture change you should make yourself if you want it.)
+: **Known limitation:** nerdctl's compose implementation requires a real console/tty to start or stop the container, even with `-d` (detached) — unlike Docker/Podman, which just warn and continue on a non-tty stdin. If `firesim-lab`/`firesim-lab --down` fails with `provided file is not a console`, run it from an actual terminal (e.g. a real SSH session) rather than a scripted/piped invocation.
 
 curl
 : Used to fetch the installer and download files. Present by default on macOS; install via your package manager on Linux if missing. Verify with `curl --version`.
