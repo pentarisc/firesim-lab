@@ -51,7 +51,7 @@ cp examples/axi-uart/AXIUARTPrinter.v  user_rtl/
 cp examples/axi-uart/sample.hex        payloads/
 ```
 
-These `cp` commands run **inside the container** — the `examples/` directory is baked into the image, not your workspace. For your *own* designs, put the RTL in your host workspace folder instead: it is bind-mounted at `/target`, so files you add on the host appear in the container automatically, with no copy step. `docker cp` is only needed for source you keep outside the mounted workspace. See {doc}`/installation/mountpoints` for the full mount map.
+These `cp` commands run **inside the container** — the `examples/` directory is baked into the image, not your workspace. For your *own* designs, put the RTL in your host workspace folder instead: it is bind-mounted at `/target`, so files you add on the host appear in the container automatically, with no copy step. Your container runtime's `cp` command (`docker cp`, `podman cp`, ...) is only needed for source you keep outside the mounted workspace. See {doc}`/installation/mountpoints` for the full mount map.
 
 `sample.hex` is a few little-endian 64-bit words of ASCII. The design reads them back word by word and prints their bytes — so whatever you put here is what you will see on the UART.
 

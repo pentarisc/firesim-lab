@@ -1,12 +1,12 @@
 # Installation
 
-This chapter installs firesim-lab on your host and gets you to a running container shell. It assumes you have already worked through {doc}`/setup/index` — in particular {doc}`/setup/host-prerequisites`, which confirms Docker, `curl`, supported platforms, and hardware sizing. If `docker run --rm hello-world` succeeds in your target shell, you are ready to install.
+This chapter installs firesim-lab on your host and gets you to a running container shell. It assumes you have already worked through {doc}`/setup/index` — in particular {doc}`/setup/host-prerequisites`, which confirms a container runtime, `curl`, supported platforms, and hardware sizing. If `docker run --rm hello-world` (or the equivalent for Podman/nerdctl) succeeds in your target shell, you are ready to install.
 
-Installation is deliberately light. Almost everything firesim-lab needs — Scala/SBT, Verilator, the FireSim Python environment, FPGA tooling — lives inside a single Docker image, so installing on the host means little more than placing a launcher script on your `PATH` and pulling that image. For the reasoning behind this split, see {doc}`host-vs-container`.
+Installation is deliberately light. Almost everything firesim-lab needs — Scala/SBT, Verilator, the FireSim Python environment, FPGA tooling — lives inside a single container image, so installing on the host means little more than placing a launcher script on your `PATH` and pulling that image. For the reasoning behind this split, see {doc}`host-vs-container`.
 
 ## What the installer actually does
 
-A single `curl`-piped script, `install.sh`, performs the whole host-side install. It does **not** start Docker or run any simulation — it only stages files:
+A single `curl`-piped script, `install.sh`, performs the whole host-side install. It does **not** start the container runtime or run any simulation — it only stages files:
 
 1. Picks an install directory — `~/.firesim-lab` by default (override with `INSTALL_DIR`).
 2. Downloads the `firesim-lab` launcher plus the files it needs (`docker-compose.yaml`, `Dockerfile`, `entrypoint.sh`, `firesim-lab-shell`) from the repository.
@@ -24,7 +24,7 @@ The workflow below is the same on every platform — the only difference is how 
 (install-linux)=
 ## Linux
 
-Linux is the primary, most-tested platform. You need a running Docker Engine with the Compose v2 plugin and `curl` — verified in {doc}`/setup/host-prerequisites`. If you have not already added yourself to the `docker` group, do so now so the launcher can drive Docker as your normal user:
+Linux is the primary, most-tested platform. You need a running container runtime and `curl` — verified in {doc}`/setup/host-prerequisites`. The steps below show Docker; if you're using Podman or nerdctl instead, complete the rootful setup in {doc}`/setup/host-prerequisites` first, then swap `docker` for `podman`/`nerdctl` in the verify command below (the `firesim-lab` launcher itself auto-detects whichever runtime is active — no flag needed). If you have not already added yourself to the `docker` group, do so now so the launcher can drive Docker as your normal user:
 
 ```bash
 sudo usermod -aG docker "$USER"   # then log out and back in
