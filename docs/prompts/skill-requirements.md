@@ -150,8 +150,8 @@ facts that outlive any single project:
 ```json
 {
   "schema_version": 1,
-  "fslab_version": "0.9.0-rc",
-  "skill_version": "0.9.0-rc",
+  "fslab_version": "0.9.0rc1",
+  "skill_version": "0.9.0rc1",
   "created_at": "2026-06-11T12:00:00Z",
   "updated_at": "2026-06-11T12:00:00Z",
   "setup": { "host_prereqs_ok": true, "workspace_initialized": true, "container_discovered": true },
@@ -185,8 +185,8 @@ project). Design + gate + F2 pointers:
 ```json
 {
   "schema_version": 1,
-  "fslab_version": "0.9.0-rc",
-  "skill_version": "0.9.0-rc",
+  "fslab_version": "0.9.0rc1",
+  "skill_version": "0.9.0rc1",
   "created_at": "...",
   "updated_at": "...",
   "design": {
@@ -775,7 +775,7 @@ literal in exactly one place (seam 1, §3.1), which a mirrored copy would violat
   "plugins": [
     { "name": "firesim-lab", "source": ".",
       "description": "AI-accelerated firesim-lab: Help, Setup, Simulation skills",
-      "version": "0.9.0-rc" }
+      "version": "0.9.0rc1" }
   ]
 }
 ```

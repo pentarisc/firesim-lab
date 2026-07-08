@@ -2,8 +2,8 @@
 name: firesim-lab-setup
 description: One-time-per-host/account provisioning for the firesim-lab flow. Use when setting up a new host or workspace, when firesim-lab-sim says setup is missing, or when the user wants to enable AWS F2 or task notifications. Detects host prereqs (container runtime, the firesim-lab launcher, the image) and offers to remediate per-step; inits the workspace; detects + pins the installed fslab version; optionally provisions AWS (solo-admin scripts vs org-admin handoff) + first-time SSO; optionally sets up notifications. Writes the workspace-level skill-state stamp.
 metadata:
-  fslab_version: "0.9.0-rc"
-  skill_version: "0.9.0-rc"
+  fslab_version: "0.9.0rc1"
+  skill_version: "0.9.0rc1"
 ---
 
 # firesim-lab-setup — run-once provisioning
@@ -27,7 +27,7 @@ ask consent per step, then act. Never silently install or create cloud resources
    version** is recorded in the stamp and used by all three skills. Never assume
    "latest".
 3. **Skill↔tool compatibility (MAJOR.MINOR):** this skill carries
-   `fslab_version: 0.9.0-rc`. If the active tool's MAJOR.MINOR differs, **halt** and
+   `fslab_version: 0.9.0rc1`. If the active tool's MAJOR.MINOR differs, **halt** and
    tell the user to align them (`firesim-lab --upgrade` for the workspace, or
    install the matching plugin version) — do not operate a tool the skill does not
    understand. Patch differences are fine.

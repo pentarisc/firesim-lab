@@ -107,8 +107,8 @@ Write `<project>/.fslab/skill-state.json` (atomic `*.tmp`→rename):
 ```json
 {
   "schema_version": 1,
-  "fslab_version": "0.9.0-rc",
-  "skill_version": "0.9.0-rc",
+  "fslab_version": "0.9.0rc1",
+  "skill_version": "0.9.0rc1",
   "created_at": "...",
   "updated_at": "...",
   "design": {
