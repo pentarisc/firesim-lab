@@ -42,13 +42,19 @@ Detailed probes and remediation live in
 
 Walk these with **detect + offer to run (per-step confirm)**:
 
-- **S1 Host prereqs:** is the container runtime running? is the `firesim-lab`
-  launcher installed? is the image pulled? Offer to remediate each gap — may run
-  `install.sh` / pull the image. The launcher is **TTY-guarded**: only
-  `--pull/--status/--down/--clean-cache/--upgrade/--help` run non-interactively;
-  bare `firesim-lab` (init/start) needs a TTY — drive it by pre-seeding the
-  prompted fields (`VERILATOR_THREADS`, `ENABLE_CUSTOM_PLUGINS`, both defaulted)
-  or hand the exact command to the user to run.
+- **S1 Host prereqs:** is *any* container runtime installed? If not, ask which
+  (Docker recommended; Podman/nerdctl on Linux) and offer to run the matching
+  install script (`scripts/install-podman-rootful.sh` /
+  `scripts/install-nerdctl-rootful.sh`; Docker's official convenience script on
+  Linux, explain-and-link only for Docker Desktop on macOS/Windows) — see
+  [reference/prereqs.md](reference/prereqs.md) Tier 0. Then: is it running? is
+  the `firesim-lab` launcher installed? is the image pulled? Offer to remediate
+  each gap — may run `install.sh` / pull the image. The launcher is
+  **TTY-guarded**: only `--pull/--status/--down/--clean-cache/--upgrade/--help`
+  run non-interactively; bare `firesim-lab` (init/start) needs a TTY — drive it
+  by pre-seeding the prompted fields (`VERILATOR_THREADS`,
+  `ENABLE_CUSTOM_PLUGINS`, both defaulted) or hand the exact command to the
+  user to run.
 - **S2 Workspace init:** if `<workspace>/.firesim-lab.env` is absent, run the
   launcher to create it.
 - **S3 Container + version:** discover the running container, establish the
@@ -56,7 +62,8 @@ Walk these with **detect + offer to run (per-step confirm)**:
   (preflight step 2).
 
 → Update the stamp: `setup.host_prereqs_ok`, `workspace_initialized`,
-`container_discovered`, `container_runtime` (`"docker"` today), and `fslab_version`.
+`container_discovered`, `container_runtime` (`"docker"`, `"podman"`, or
+`"nerdctl"`), and `fslab_version`.
 
 ## S4. AWS provisioning — OPT-IN (only if the user wants F2)
 

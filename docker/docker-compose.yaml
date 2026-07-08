@@ -43,9 +43,9 @@
 #  inside the container persist their state to the host (no aws-cli install
 #  required on the host).  HOST_AWS_DIR is set by the firesim-lab launcher
 #  to <install-dir>/.aws — keeping AWS state under the firesim-lab install
-#  directory and away from any host-side ~/.aws.  The fallback default
-#  ${HOME}/.firesim-lab/.aws preserves behaviour for older .firesim-lab.env
-#  files that pre-date this variable.
+#  directory and away from any host-side ~/.aws.  Rewritten into
+#  .firesim-lab.env on every launcher invocation, so it is always present by
+#  the time compose runs.
 #
 #  SSH key directory
 #  ─────────────────
@@ -55,9 +55,9 @@
 #  firesim-lab launcher to <install-dir>/.ssh — keeping keys under the
 #  firesim-lab install directory and away from any host-side ~/.ssh.  Mount
 #  is read-write so ssh can update ~/.ssh/known_hosts on first connect to a
-#  new host; key files remain protected by their own 600 permissions.  The
-#  fallback default ${HOME}/.firesim-lab/.ssh preserves behaviour for older
-#  .firesim-lab.env files that pre-date this variable.
+#  new host; key files remain protected by their own 600 permissions.
+#  Rewritten into .firesim-lab.env on every launcher invocation, so it is
+#  always present by the time compose runs.
 #
 #  Required .env variables (written by run.sh into .firesim-lab.env):
 #    HOST_WORKSPACE_DIR  — absolute host path to the user's target project
@@ -65,7 +65,7 @@
 #    HOST_SSH_DIR        — absolute host path to the SSH key directory
 #    HOST_UID            — host user's numeric UID
 #    HOST_GID            — host user's numeric primary GID
-#    FIRESIM_IMAGE       — image name:tag  (e.g. pentarisc/firesim-lab:latest)
+#    FIRESIM_IMAGE       — image name:tag  (e.g. docker.io/pentarisc/firesim-lab:latest)
 #    CONTAINER_NAME      — name for the running container
 # =============================================================================
 
@@ -77,7 +77,10 @@ services:
     # source is a developer activity; use docker-compose-dev.yaml for that.
     # Keeping build out of this file prevents a failed pull from silently
     # rebuilding from `main` and tagging the result with a pinned version name.
-    image: ${FIRESIM_IMAGE:-pentarisc/firesim-lab:latest}
+    # Fully qualified (docker.io/...) rather than a short name: Podman requires
+    # either an explicit registry or a configured unqualified-search-registries
+    # list, while Docker/nerdctl/Finch all accept the qualified form too.
+    image: ${FIRESIM_IMAGE:-docker.io/pentarisc/firesim-lab:latest}
     container_name: ${CONTAINER_NAME:-firesim-lab}
 
     # No `user:` override — the entrypoint detects the host user's UID/GID
@@ -131,20 +134,23 @@ services:
 
       # ── AWS configuration (bind mount) ────────────────────────────────────
       # Mounted at ~/.aws so `aws configure` / `aws sso login` run inside the
-      # container persist credentials to the host.  Fallback default covers
-      # older .firesim-lab.env files that pre-date HOST_AWS_DIR.
+      # container persist credentials to the host.  HOST_AWS_DIR is (re)computed
+      # and rewritten into .firesim-lab.env by the launcher on every invocation,
+      # so it is always present by the time compose runs — no inline default
+      # here (a nested ${VAR:-${VAR2}/suffix} default is mis-parsed by
+      # podman-compose's simpler substitution engine).
       - type: bind
-        source: ${HOST_AWS_DIR:-${HOME}/.firesim-lab/.aws}
+        source: ${HOST_AWS_DIR}
         target: /home/firesim-lab/.aws
 
       # ── SSH keys (bind mount) ─────────────────────────────────────────────
       # Mounted at ~/.ssh so ssh, scp, git, rsync, etc. discover keys at the
       # conventional location.  Read-write so ssh can update known_hosts and
       # so ssh-keygen can be run from inside the container; key files are
-      # still protected by their own 600 permissions.  Fallback default
-      # covers older .firesim-lab.env files that pre-date HOST_SSH_DIR.
+      # still protected by their own 600 permissions.  Same no-nested-default
+      # rationale as HOST_AWS_DIR above.
       - type: bind
-        source: ${HOST_SSH_DIR:-${HOME}/.firesim-lab/.ssh}
+        source: ${HOST_SSH_DIR}
         target: /home/firesim-lab/.ssh
 
       # ── SBT / Ivy artifact cache ──────────────────────────────────────────
@@ -178,27 +184,34 @@ services:
 
     # ── Resource limits ─────────────────────────────────────────────────────
     # Chisel elaboration + Verilator compilation are memory-intensive.
+    # deploy.resources is honored outside swarm mode by docker compose and
+    # nerdctl/finch compose (both built on compose-go); mem_limit/mem_reservation
+    # are the classic fallback for engines that only look at deploy.resources in
+    # swarm mode (e.g. podman-compose).
     deploy:
       resources:
         limits:
           memory: ${CONTAINER_MEMORY_LIMIT:-16g}
         reservations:
           memory: ${CONTAINER_MEMORY_RESERVE:-8g}
+    mem_limit: ${CONTAINER_MEMORY_LIMIT:-16g}
+    mem_reservation: ${CONTAINER_MEMORY_RESERVE:-8g}
 
     # ── Working directory ────────────────────────────────────────────────────
     working_dir: /target
 
 # =============================================================================
 #  Named volumes
-#  Managed by Docker under /var/lib/docker/volumes/.
-#  Persist until explicitly removed with `docker volume rm` or
+#  Managed by the container runtime — under /var/lib/docker/volumes/ for
+#  Docker, or ~/.local/share/containers/storage/volumes/ for Podman.
+#  Persist until explicitly removed with `<runtime> volume rm` or
 #  `firesim-lab --clean-cache`.
 #  Seeded on first use from the corresponding image layer path.
 #
 #  Volume names are user-specific (embed HOST_UID) so that multiple users
-#  on the same Docker host have independent caches.  The names are
+#  on the same host have independent caches.  The names are
 #  pre-composed by the run script and written into .firesim-lab.env as
-#  VOLUME_* variables, which are substituted here by docker-compose's
+#  VOLUME_* variables, which are substituted here by the compose
 #  --env-file mechanism.  Because the values are plain strings (not
 #  expressions involving HOST_UID), substitution is reliable.
 #

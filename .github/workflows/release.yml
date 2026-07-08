@@ -138,7 +138,7 @@ jobs:
           cat > versions.json <<EOF
           {
             "version": "${{ steps.ver.outputs.version }}",
-            "image": "pentarisc/firesim-lab@${{ steps.build.outputs.digest }}",
+            "image": "docker.io/pentarisc/firesim-lab@${{ steps.build.outputs.digest }}",
             "firesim_commit": "${{ steps.ver.outputs.firesim_commit }}"
           }
           EOF

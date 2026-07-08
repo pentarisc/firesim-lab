@@ -9,7 +9,7 @@ This page tells you which mode to pick for which job and what changes about the 
 | | Metasim | FPGA |
 |---|---|---|
 | **Simulator** | Verilator, VCS, or Xcelium | AWS F2 hardware with a built AGFI |
-| **Setup** | Docker container only | Docker + AWS account + IAM setup |
+| **Setup** | Container runtime only | Container runtime + AWS account + IAM setup |
 | **Target frequency** | tens of kHz to ~1 MHz | high MHz to low tens of MHz |
 | **Iteration loop** | one build (minutes), fast runs | bitstream build (hours, remote), then fast runs |
 | **Debug visibility** | full waveforms; standard simulator features | `printf-synthesis`, AutoCounter, TracerV, per-bridge logging; waveforms only for explicitly captured signals |
@@ -73,6 +73,6 @@ Detailed mechanics for each of these are out of scope for the Concepts section �
 
 You now have the full conceptual model: target and host, FAME-1, bridges, the RTL preconditions, and when to use which simulation mode. The rest of the portal is operational:
 
-- {doc}`/installation/index` — install the launcher and pull the Docker image.
+- {doc}`/installation/index` — install the launcher and pull the container image.
 - {doc}`/quickstart/index` — walk through a project end-to-end.
 - {doc}`/commands/index` — look up a specific `fslab` command.

@@ -1,42 +1,69 @@
 # Host Prerequisites
 
-firesim-lab ships its entire toolchain — Scala/SBT, Verilator, the FireSim Python environment, FPGA tooling — inside a single pinned Docker image. The host machine therefore stays deliberately thin: essentially just **Docker**. Everything heavy runs in the container.
+firesim-lab ships its entire toolchain — Scala/SBT, Verilator, the FireSim Python environment, FPGA tooling — inside a single pinned container image. The host machine therefore stays deliberately thin: essentially just a **container runtime**. Everything heavy runs in the container.
+
+The `firesim-lab` launcher auto-detects whichever runtime is on your `PATH` — **Docker**, **Podman**, or **nerdctl** (containerd) — so this page covers all three. Docker remains the best-tested, zero-extra-setup path; Podman and nerdctl are supported in **rootful** mode (see below for the one-time setup each needs).
 
 This page is the checklist to get your host ready *before* you install firesim-lab. For the actual install and first container start, continue to {doc}`/installation/index`. For why the toolchain is containerized at all and what lives where, see {doc}`/installation/host-vs-container`.
 
 ## Supported platforms
 
-Because the entire toolchain lives in a Linux container, every supported platform converges on the same thing: a Linux shell with Docker. Windows reaches that through WSL2; Linux and macOS get there directly. Once you are at that shell, the install and the `firesim-lab` workflow are **identical on all three** — the same `install.sh`, the same launcher.
+Because the entire toolchain lives in a Linux container, every supported platform converges on the same thing: a Linux shell with a container runtime. Windows reaches that through WSL2; Linux and macOS get there directly. Once you are at that shell, the install and the `firesim-lab` workflow are **identical on all three** — the same `install.sh`, the same launcher.
 
-- **Linux** — any modern distribution with a current Docker Engine. The primary, most-tested platform.
-- **Windows 10 (21H2+) / 11** — via **WSL2** (Windows Subsystem for Linux) with Docker Desktop's WSL2 backend. You install firesim-lab and run it *inside* a WSL2 Linux distro (Ubuntu), so from the container's point of view it is just Linux. There are no Windows-native firesim-lab scripts.
-- **macOS 12 (Monterey) or newer** — Intel or Apple Silicon, with Docker Desktop for Mac. The standard Linux installer runs directly in Terminal.
+- **Linux** — any modern distribution with a current Docker Engine, or rootful Podman/nerdctl (see below). The primary, most-tested platform, including for the Podman/nerdctl paths.
+- **Windows 10 (21H2+) / 11** — via **WSL2** (Windows Subsystem for Linux) with Docker Desktop's WSL2 backend. You install firesim-lab and run it *inside* a WSL2 Linux distro (Ubuntu), so from the container's point of view it is just Linux. There are no Windows-native firesim-lab scripts. Since a WSL2 distro is genuinely Linux, the Podman/nerdctl setup below applies there too, but only Docker Desktop's WSL2 backend has been tested end-to-end on Windows.
+- **macOS 12 (Monterey) or newer** — Intel or Apple Silicon, with Docker Desktop for Mac. The standard Linux installer runs directly in Terminal. See {doc}`/setup-options` for alternative macOS/Windows container runtimes (Podman Desktop, Rancher Desktop, Finch) — untested with firesim-lab so far.
 
 ## Required software
 
-firesim-lab runs as a Docker Compose service launched from a Linux shell. The prerequisites below get you to that shell on each platform. The detailed, step-by-step setup lives in {doc}`/installation/index` — this page only lists what must be in place.
+firesim-lab runs as a Compose service launched from a Linux shell. The prerequisites below get you to that shell on each platform. The detailed, step-by-step setup lives in {doc}`/installation/index` — this page only lists what must be in place.
 
 ### Linux and macOS
 
 Two things, in the shell you already have (bash on Linux, zsh on macOS):
 
-Docker
-: A running Docker Engine (Linux) or Docker Desktop (macOS) with the Compose v2 plugin. Verify:
+Container runtime
+: A running **Docker** Engine (Linux) or Docker Desktop (macOS), **or** rootful **Podman**/**nerdctl** (Linux only, see below). The `firesim-lab` launcher auto-detects whichever is on `PATH`; override with `--runtime=<name>` or `FIRESIM_RUNTIME=<name>` if more than one is installed.
+
+**Docker** — the default, zero-extra-setup path:
 : ```bash
   docker --version
   docker compose version
   ```
-: On Linux, install the Compose plugin (`docker-compose-plugin`) if `docker compose version` errors — the legacy standalone `docker-compose` binary is not required.
+: On Linux, install the Compose plugin (`docker-compose-plugin`) if `docker compose version` errors — the legacy standalone `docker-compose` binary is not required. Add yourself to the `docker` group once so the launcher can invoke it as your normal user (Docker Desktop on macOS handles this for you):
+  ```bash
+  sudo usermod -aG docker "$USER"   # then log out and back in
+  docker run --rm hello-world
+  ```
+
+**Podman** (Linux only, rootful) — install it first:
+: ```bash
+  sudo apt-get update && sudo apt-get install -y podman podman-compose   # Debian/Ubuntu
+  ```
+: (other distros: `dnf install podman podman-compose` on Fedora/RHEL, `pacman -S podman podman-compose` on Arch.) Podman defaults to a **rootless** backend for any non-root invocation, which firesim-lab does not yet support; you need either `sudo` per invocation, or a one-time setup so your normal user reaches the *rootful* backend without `sudo`:
+: ```bash
+  sudo systemctl enable --now podman.socket
+  sudo groupadd -f podman && sudo usermod -aG podman "$USER"
+  sudo mkdir -p /etc/systemd/system/podman.socket.d
+  printf '[Socket]\nSocketGroup=podman\nSocketMode=0660\n' | sudo tee /etc/systemd/system/podman.socket.d/override.conf
+  sudo systemctl daemon-reload && sudo systemctl restart podman.socket
+  echo 'export CONTAINER_HOST=unix:///run/podman/podman.sock' >> ~/.bashrc   # then log out and back in
+  ```
+: Verify with `podman info --format '{{.Host.Security.Rootless}}'` — it should print `false`. (The firesim-lab-setup Claude Code skill can run all of the above for you via `install-podman-rootful.sh`.)
+
+**nerdctl** (Linux only, rootful, via containerd) — nerdctl ships as a single self-contained "full" release bundling containerd, buildkit, and CNI plugins:
+: ```bash
+  VER=2.3.4   # check https://github.com/containerd/nerdctl/releases for the latest
+  curl -fsSL -o /tmp/nerdctl-full.tar.gz \
+    "https://github.com/containerd/nerdctl/releases/download/v${VER}/nerdctl-full-${VER}-linux-amd64.tar.gz"
+  sudo tar Cxzf /usr/local /tmp/nerdctl-full.tar.gz
+  sudo systemctl enable --now containerd buildkit
+  ```
+: nerdctl's rootful mode requires the invoking process to actually be UID 0; unlike Podman there is no socket-group equivalent for non-root access. Run `firesim-lab` with `sudo`. (The firesim-lab-setup skill can run the install above via `install-nerdctl-rootful.sh`, but deliberately does not configure passwordless `sudo` — that's a security-posture change you should make yourself if you want it.)
+: **Known limitation:** nerdctl's compose implementation requires a real console/tty to start or stop the container, even with `-d` (detached) — unlike Docker/Podman, which just warn and continue on a non-tty stdin. If `firesim-lab`/`firesim-lab --down` fails with `provided file is not a console`, run it from an actual terminal (e.g. a real SSH session) rather than a scripted/piped invocation.
 
 curl
 : Used to fetch the installer and download files. Present by default on macOS; install via your package manager on Linux if missing. Verify with `curl --version`.
-
-On **Linux**, also add yourself to the `docker` group once so the launcher can invoke Docker as your normal user (Docker Desktop on macOS handles this for you):
-
-```bash
-sudo usermod -aG docker "$USER"   # then log out and back in
-docker run --rm hello-world
-```
 
 :::{note}
 **Apple Silicon (M-series).** The firesim-lab image is x86-64 (amd64) and runs under emulation on Apple Silicon, which is slower for SBT/Verilator builds. Enable Docker Desktop's **Use Rosetta for x86/amd64 emulation** for the best available speed (Intel Macs run the image natively). This is a performance caveat, not a blocker.
@@ -71,9 +98,9 @@ On **Windows**, these limits apply to the resources Docker Desktop's WSL2 backen
 The host needs outbound HTTPS to:
 
 - **`raw.githubusercontent.com`** — to fetch the installer and launcher files.
-- **Docker Hub (`docker.io`)** — to pull the `pentarisc/firesim-lab` image.
+- **Docker Hub (`docker.io`)** — to pull the `pentarisc/firesim-lab` image (Docker, Podman, and nerdctl all pull from the same registry).
 
-Behind a corporate proxy, configure Docker's proxy settings so image pulls succeed.
+Behind a corporate proxy, configure your container runtime's proxy settings so image pulls succeed.
 
 ## What you do *not* need on the host
 
@@ -91,7 +118,7 @@ A frequent source of confusion: none of the simulation toolchain belongs on the 
 
 ## Quick verification
 
-Run this in your target shell before moving on — bash on Linux, Terminal on macOS, or the **WSL Ubuntu shell** on Windows. Every line should succeed:
+Run this in your target shell before moving on — bash on Linux, Terminal on macOS, or the **WSL Ubuntu shell** on Windows. Every line should succeed (shown for Docker; substitute `podman`/`nerdctl` and the rootful-access check from above if you're using one of those instead):
 
 ```bash
 docker --version          # Docker present

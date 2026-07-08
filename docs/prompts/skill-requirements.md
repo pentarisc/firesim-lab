@@ -234,37 +234,108 @@ duplicates lifecycle state the CLI already owns.
   In-container → call `fslab` directly. Host → go through `firesim-lab-shell`
   (never bare `docker exec`, which runs as root and breaks SBT/ccache writes).
 
-### 3.1 Forward-compat: multi-runtime (deferred to a later MINOR)
+### 3.1 Multi-runtime (Phase 1 — rootful — landed in v0.9.0)
 
-Multi–container-runtime support (rootful Podman, nerdctl/containerd, Finch; then
-rootless as a tested follow-on) is **deferred to a MINOR after this SKILL's
-debut.** Build the SKILL **docker-only now**, but leave these four seams so the
-later change is a near one-file edit rather than a scattered one (this is also why
-the host wording above and in §13 #1, §18 says "container runtime" where possible):
+Multi–container-runtime support (rootful **Podman**, **nerdctl**/containerd;
+**Finch** detection is wired but untested) shipped in **v0.9.0**, alongside the
+SKILL update below. The SKILL's Setup S1 only ever installs/configures the
+**rootful** path (below); correct behavior when a rootless runtime is already
+present some other way is covered separately in §3.2.
 
-1. **Single container-CLI seam.** All container invocation resolves one `$RUNTIME`
-   variable in `scripts/detect-context.sh`, and all exec'ing flows through **one**
-   helper. The literal string `docker` must appear in **exactly one place**
-   (`detect-context.sh`). `SKILL.md` and the `reference/` files reference the
-   helper — they must **never inline** `docker exec <container> firesim-lab-shell …`
-   in prose/examples. (The inlined forms in §3 above, §13 #1, and §18 are the ones
-   to route through the seam when the SKILL is authored.)
-2. **Read `CONTAINER_RUNTIME` with a `docker` fallback.** `detect-context.sh`
-   sources `CONTAINER_RUNTIME` from `.firesim-lab.env`, defaulting to `docker` when
-   absent — so the day the launcher begins writing that field, the SKILL already
-   honors it with no change.
-3. **Reserve the stamp field.** The workspace skill-state (§2.6) carries
-   `setup.container_runtime` (value `"docker"` today) so adding runtimes later needs
-   **no `schema_version` bump**.
-4. **Runtime-neutral prose.** Phrase the §5 S1 prereq check and §3 context
-   detection as "the container runtime" with docker as the current concrete
-   example, so the later edit is wording, not logic.
+The four seams this section originally asked the SKILL to leave (so this change
+would be a near one-file edit) held exactly as designed:
 
-Only seam 1 is load-bearing; 2–4 are cheap insurance that keep the env/stamp
-schemas and doc prose from churning. The actual multi-runtime change set (launcher,
-compose, entrypoint, docs/portal) is tracked outside this spec; per the project's
-**Version & SKILL synchronization** rule, the MINOR that introduces it must update
-this spec first, then the SKILL.
+1. **Single container-CLI seam.** `scripts/detect-context.sh` is still the only
+   place the literal string `docker` appears; `SKILL.md` and the `reference/`
+   files still never inline `docker exec …` — confirmed unchanged, **no code
+   edit needed here**.
+2. **`CONTAINER_RUNTIME` with a `docker` fallback.** The launcher
+   (`docker/firesim-lab`) now genuinely writes `CONTAINER_RUNTIME=` into
+   `.firesim-lab.env` (auto-detected as the first of `docker`/`podman`/
+   `nerdctl`/`finch` found on `PATH`, overridable with `--runtime=<name>` or
+   `FIRESIM_RUNTIME=<name>`, and persisted per-workspace). `detect-context.sh`
+   already read this field with a `docker` fallback — **no code edit needed**.
+3. **Stamp field.** `setup.container_runtime` in the workspace skill-state can
+   now hold `"podman"` / `"nerdctl"` / `"finch"` in addition to `"docker"` —
+   **no `schema_version` bump needed**, as designed.
+4. **Runtime-neutral prose.** `SKILL.md` and `reference/prereqs.md` already say
+   "the container runtime" generically. This turned out to need more than
+   wording, though: S1 previously only checked whether an *already-installed*
+   runtime was *running* — there was no path for "no runtime is installed at
+   all, which one do you want?" (unlike the launcher/image checks, which
+   already offer to run `install.sh` / pull). `reference/prereqs.md` S1 is now
+   split into **Tier 0** (is any runtime installed? if not, ask Docker/Podman/
+   nerdctl and offer to run the matching install script) and **Tier 1** (is it
+   running? — the original check, unchanged). Two new bundled scripts do the
+   actual work, `skills/firesim-lab-setup/scripts/install-podman-rootful.sh`
+   and `install-nerdctl-rootful.sh` — host-side scripts (they run before any
+   firesim-lab container exists, so they don't source `detect-context.sh` /
+   use `fslab_exec` the way the AWS provisioning scripts do). Both are
+   idempotent and require per-step confirm like every other mutating action
+   this skill takes. Neither configures passwordless `sudo` for nerdctl, and
+   neither can complete Podman's "log out and back in" step for the user —
+   both are called out explicitly so the SKILL doesn't overreach.
+
+Three real host-setup facts surfaced by AWS validation, worth the SKILL knowing
+about: Podman defaults to **rootless** for any non-root invocation (needs
+`CONTAINER_HOST` + a socket-group setup, or `sudo`, to reach the *rootful*
+backend this SKILL targets); nerdctl's rootful mode requires the invoking
+process to actually be UID 0 (no non-root socket-permission equivalent —
+`sudo` is the only path); and **nerdctl-compose requires a real console/tty
+for `tty: true` services, even for `up -d` / `down`** — unlike Docker/Podman,
+which just warn and continue on a non-tty stdin. This directly affects the
+SKILL, which drives `firesim-lab` non-interactively via a Bash tool: if
+`CONTAINER_RUNTIME=nerdctl`, a plain non-interactive `firesim-lab --pull` (or
+`--down`) can fail with `provided file is not a console` even though the
+launcher's own TTY-guard considers those flags safe to run headless. If S1
+hits this under nerdctl, tell the user to run the command themselves from a
+real terminal rather than retrying it non-interactively.
+
+Finch was not exercised end-to-end (native-Linux Finch runs are a smaller lift
+than its usual macOS/Windows Lima-VM mode, but neither was tested); treat its
+detection as present-but-unverified.
+
+### 3.2 Rootless detection (Phase 2 — landed in v0.9.0)
+
+Scope check first: this is **detection and correct behavior when a rootless
+runtime is already present**, not SKILL-driven rootless *setup* — Setup S1
+(§3.1) only ever installs/configures the **rootful** path. If a user already
+has rootless Podman/nerdctl configured some other way, the container still
+needs to behave correctly under it, which is what this section covers.
+
+`entrypoint.sh` and `firesim-lab-shell` both used to treat "`/target` owned by
+UID 0" as a single case — a warning, then run as root. That conflated two
+different situations: a rootless user namespace (container-UID-0 mapped to the
+real host user by the kernel — files written land back on the host correctly
+owned; running as-is is already correct) and a genuinely root-owned workspace
+under a rootful runtime (e.g. a Windows `/mnt/c` path — a real
+misconfiguration, where running as root really does write root-owned files
+back to the host). Both scripts now distinguish them via `/proc/self/uid_map`
+(non-identity first entry = rootless userns; identity = genuine root) — a
+kernel-level signal, not runtime-specific. The `exec "$@"` behavior is
+unchanged in both branches; only the message (info vs. warning) differs.
+`--userns=keep-id` inverts this mapping and is explicitly not supported.
+
+**Validated end-to-end on real AWS spot instances** (Ubuntu 24.04), for both
+Podman and nerdctl: pulled the image, started a container in rootless mode,
+confirmed a file written from inside the container lands on the host owned by
+the real user (not root), patched the running container with the new
+`entrypoint.sh`/`firesim-lab-shell` and restarted it, and confirmed the
+informational message fires instead of the warning. `firesim-lab-shell` was
+also confirmed to correctly reach `fslab --version` in both cases.
+
+Two setup-only findings surfaced while *manufacturing* a rootless nerdctl test
+environment (irrelevant to firesim-lab's own code, but worth recording since
+they'd otherwise look like this project's bugs if hit during troubleshooting):
+on Ubuntu 23.10+, `apparmor_restrict_unprivileged_userns` blocks
+`containerd-rootless-setuptool.sh install` outright (fixed by the AppArmor
+profile the tool's own error message suggests); and rootless containerd's
+default config fails fatally on `/var/run/nri/nri.sock: permission denied`
+unless the CRI plugin is disabled (`disabled_plugins = ["io.containerd.grpc.v1.cri"]`
+in `~/.config/containerd/config.toml`) — firesim-lab doesn't use CRI, so this
+is a safe deviation from containerd's defaults. Neither of these is something
+firesim-lab's install scripts need to handle, since Setup S1 doesn't install
+rootless mode.
 
 ---
 
@@ -317,7 +388,7 @@ HELP skill — on demand (pull) ────────────────
  H. Show the flow overview (§16) and name the other skills. No marker, no state.
 
 SETUP skill — run once per host/account; writes the stamp ─────────────────────
- S1. Host prereqs: Docker running? firesim-lab launcher? image pulled?
+ S1. Host prereqs: container runtime running? firesim-lab launcher? image pulled?
      └─ DETECT + OFFER TO RUN (per-step confirm) — may run install.sh / pull image
      └─ launcher is TTY-guarded: only --pull/--status/--down/--clean-cache/--upgrade/
         --help run non-interactively; bare `firesim-lab` (init/start) needs a TTY —

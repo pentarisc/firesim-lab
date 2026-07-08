@@ -67,7 +67,10 @@ REPO_RAW="${REPO_BASE}/${VERSION}"
 #   <other> → image <ref>,  version <ref>  (branch / sha)
 # Git tags are 'vX.Y.Z'; Docker tags and PEP 440 versions are 'X.Y.Z' (no 'v').
 # The leading 'v' is stripped exactly once, here at the boundary.
-IMAGE_REPO="pentarisc/firesim-lab"
+# Fully qualified (docker.io/...) rather than a short name: Podman refuses to
+# guess a short name's registry unless the host has unqualified-search-registries
+# configured, while Docker/nerdctl/Finch accept the qualified form too.
+IMAGE_REPO="docker.io/pentarisc/firesim-lab"
 case "$VERSION" in
   v[0-9]*) IMAGE_TAG="${VERSION#v}"; FIRESIM_LAB_VERSION="${VERSION#v}" ;;
   main)    IMAGE_TAG="latest";       FIRESIM_LAB_VERSION="main" ;;
@@ -103,8 +106,17 @@ need() {
     exit 1
   }
 }
+need_any_runtime() {
+  local rt
+  for rt in docker podman nerdctl finch; do
+    command -v "$rt" &>/dev/null && return 0
+  done
+  echo "$(_red "Error:") No supported container runtime found (docker, podman, nerdctl, finch)."
+  echo "Install one of these before continuing."
+  exit 1
+}
 need curl
-need docker
+need_any_runtime
 
 # ── Download helper ───────────────────────────────────────────────────────────
 download() {
@@ -335,7 +347,7 @@ echo "    $(_cyan "cd ~/my-workspace")"
 echo "    $(_cyan "firesim-lab")"
 echo ""
 echo "  On first run in a new directory, firesim-lab will prompt you for"
-echo "  your project name and settings, then start the Docker container"
+echo "  your project name and settings, then start the container"
 echo "  and drop you straight into a shell."
 echo ""
 echo "  $(_bold "AWS credentials:")"

@@ -1,6 +1,6 @@
 # Mountpoints
 
-This page is the reference for how the host and container are wired together: which host directories appear where inside the container, which Docker-managed volumes hold the caches, and the environment variables that control it all. The mounts are defined in `docker/docker-compose.yaml` (the production Compose file shipped by `install.sh`); the launcher fills in the host-specific paths through a per-workspace settings file.
+This page is the reference for how the host and container are wired together: which host directories appear where inside the container, which runtime-managed volumes hold the caches, and the environment variables that control it all. The mounts are defined in `docker/docker-compose.yaml` (the production Compose file shipped by `install.sh`); the launcher fills in the host-specific paths through a per-workspace settings file.
 
 :::{note}
 This page documents the **production** Compose file that installed users run. Contributors who build the image locally use `docker/docker-compose-dev.yaml`, which adds developer mounts (source trees, the in-repo `fslab` CLI) — that file is covered in the {doc}`/developer/index` chapter, not here.
@@ -8,7 +8,7 @@ This page documents the **production** Compose file that installed users run. Co
 
 ## The mount map at a glance
 
-When the container starts, the launcher (`firesim-lab`) invokes Docker Compose with three bind mounts and five named volumes:
+When the container starts, the launcher (`firesim-lab`) invokes its detected runtime's Compose (Docker, Podman, or nerdctl) with three bind mounts and five named volumes:
 
 | Host source | Container target | Type | Purpose |
 |---|---|---|---|
@@ -42,9 +42,9 @@ Both directories are anchored to the install dir rather than your host `~`, so t
 
 ## The cache volumes
 
-The five SBT/Coursier/ccache mounts are **Docker named volumes**, not bind mounts. Docker manages them under `/var/lib/docker/volumes/`, they are seeded from the image on first use, and they persist across container restarts so dependency downloads and C++ compilation are not repeated.
+The five SBT/Coursier/ccache mounts are **named volumes**, not bind mounts, managed by whichever container runtime you're using (Docker under `/var/lib/docker/volumes/`, Podman under `~/.local/share/containers/...`). They are seeded from the image on first use, and they persist across container restarts so dependency downloads and C++ compilation are not repeated.
 
-- Volume **names embed the host UID** (e.g. `firesim-lab-sbt-ivy-1000`), so multiple users on the same Docker host keep independent caches.
+- Volume **names embed the host UID** (e.g. `firesim-lab-sbt-ivy-1000`), so multiple users on the same host keep independent caches.
 - The cache directories inside the image are `2775` (setgid + group-writable) and owned by the `firesim-lab-cache` group (GID `2543` by default). The entrypoint adds your container user to that group at start-up, and the setgid bit makes new files inherit the group — so the caches stay writable across runs **without any per-start `chown`**.
 - To wipe and re-seed the caches for the current workspace, run `firesim-lab --clean-cache` on the host. This is the fix for stale-cache problems, e.g. after a major SBT version bump.
 
@@ -77,14 +77,15 @@ The launcher sets these for you; you should not normally need to touch them. The
 
 | Variable | Description |
 |---|---|
-| `FIRESIM_IMAGE` | Pinned image tag (default `pentarisc/firesim-lab:latest`) |
+| `FIRESIM_IMAGE` | Pinned image tag (default `docker.io/pentarisc/firesim-lab:latest`) |
+| `CONTAINER_RUNTIME` | Detected container runtime (`docker`, `podman`, or `nerdctl`); override with `--runtime=<name>` or `FIRESIM_RUNTIME` |
 | `CONTAINER_NAME` | Derived from the workspace basename; one container per workspace |
 | `HOST_WORKSPACE_DIR` | Workspace directory on the host, bind-mounted as `/target` |
 | `HOST_AWS_DIR` | Host AWS directory, bind-mounted at `~/.aws` |
 | `HOST_SSH_DIR` | Host SSH directory, bind-mounted at `~/.ssh` |
 | `HOST_UID`, `HOST_GID` | Your host user's UID/GID, recorded for the cache volume names |
-| `CONTAINER_MEMORY_LIMIT` | Docker memory ceiling for the container (default `16g`) |
-| `CONTAINER_MEMORY_RESERVE` | Docker memory reservation (default `8g`) |
+| `CONTAINER_MEMORY_LIMIT` | Memory ceiling for the container (default `16g`) |
+| `CONTAINER_MEMORY_RESERVE` | Memory reservation for the container (default `8g`) |
 | `VOLUME_SBT_IVY`, `VOLUME_SBT_COURSIER`, `VOLUME_SBT_BOOT`, `VOLUME_SBT_GLOBAL`, `VOLUME_CCACHE` | Per-UID cache volume names referenced by Compose |
 
 :::{note}

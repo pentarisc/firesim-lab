@@ -1,12 +1,19 @@
-# Docker Architecture
+# Container Architecture
 
 The entire firesim-lab toolchain — Scala/SBT, Verilator, the FireSim and
 firesim-lab source trees, the Python `fslab` CLI, and the FPGA tooling — ships
-inside a single Docker image. You never install any of it on the host. This page
-is a reference for how that image is structured, how the two compose files differ,
-and — the part that matters most if you are extending the framework — **how to
-iterate on the CLI and on bridges locally without pushing anything to the
-firesim-lab repository.**
+inside a single container image (a standard OCI image, published to Docker Hub).
+You never install any of it on the host. This page is a reference for how that
+image is structured, how the two compose files differ, and — the part that
+matters most if you are extending the framework — **how to iterate on the CLI
+and on bridges locally without pushing anything to the firesim-lab repository.**
+
+```{note}
+"Docker" appears throughout this page because the image is built and published
+via Docker, and local development (below) is a Docker-only workflow. The
+production runtime — the `firesim-lab` launcher and `docker-compose.yaml` — also
+runs under Podman, nerdctl, and Finch; see {ref}`container-runtime-support` below.
+```
 
 This page assumes you already know how to *use* the container as an end user. If
 you do not, read {doc}`/installation/host-vs-container` and
@@ -39,8 +46,8 @@ The files that define all of this live under [docker/](https://github.com/pentar
 | `docker-compose.yaml` | Production runtime — driven by the `firesim-lab` launcher |
 | `docker-compose-dev.yaml` | Local-development runtime — bind-mounts your clone |
 | `entrypoint.sh` | Runtime UID/GID remapping; runs as root, drops privileges |
-| `firesim-lab-shell` | Privilege-dropping shell for `docker exec` sessions |
-| `firesim-lab` | Host-side launcher script (writes `.firesim-lab.env`, runs compose) |
+| `firesim-lab-shell` | Privilege-dropping shell for exec sessions (`docker exec`, `podman exec`, ...) |
+| `firesim-lab` | Host-side launcher script (detects the container runtime, writes `.firesim-lab.env`, runs compose) |
 | `install.sh` | Host-side installer that lays down the launcher and config dirs |
 | `firesim-requirements.txt` | Python deps installed into the image's venv |
 
@@ -166,11 +173,11 @@ and every UID. There is no `user:` override in either compose file. Instead
 3. Adds the pseudo-user to `firesim-lab-cache` so it can write the cache dirs.
 4. Sets `umask 002` and drops privileges with `gosu`.
 
-`firesim-lab-shell` exists for the same reason but for `docker exec` sessions:
-`docker exec -u <uid>` skips `initgroups()`, so the `firesim-lab-cache`
-supplementary group would be missing; `gosu` calls `initgroups()` correctly.
-This is why interactive dev shells go through `firesim-lab-shell` (or, in raw dev
-mode, `docker exec --user firesim-lab`).
+`firesim-lab-shell` exists for the same reason but for exec sessions: `docker
+exec -u <uid>` (and the Podman/nerdctl equivalents) skip `initgroups()`, so the
+`firesim-lab-cache` supplementary group would be missing; `gosu` calls
+`initgroups()` correctly. This is why interactive shells go through
+`firesim-lab-shell` (or, in raw dev mode, `docker exec --user firesim-lab`).
 
 ## The two compose files
 
@@ -188,6 +195,24 @@ gets mounted and how the container is launched.
 Everything else — the named volumes, the environment block, the resource limits,
 the entrypoint behavior — is identical. The dev file is deliberately a thin
 overlay: it changes *who provides Tier 2* and nothing structural.
+
+(container-runtime-support)=
+## Container runtime support
+
+`docker-compose.yaml` — the production file, driven by the `firesim-lab`
+launcher — runs under **Docker, Podman, and nerdctl** (rootful); the launcher
+auto-detects whichever is on `PATH` (override with `--runtime=<name>` or
+`FIRESIM_RUNTIME=<name>`) and pins the choice per-workspace as
+`CONTAINER_RUNTIME` in `.firesim-lab.env`. See
+{doc}`/setup/host-prerequisites` for per-runtime setup notes.
+
+`docker-compose-dev.yaml` — the local-development workflow below — is
+**Docker-only** by design: it is always invoked directly (`docker compose -f
+docker-compose-dev.yaml ...`), never through the launcher, and its AWS/SSH
+directory fallbacks rely on `docker compose`'s variable interpolation. There is
+no need to run local development under another runtime, since the point is to
+iterate on source that later ships in the one published image regardless of
+which runtime end users run it under.
 
 The single meaningful addition in the dev file is this mount:
 

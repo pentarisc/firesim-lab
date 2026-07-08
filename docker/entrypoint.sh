@@ -76,12 +76,33 @@ fi
 HOST_UID=$(stat -c '%u' /target)
 HOST_GID=$(stat -c '%g' /target)
 
-# If /target is owned by root (unusual but possible), warn and proceed —
-# the container will run as root which is not ideal but functional.
+# If /target is owned by root (UID 0) from inside the container, there are two
+# distinct causes that look identical to `stat`:
+#
+#   1. Rootless Podman/nerdctl: the container runs in a user namespace where
+#      container-UID-0 is mapped to the *real* host user's UID. Files this
+#      "root" writes to /target are remapped by the kernel back to the real
+#      host user across the bind mount, so running as-is (no gosu drop) is
+#      already correct here — there is nothing to fix. A rootless user
+#      namespace shows a non-identity mapping in /proc/self/uid_map (e.g.
+#      "0 1000 1"); genuine root shows the identity mapping ("0 0
+#      4294967295"). This is a kernel-level signal, not runtime-specific, so
+#      it works the same for Podman and nerdctl. (--userns=keep-id inverts
+#      this mapping and is not supported — it would break the gosu/passwd
+#      dance in the non-root branch below instead.)
+#   2. A genuinely root-owned workspace under a rootful runtime (e.g. a
+#      Windows /mnt/c path, or a workspace created by a different user) —
+#      here running as root really does write root-owned files back to the
+#      host, which is the misconfiguration this warning exists to catch.
 if [[ "${HOST_UID}" -eq 0 ]]; then
-    echo "[entrypoint] WARNING: /target is owned by root (UID 0)." >&2
-    echo "[entrypoint] Running as root. For proper UID mapping, ensure" >&2
-    echo "[entrypoint] HOST_WORKSPACE_DIR is owned by your host user." >&2
+    if [[ "$(awk 'NR==1{print $2; exit}' /proc/self/uid_map 2>/dev/null)" != "0" ]]; then
+        echo "[entrypoint] Rootless container runtime detected (user-namespace-mapped)." >&2
+        echo "[entrypoint] Running as the mapped user — files will appear correctly owned on the host." >&2
+    else
+        echo "[entrypoint] WARNING: /target is owned by root (UID 0)." >&2
+        echo "[entrypoint] Running as root. For proper UID mapping, ensure" >&2
+        echo "[entrypoint] HOST_WORKSPACE_DIR is owned by your host user." >&2
+    fi
     exec "$@"
 fi
 

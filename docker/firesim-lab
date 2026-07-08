@@ -23,6 +23,10 @@
 #
 #  Non-interactive (CI / scripted):
 #    FIRESIM_IMAGE=firesim-lab:v2 firesim-lab
+#
+#  Container runtime (docker, podman, nerdctl, finch):
+#    Auto-detected on first run and pinned per-workspace in .firesim-lab.env.
+#    Override with --runtime=<name> or FIRESIM_RUNTIME=<name>.
 # =============================================================================
 
 set -euo pipefail
@@ -98,6 +102,12 @@ ENV_FILE="$WORKSPACE_DIR/.firesim-lab.env"
 # and bypasses the version-skew gate.
 _IMAGE_OVERRIDE="${FIRESIM_IMAGE:-}"
 
+# ── Explicit runtime override (CI / advanced) ────────────────────────────────
+# A non-empty value here means the caller deliberately picked a container
+# runtime via the environment; it wins over any persisted workspace pin and
+# over auto-detection. The --runtime=<name> flag (parsed below) wins over this.
+_RUNTIME_OVERRIDE="${FIRESIM_RUNTIME:-}"
+
 # ── Installed manifest ────────────────────────────────────────────────────────
 # Written by install.sh.  Pins the firesim-lab version, git ref, and Docker
 # image this installation was set up for.  New workspaces inherit these values;
@@ -128,7 +138,10 @@ COMPOSE_FILE="$INSTALL_DIR/docker-compose.yaml"
 
 # Default image for new workspaces: the installed image from the manifest,
 # falling back to :latest only when no manifest is present (legacy install).
-DEFAULT_IMAGE="${INSTALLED_IMAGE:-pentarisc/firesim-lab:latest}"
+# Fully qualified (docker.io/...): Podman refuses to guess a short name's
+# registry unless the host has unqualified-search-registries configured,
+# while Docker/nerdctl/Finch accept the qualified form too.
+DEFAULT_IMAGE="${INSTALLED_IMAGE:-docker.io/pentarisc/firesim-lab:latest}"
 DEFAULT_VERILATOR_THREADS=$(sysctl -n hw.logicalcpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 DEFAULT_MEMORY_LIMIT="16g"
 DEFAULT_MEMORY_RESERVE="8g"
@@ -139,7 +152,7 @@ DEFAULT_MEMORY_RESERVE="8g"
 DEFAULT_CACHE_GID=2543
 
 # Container name is workspace-scoped only — one container per workspace.
-# Illegal docker name characters are replaced with '-'.
+# Illegal container-name characters are replaced with '-'.
 CONTAINER_NAME="firesim-lab-$(echo "$WORKSPACE_BASENAME" | tr -cs 'a-zA-Z0-9_.-' '-' | sed 's/-*$//')"
 
 # ── Colour helpers ────────────────────────────────────────────────────────────
@@ -167,10 +180,12 @@ usage() {
     $(_cyan "firesim-lab --upgrade")        # re-pin workspace to installed version
     $(_cyan "firesim-lab --status")         # show container status
     $(_cyan "firesim-lab --clean-cache")    # remove SBT/ccache volumes
+    $(_cyan "firesim-lab --runtime=podman") # force a specific container runtime
     $(_cyan "firesim-lab --help")           # show this message
 
   $(_bold "Non-interactive (env vars override prompts):")
     FIRESIM_IMAGE=firesim-lab:v2 firesim-lab
+    FIRESIM_RUNTIME=podman firesim-lab      # docker, podman, nerdctl, or finch
 
   $(_bold "Workspace layout:")
     <workspace>/                    → mounted as /target inside the container
@@ -201,6 +216,7 @@ for arg in "$@"; do
     --reconfigure)  DO_RECONFIGURE=1 ;;
     --status)       DO_STATUS=1 ;;
     --upgrade)      DO_UPGRADE=1 ;;
+    --runtime=*)    _RUNTIME_OVERRIDE="${arg#--runtime=}" ;;
     *)
       echo "$(_red "Unknown option:") $arg"
       usage
@@ -209,14 +225,73 @@ for arg in "$@"; do
   esac
 done
 
-# ── Detect docker compose command ─────────────────────────────────────────────
-if docker compose version &>/dev/null 2>&1; then
-  COMPOSE="docker compose"
-elif command -v docker-compose &>/dev/null; then
-  COMPOSE="docker-compose"
+# ── Resolve container runtime ─────────────────────────────────────────────────
+# Precedence: --runtime=<name> / FIRESIM_RUNTIME env (captured above as
+# _RUNTIME_OVERRIDE) > the workspace's persisted CONTAINER_RUNTIME pin (if that
+# binary is still present) > auto-detect the first of docker/podman/nerdctl/finch
+# found on PATH. Persisted below into .firesim-lab.env once resolved.
+_persisted_runtime=""
+if [[ -f "$ENV_FILE" ]]; then
+  _persisted_runtime="$(sed -n 's/^[[:space:]]*CONTAINER_RUNTIME=//p' "$ENV_FILE" | tail -n1)"
+  _persisted_runtime="${_persisted_runtime%\"}"; _persisted_runtime="${_persisted_runtime#\"}"
+fi
+
+_detect_runtime() {
+  local rt
+  for rt in docker podman nerdctl finch; do
+    command -v "$rt" &>/dev/null && { echo "$rt"; return 0; }
+  done
+  return 1
+}
+
+if [[ -n "$_RUNTIME_OVERRIDE" ]]; then
+  if ! command -v "$_RUNTIME_OVERRIDE" &>/dev/null; then
+    echo "$(_red "Error:") Runtime '$_RUNTIME_OVERRIDE' was requested but is not on PATH."
+    exit 1
+  fi
+  RUNTIME="$_RUNTIME_OVERRIDE"
+elif [[ -n "$_persisted_runtime" && $DO_RECONFIGURE -eq 0 ]] && command -v "$_persisted_runtime" &>/dev/null; then
+  RUNTIME="$_persisted_runtime"
 else
-  echo "$(_red "Error:") Neither 'docker compose' nor 'docker-compose' found."
-  echo "Install Docker Desktop (macOS/Windows) or docker-compose-plugin (Linux)."
+  RUNTIME="$(_detect_runtime)" || {
+    echo "$(_red "Error:") No supported container runtime found (docker, podman, nerdctl, finch)."
+    echo "Install one of these before continuing."
+    exit 1
+  }
+fi
+
+# ── Detect the matching compose command for the resolved runtime ────────────
+case "$RUNTIME" in
+  docker)
+    if docker compose version &>/dev/null 2>&1; then
+      COMPOSE="docker compose"
+    elif command -v docker-compose &>/dev/null; then
+      COMPOSE="docker-compose"
+    fi
+    ;;
+  podman)
+    if podman compose version &>/dev/null 2>&1; then
+      COMPOSE="podman compose"
+    elif command -v podman-compose &>/dev/null; then
+      COMPOSE="podman-compose"
+    fi
+    ;;
+  nerdctl)
+    command -v nerdctl &>/dev/null && nerdctl compose version &>/dev/null 2>&1 && COMPOSE="nerdctl compose"
+    ;;
+  finch)
+    command -v finch &>/dev/null && finch compose version &>/dev/null 2>&1 && COMPOSE="finch compose"
+    ;;
+esac
+
+if [[ -z "${COMPOSE:-}" ]]; then
+  echo "$(_red "Error:") No compose plugin found for runtime '$RUNTIME'."
+  case "$RUNTIME" in
+    docker)  echo "Install Docker Desktop (macOS/Windows) or docker-compose-plugin (Linux)." ;;
+    podman)  echo "Install the 'podman compose' plugin or the standalone podman-compose." ;;
+    nerdctl) echo "Install nerdctl with its bundled compose support (containerd + nerdctl-full)." ;;
+    finch)   echo "Install Finch (bundles compose support)." ;;
+  esac
   exit 1
 fi
 
@@ -251,7 +326,7 @@ if [[ $DO_CLEAN_CACHE -eq 1 ]]; then
   source "$ENV_FILE"
   set +a
   echo "$(_yellow "⚠  Removing SBT and ccache volumes for UID ${HOST_UID}...")"
-  docker volume rm \
+  "$RUNTIME" volume rm \
     "${VOLUME_SBT_IVY}" \
     "${VOLUME_SBT_COURSIER}" \
     "${VOLUME_SBT_BOOT}" \
@@ -267,8 +342,9 @@ if [[ $DO_STATUS -eq 1 ]]; then
   echo ""
   echo "  $(_bold "Workspace") : $WORKSPACE_DIR"
   echo "  $(_bold "Container") : $CONTAINER_NAME"
+  echo "  $(_bold "Runtime")   : $RUNTIME"
   echo ""
-  docker ps -a --filter "name=^/${CONTAINER_NAME}$" \
+  "$RUNTIME" ps -a --filter "name=^/${CONTAINER_NAME}$" \
     --format "  Status    : {{.Status}}\n  Image     : {{.Image}}\n  Created   : {{.RunningFor}}" \
     || echo "  $(_yellow "(no container found)")"
   echo ""
@@ -459,9 +535,9 @@ if [[ $DO_UPGRADE -eq 1 ]]; then
 
   # Remove any existing container so the lifecycle below recreates it on the
   # newly-pinned image — a running or stopped container still uses the old one.
-  if docker ps -a --filter "name=^/${CONTAINER_NAME}$" -q | grep -q .; then
+  if "$RUNTIME" ps -a --filter "name=^/${CONTAINER_NAME}$" -q | grep -q .; then
     echo "  $(_cyan "→ Removing old container so it is recreated on the new image...")"
-    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    "$RUNTIME" rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
   echo ""
 fi
@@ -555,6 +631,12 @@ FIRESIM_LAB_VERSION=${FIRESIM_LAB_VERSION}
 FIRESIM_IMAGE=${FIRESIM_IMAGE}
 CONTAINER_NAME=${CONTAINER_NAME}
 
+# ── Container runtime ────────────────────────────────────────────────────────
+# The container engine used to run firesim-lab (docker, podman, nerdctl, finch).
+# Detected automatically; override with --runtime=<name> or FIRESIM_RUNTIME=<name>,
+# then run 'firesim-lab --reconfigure' to re-pin it.
+CONTAINER_RUNTIME=${RUNTIME}
+
 # ── Workspace ───────────────────────────────────────────────────────────────
 # Mounted as /target inside the container.
 # All subdirectories (projects, build outputs) are persisted automatically.
@@ -611,6 +693,7 @@ echo ""
 echo "  $(_bold "Configuration")"
 echo "  ─────────────────────────────────────────────────────────"
 echo "  Version        : $(_cyan "${FIRESIM_LAB_VERSION:-unknown}")"
+echo "  Runtime        : $(_cyan "$RUNTIME")"
 echo "  Image          : $(_cyan "$FIRESIM_IMAGE")"
 echo "  Container      : $CONTAINER_NAME"
 echo "  Workspace      : $WORKSPACE_DIR  →  /target"
@@ -627,22 +710,22 @@ echo "  ────────────────────────
 echo ""
 
 # ── Image check / pull ────────────────────────────────────────────────────────
-echo "$(_cyan "→ Checking Docker image: $FIRESIM_IMAGE...")"
+echo "$(_cyan "→ Checking image ($RUNTIME): $FIRESIM_IMAGE...")"
 
 _try_pull() {
   echo "  $(_cyan "→ Pulling $FIRESIM_IMAGE...")"
-  if docker pull "$FIRESIM_IMAGE" 2>/dev/null || true; then
-    if docker image inspect "$FIRESIM_IMAGE" &>/dev/null; then
+  if "$RUNTIME" pull "$FIRESIM_IMAGE" 2>/dev/null || true; then
+    if "$RUNTIME" image inspect "$FIRESIM_IMAGE" &>/dev/null; then
       echo "  $(_green "✓") Image pulled successfully."
     else
       echo "  $(_red "✗  Pull failed — the image could not be retrieved.")"
       echo "     This compose file is pull-only (no local build).  Check the image"
-      echo "     name/tag, your network, and 'docker login' if it is private."
+      echo "     name/tag, your network, and '$RUNTIME login' if it is private."
     fi
   fi
 }
 
-if ! docker image inspect "$FIRESIM_IMAGE" &>/dev/null; then
+if ! "$RUNTIME" image inspect "$FIRESIM_IMAGE" &>/dev/null; then
   echo "  $(_yellow "⚠  Image not found locally.")"
   if [[ $DO_PULL -eq 1 ]]; then
     _try_pull
@@ -664,12 +747,12 @@ echo ""
 
 # ── Container lifecycle ───────────────────────────────────────────────────────
 _container_running() {
-  docker ps --filter "name=^/${CONTAINER_NAME}$" --filter "status=running" -q \
+  "$RUNTIME" ps --filter "name=^/${CONTAINER_NAME}$" --filter "status=running" -q \
     | grep -q .
 }
 
 _container_exists() {
-  docker ps -a --filter "name=^/${CONTAINER_NAME}$" -q \
+  "$RUNTIME" ps -a --filter "name=^/${CONTAINER_NAME}$" -q \
     | grep -q .
 }
 
@@ -681,7 +764,7 @@ _wait_for_container() {
     if [[ $waited -ge $max_wait ]]; then
       echo ""
       echo "  $(_red "✗ Container did not start within ${max_wait}s.")"
-      echo "  Check logs: docker logs $CONTAINER_NAME"
+      echo "  Check logs: $RUNTIME logs $CONTAINER_NAME"
       exit 1
     fi
     echo -n "."
@@ -728,8 +811,8 @@ _enter_shell() {
     echo "printf '%b\n' '  \033[2mType exit to return to host shell.\033[0m'"
     echo "printf '%b\n' ''"
   } > "$rc"
-  docker cp "$rc" "$CONTAINER_NAME:/tmp/.firesim-lab-rc" > /dev/null 2>&1 && rm "$rc"
-  docker exec -it "$CONTAINER_NAME" \
+  "$RUNTIME" cp "$rc" "$CONTAINER_NAME:/tmp/.firesim-lab-rc" > /dev/null 2>&1 && rm "$rc"
+  "$RUNTIME" exec -it "$CONTAINER_NAME" \
     firesim-lab-shell bash --rcfile /tmp/.firesim-lab-rc
 }
 
@@ -742,7 +825,7 @@ fi
 
 if _container_exists; then
   echo "  $(_yellow "⚠  Container exists but is stopped — restarting...")"
-  docker start "$CONTAINER_NAME"
+  "$RUNTIME" start "$CONTAINER_NAME"
 else
   echo "$(_cyan "→ Starting container...")"
   _compose up -d

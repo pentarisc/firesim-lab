@@ -46,7 +46,7 @@ You can force a fresh pull at any time with `firesim-lab --pull`.
 
 ## Step 4 — Container start and UID mapping
 
-With the image in place, the launcher brings the container up with Docker Compose (`docker compose up -d`) and waits for it to report ready. As it starts, the container's entrypoint — running briefly as root — performs the UID/GID setup that makes file ownership "just work":
+With the image in place, the launcher brings the container up via its detected runtime's compose command (`docker compose up -d`, or the Podman/nerdctl equivalent) and waits for it to report ready. As it starts, the container's entrypoint — running briefly as root — performs the UID/GID setup that makes file ownership "just work":
 
 1. It reads the UID/GID that **owns `/target`** and creates matching `/etc/passwd` / `/etc/group` entries for that user.
 2. It adds that user to the `firesim-lab-cache` group so the pre-warmed cache volumes are writable.

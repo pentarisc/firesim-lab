@@ -16,7 +16,7 @@ the links into the per-area detail pages and the {doc}`extending` recipes.
 
 `fslab` is a [Typer](https://typer.tiangolo.com/) application (entry point
 `fslab.cli:app`, declared in `pyproject.toml` under `[project.scripts]`) that
-runs **inside the firesim-lab Docker container**, with the user's project
+runs **inside the firesim-lab container**, with the user's project
 directory bind-mounted at `/target`. It does not implement any hardware
 compilation itself. Its job is to:
 

@@ -24,8 +24,16 @@ set -euo pipefail
 
 HOST_UID=$(stat -c '%u' /target)
 
+# See entrypoint.sh for the full rationale: a root-owned /target can mean
+# either a rootless-userns-mapped runtime (expected, correct — /proc/self/
+# uid_map shows a non-identity mapping) or a genuinely root-owned workspace
+# under a rootful runtime (a real misconfiguration).
 if [[ "${HOST_UID}" -eq 0 ]]; then
-    echo "[firesim-lab-shell] WARNING: /target is owned by root; running as root." >&2
+    if [[ "$(awk 'NR==1{print $2; exit}' /proc/self/uid_map 2>/dev/null)" != "0" ]]; then
+        echo "[firesim-lab-shell] Rootless container runtime detected; running as the mapped user." >&2
+    else
+        echo "[firesim-lab-shell] WARNING: /target is owned by root; running as root." >&2
+    fi
     exec "$@"
 fi
 

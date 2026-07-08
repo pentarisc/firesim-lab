@@ -10,7 +10,7 @@ and firesim-lab actively refuses to run mismatched combinations rather than
 failing in confusing ways later:
 
 1. **The host install** — `install.sh` pins the launcher scripts, the
-   `docker-compose.yaml`, and the Docker image tag to the version you install.
+   `docker-compose.yaml`, and the container image tag to the version you install.
 2. **The workspace** — each `.firesim-lab.env` records the version it was
    created against, so the host launcher and the container image stay a matched
    set.
@@ -19,7 +19,7 @@ failing in confusing ways later:
    files whose version is incompatible with itself.
 
 The single source of truth for the version number is the `fslab` package
-(`fslab-cli/pyproject.toml`); the git tag and the Docker image tag are derived
+(`fslab-cli/pyproject.toml`); the git tag and the container image tag are derived
 from it.
 
 ```{contents}
@@ -40,7 +40,7 @@ changes a schema); a differing `MAJOR` or `MINOR` is treated as incompatible.
 
 ## How a version is installed and pinned
 
-When you install firesim-lab, the install ref maps to a Docker image tag and a
+When you install firesim-lab, the install ref maps to a container image tag and a
 contract version:
 
 | Install ref            | Image tag | Recorded version |
