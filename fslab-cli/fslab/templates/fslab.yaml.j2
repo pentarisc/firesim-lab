@@ -279,12 +279,16 @@ target:
 
   build:
     fpga_frequency: 100.0         # MHz, must satisfy 0 < f <= 300
-    build_strategy: "TIMING"      # BASIC|AREA|TIMING|EXPLORE|CONGESTION|NORETIMING|DEFAULT
 
     # Bitbuilder-specific tunables. The platform selects which bitbuilder
-    # runs; the bitbuilder declares the schema for this block. F2 currently
-    # has no user-tunables, so {} is the right value.
+    # runs; the bitbuilder declares the schema for this block. F2's knobs
+    # are all optional Vivado directives passed through to
+    # aws_build_dcp_from_cl.py — omit any of them to use its own default.
     bitbuilder_args: {}
+      # place: "SSI_SpreadLogic_high"
+      # phy_opt: "AggressiveExplore"
+      # route: "AggressiveExplore"
+      # extra_args: "--tag my-build --no-encrypt"
 
     # Host-acquisition config. host.type is the discriminator.
     host:

@@ -52,9 +52,9 @@
       RESULT_PATH         result.yaml destination
       STAMP_PATH          remote stamp file (for monitor build_id check)
 
-  Project-static config (fpga_frequency, build_strategy, s3 settings,
-  region, dcp_glob) is rendered in by Jinja2 below. Re-render with
-  `fslab generate` when those fields change in fslab.yaml.
+  Project-static config (fpga_frequency, place/phy_opt/route/extra_args,
+  s3 settings, region, dcp_glob) is rendered in by Jinja2 below. Re-render
+  with `fslab generate` when those fields change in fslab.yaml.
 
   Error handling
   --------------
@@ -90,7 +90,10 @@ PROJECT_NAME="{{ project_name }}"
 QUINTUPLET="{{ quintuplet }}"
 DCP_GLOB="{{ dcp_glob }}"
 FPGA_FREQUENCY="{{ fpga_frequency }}"
-BUILD_STRATEGY="{{ build_strategy }}"
+PLACE="{{ place or '' }}"
+PHY_OPT="{{ phy_opt or '' }}"
+ROUTE="{{ route or '' }}"
+EXTRA_ARGS="{{ extra_args or '' }}"
 S3_BUCKET_BASE="{{ s3_bucket_base }}"
 APPEND_USERID_REGION={{ "true" if append_userid_region else "false" }}
 REGION="{{ aws_region }}"
@@ -211,7 +214,10 @@ CURRENT_STAGE=build
 bash "$REMOTE_BUILD_SCRIPT" \
     --cl_dir "$CL_DIR" \
     --frequency "$FPGA_FREQUENCY" \
-    --strategy "$BUILD_STRATEGY"
+    ${PLACE:+--place "$PLACE"} \
+    ${PHY_OPT:+--phy_opt "$PHY_OPT"} \
+    ${ROUTE:+--route "$ROUTE"} \
+    ${EXTRA_ARGS:+--extra_args "$EXTRA_ARGS"}
 
 # ---------------------------------------------------------------------------
 # 4. Locate the DCP tar produced by the build.

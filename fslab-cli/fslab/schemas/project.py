@@ -51,7 +51,6 @@ from __future__ import annotations
 import re
 from typing import Any, Optional, Annotated, Dict, Union, List
 from pathlib import Path
-from enum import Enum
 
 from pydantic import (
     BaseModel,
@@ -266,24 +265,11 @@ class DesignConfig(BaseModel):
 # target: block
 # ---------------------------------------------------------------------------
 
-class BuildStrategy(str, Enum):
-    """Vivado build strategy. Subclassing `str` lets pydantic accept the
-    YAML literal directly and lets `build-bitstream.sh` consume `.value`."""
-
-    BASIC = "BASIC"
-    AREA = "AREA"
-    TIMING = "TIMING"
-    EXPLORE = "EXPLORE"
-    CONGESTION = "CONGESTION"
-    NORETIMING = "NORETIMING"
-    DEFAULT = "DEFAULT"
-
-
 class TargetBuildConfig(BaseModel):
     """`target.build:` section of the project YAML.
 
     New shape — four orthogonal axes:
-      * fpga_frequency / build_strategy   build-time parameters
+      * fpga_frequency                    build-time parameter
       * bitbuilder_args                   per-bitbuilder user tunables
       * host                              host-acquisition strategy
                                           (discriminated union)
@@ -298,10 +284,6 @@ class TargetBuildConfig(BaseModel):
         gt=0.0,
         le=300.0,
         description="Build frequency in MHz; must be in (0, 300].",
-    )
-    build_strategy: BuildStrategy = Field(
-        BuildStrategy.TIMING,
-        description="Vivado build strategy.",
     )
 
     bitbuilder_args: dict[str, Any] = Field(

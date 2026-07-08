@@ -99,8 +99,7 @@ target:
 
   build:
     fpga_frequency: 100.0         # target FPGA clock in MHz (0 < f <= 300)
-    build_strategy: "TIMING"      # Vivado strategy
-    bitbuilder_args: {}           # F2 has no tunables today
+    bitbuilder_args: {}           # optional place/phy_opt/route/extra_args (Vivado directives)
 
     host:
       type: ec2_launch                          # framework-managed EC2 build host
@@ -148,7 +147,6 @@ fslab build fpga --skip-compile  # reuse compile output, rebuild bitstream
 target:
   build:
     fpga_frequency: 100.0
-    build_strategy: "TIMING"
     bitbuilder_args: {}
     host:
       type: external
@@ -165,11 +163,8 @@ target:
 `fpga_frequency`
 : Build frequency in MHz; must be in `(0, 300]`.
 
-`build_strategy`
-: Vivado strategy: `BASIC`, `AREA`, `TIMING`, `EXPLORE`, `CONGESTION`, `NORETIMING`, or `DEFAULT`. Default `TIMING`.
-
 `bitbuilder_args`
-: Per-bitbuilder tunables, validated against the platform's bitbuilder schema `[BBA-01]`. The F2 bitbuilder has no user-tunables today, so `{}` is correct.
+: Per-bitbuilder tunables, validated against the platform's bitbuilder schema `[BBA-01]`. For F2: optional `place`, `phy_opt`, `route` — Vivado directives forwarded as-is to `aws_build_dcp_from_cl.py`; omit any of them to use that script's own built-in default rather than pinning one here — plus `extra_args`, a verbatim string appended to the same invocation (e.g. `--tag`, `--no-encrypt`).
 
 ### `host:` — build-host acquisition
 

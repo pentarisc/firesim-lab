@@ -122,7 +122,10 @@ class BuildInfo:
     project_name: str
     quintuplet: str
     fpga_frequency: Optional[int] = None
-    build_strategy: Optional[str] = None
+    place: Optional[str] = None
+    phy_opt: Optional[str] = None
+    route: Optional[str] = None
+    extra_args: Optional[str] = None
 
 
 @dataclass
@@ -295,7 +298,10 @@ def _stamp_to_dict(stamp: BuildStamp) -> dict:
             "project_name": stamp.build.project_name,
             "quintuplet": stamp.build.quintuplet,
             "fpga_frequency": stamp.build.fpga_frequency,
-            "build_strategy": stamp.build.build_strategy,
+            "place": stamp.build.place,
+            "phy_opt": stamp.build.phy_opt,
+            "route": stamp.build.route,
+            "extra_args": stamp.build.extra_args,
         },
         "cleanup": stamp.cleanup,
         "result": stamp.result,
@@ -329,7 +335,10 @@ def _stamp_from_dict(data: dict) -> BuildStamp:
             project_name=build["project_name"],
             quintuplet=build["quintuplet"],
             fpga_frequency=build.get("fpga_frequency"),
-            build_strategy=build.get("build_strategy"),
+            place=build.get("place"),
+            phy_opt=build.get("phy_opt"),
+            route=build.get("route"),
+            extra_args=build.get("extra_args"),
         ),
         cleanup=data["cleanup"],
         finished_at=data.get("finished_at"),

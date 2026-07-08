@@ -82,7 +82,7 @@ def make_registry_file_dict() -> dict:
                     "args_schema": "F2BitbuilderArgs",
                     "params_schema": "F2BitbuilderParams",
                     "build_script_basename": "build-bitstream.sh",
-                    "build_script_flags": ["--cl_dir", "--frequency", "--strategy"],
+                    "build_script_flags": ["--cl_dir", "--frequency", "--place", "--phy_opt", "--route", "--extra_args"],
                     "template_cl_name": "cl_firesim",
                     "remote_cl_parent_subdir": "hdk/cl/developer_designs",
                     "artifact_glob": "build/checkpoints/*.tar",
@@ -214,7 +214,6 @@ def make_project_dict(project_dir: str | Path, *, sources: list[str] | None = No
                 "fpga_sim": "xsim",
                 "build": {
                     "fpga_frequency": 90.0,
-                    "build_strategy": "TIMING",
                     "bitbuilder_args": {},
                     "host": {
                         "type": "external",
