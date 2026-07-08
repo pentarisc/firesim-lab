@@ -2,8 +2,8 @@
 name: firesim-lab-sim
 description: The recurring end-to-end firesim-lab flow — use every time the user wants to simulate a Verilog/SystemVerilog design with firesim-lab, or to take a passing design to AWS F2. Self-orchestrates from the saved state stamp: scaffold a project, place RTL + payload, configure fslab.yaml (clk/reset/enable, bridges, port_map, ref: params, mem_base), build (compile-fix loop via the build-runner sub-agent), run the metasim, and evaluate a user-defined success criterion. F2 (build/run on a real FPGA, costs money) is HARD-GATED behind a passing metasim. Delegates verbose/long autonomous work to sub-agents; all interaction stays here.
 metadata:
-  fslab_version: "0.9.0rc1"
-  skill_version: "0.9.0rc1"
+  fslab_version: "0.9.0"
+  skill_version: "0.9.0"
 ---
 
 # firesim-lab-sim — the recurring flow (self-orchestrating)
@@ -23,7 +23,7 @@ are doing; never silently guess on anything affecting correctness or cost.
    Use `fslab_exec` / `fslab_in_dir` only — never inline a container command.
 2. **Version detect + bind (§2.5):** read `fslab --version`; cross-check
    `FIRESIM_LAB_VERSION`. Bind every doc link to `…/en/v<active>/…`. This skill is
-   `fslab_version 0.9.0rc1` — on a MAJOR.MINOR mismatch, **halt** with the
+   `fslab_version 0.9.0` — on a MAJOR.MINOR mismatch, **halt** with the
    `firesim-lab --upgrade` guidance.
 3. **Read both stamps:**
    - workspace `<workspace>/.firesim-lab.skill-state.json` (written by Setup).

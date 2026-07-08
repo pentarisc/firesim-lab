@@ -78,8 +78,8 @@ it to the workspace `.gitignore`. Schema (`schema_version: 1`):
 ```json
 {
   "schema_version": 1,
-  "fslab_version": "0.9.0rc1",
-  "skill_version": "0.9.0rc1",
+  "fslab_version": "0.9.0",
+  "skill_version": "0.9.0",
   "created_at": "2026-06-19T00:00:00Z",
   "updated_at": "2026-06-19T00:00:00Z",
   "setup": {
@@ -118,7 +118,7 @@ Always bump `updated_at` on every write; set `created_at` once.
 
 ## Skill↔tool version gate
 
-This skill is `fslab_version 0.9.0rc1` → compatible with any installed tool of the
+This skill is `fslab_version 0.9.0` → compatible with any installed tool of the
 same MAJOR.MINOR (patch always OK), matching the rule `fslab.yaml`/`registry.yaml`
 use. On a MINOR mismatch, halt with the tool's standard `firesim-lab --upgrade`
 guidance rather than proceeding.
