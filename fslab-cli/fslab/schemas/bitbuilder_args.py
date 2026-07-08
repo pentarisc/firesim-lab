@@ -49,9 +49,9 @@ Adding a new bitbuilder
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ---------------------------------------------------------------------------
@@ -96,12 +96,46 @@ class BitbuilderParamsBase(BaseModel):
 class F2BitbuilderArgs(BitbuilderArgsBase):
     """User-tunable args for the F2 bitbuilder.
 
-    Currently empty. F2's user-facing knobs (S3 bucket, AGFI replication,
-    SNS) live under target.build.publish (aws_afi). EC2-launch knobs live
-    under target.build.host (ec2_launch). This class is reserved for
-    bitbuilder-internal tunables that don't fit the host or publish axes.
+    F2's other user-facing knobs (S3 bucket, AGFI replication, SNS) live
+    under target.build.publish (aws_afi). EC2-launch knobs live under
+    target.build.host (ec2_launch). This class holds bitbuilder-internal
+    tunables that don't fit the host or publish axes.
+
+    place/phy_opt/route are optional and passed through as-is to
+    `aws_build_dcp_from_cl.py` (via the vendored `build-bitstream.sh`
+    patch, docker/patches/f2-build-bitstream.sh) — omit any of them to
+    fall back to that script's own built-in default rather than
+    duplicating its defaults here.
     """
-    pass
+    place: Optional[str] = Field(
+        None,
+        description=(
+            "Vivado place directive (aws_build_dcp_from_cl.py --place). "
+            "Omit to use its built-in default (SSI_SpreadLogic_high)."
+        ),
+    )
+    phy_opt: Optional[str] = Field(
+        None,
+        description=(
+            "Vivado physical-optimization directive (--phy_opt). Omit to "
+            "use its built-in default (AggressiveExplore)."
+        ),
+    )
+    route: Optional[str] = Field(
+        None,
+        description=(
+            "Vivado route directive (--route). Omit to use its built-in "
+            "default (AggressiveExplore)."
+        ),
+    )
+    extra_args: str = Field(
+        "",
+        description=(
+            "Verbatim extra flags appended as-is to the "
+            "aws_build_dcp_from_cl.py invocation (e.g. --clock_recipe_a/b/c, "
+            "--tag, --no-encrypt, --mode, --flow)."
+        ),
+    )
 
 
 @register_bitbuilder_params

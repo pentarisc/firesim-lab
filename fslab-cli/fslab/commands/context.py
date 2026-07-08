@@ -201,8 +201,14 @@ def _build_template_context(
 
     build_cfg          = config.target.build
     fpga_frequency     = getattr(build_cfg, "fpga_frequency", None)
-    _strategy          = getattr(build_cfg, "build_strategy", None)
-    build_strategy     = getattr(_strategy, "name", _strategy) if _strategy else None
+    # F2-specific Vivado directives, read straight from the raw
+    # bitbuilder_args dict (not yet re-validated through F2BitbuilderArgs
+    # at this point in the pipeline — that happens in BuildConfig.from_validated).
+    _bb_args           = getattr(build_cfg, "bitbuilder_args", None) or {}
+    place              = _bb_args.get("place")
+    phy_opt            = _bb_args.get("phy_opt")
+    route              = _bb_args.get("route")
+    extra_args         = _bb_args.get("extra_args", "")
 
     # publish fields only meaningful for aws_afi; None elsewhere keeps the
     # wrapper render harmless when platform=f2 + publish=none (the rendered
@@ -360,7 +366,10 @@ def _build_template_context(
         "quintuplet":        quintuplet,
         # remote_build/<platform>.sh.j2 (background-build wrapper)
         "fpga_frequency":       fpga_frequency,
-        "build_strategy":       build_strategy,
+        "place":                place,
+        "phy_opt":              phy_opt,
+        "route":                route,
+        "extra_args":           extra_args,
         "s3_bucket_base":       s3_bucket_base,
         "append_userid_region": append_userid_region,
         "dcp_glob":             dcp_glob,

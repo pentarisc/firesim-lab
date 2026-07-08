@@ -87,8 +87,9 @@ The context carries several shapes:
   passed through so `CMakeLists.txt.j2` can read `platform_cfg.extra_libs`,
   `metasim_cfg.cmake_targets`, etc. directly.
 - **Wrapper fields** — for the F2 remote-build script (`fpga_frequency`,
-  `build_strategy`, `s3_bucket_base`, `aws_region`, …), pulled from
-  `target.build` and only meaningful for the relevant publish/host types.
+  `place`/`phy_opt`/`route`/`extra_args`, `s3_bucket_base`, `aws_region`, …),
+  pulled from `target.build` and only meaningful for the relevant publish/host
+  types.
 
 ### The three bridge shapes
 

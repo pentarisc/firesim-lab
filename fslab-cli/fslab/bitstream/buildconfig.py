@@ -21,8 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from fslab.schemas.bitbuilder_args import F2BitbuilderArgs
 from fslab.schemas.host_model import HostModelConfig
-from fslab.schemas.project import BuildStrategy
 from fslab.schemas.publish import PublishConfig
 from fslab.utils.placeholders import substitute
 
@@ -85,7 +85,13 @@ class BuildConfig:
 
     # --- build params ------------------------------------------------------
     fpga_frequency: float
-    build_strategy: BuildStrategy
+    place: Optional[str]
+    """Vivado place directive (F2-specific, from bitbuilder_args). None
+    falls back to build-bitstream.sh's own default. Assumes the only live
+    bitbuilder is f2 — see from_validated's resolution of this field."""
+    phy_opt: Optional[str]
+    route: Optional[str]
+    extra_args: str
 
     # --- host-acquisition config (discriminated union) --------------------
     host: HostModelConfig
@@ -240,6 +246,12 @@ class BuildConfig:
             "remote_platform_path"
         )
 
+        # --- F2-specific bitbuilder args ------------------------------------
+        # F2BitbuilderArgs is the only bitbuilder args schema live today
+        # (registry.yaml has just one bitbuilder: f2); this resolution will
+        # need to become bitbuilder-id-aware if a second one goes live.
+        f2_args = F2BitbuilderArgs.model_validate(build.bitbuilder_args or {})
+
         return cls(
             project_name=project_name,
             platform_id=platform_id,
@@ -257,7 +269,10 @@ class BuildConfig:
             remote_build_script_name=bb_entry.build_script_basename,
             registry_default_remote_platform_path=registry_default_remote_platform_path,
             fpga_frequency=float(build.fpga_frequency),
-            build_strategy=BuildStrategy(build.build_strategy),
+            place=f2_args.place,
+            phy_opt=f2_args.phy_opt,
+            route=f2_args.route,
+            extra_args=f2_args.extra_args,
             host=build.host,
             publish=build.publish,
         )

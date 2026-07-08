@@ -32,8 +32,7 @@ target:
 
   build:
     fpga_frequency: 100.0         # target FPGA clock in MHz (0 < f <= 300)
-    build_strategy: "TIMING"      # Vivado strategy: BASIC|AREA|TIMING|EXPLORE|CONGESTION|NORETIMING|DEFAULT
-    bitbuilder_args: {}           # per-bitbuilder tunables; F2 has none today
+    bitbuilder_args: {}           # optional place/phy_opt/route/extra_args (Vivado directives)
 
     host:
       type: ec2_launch                          # framework-managed EC2 build host

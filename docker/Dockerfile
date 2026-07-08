@@ -229,6 +229,14 @@ RUN git clone https://github.com/firesim/firesim.git /opt/firesim \
     && git clone https://github.com/firesim/aws-fpga-firesim-f2.git platforms/f2/aws-fpga-firesim-f2 \
     && git -C platforms/f2/aws-fpga-firesim-f2 checkout ${AWS_FPGA_F2_REF}
 
+# Upstream's platforms/f2/build-bitstream.sh parses --strategy but never forwards
+# it into aws_build_dcp_from_cl.py, which has no --strategy concept at all (it
+# uses independent --place/--phy_opt/--route directives instead) — every F2
+# build silently runs with hardcoded upstream defaults. This vendored patch
+# forwards place/phy_opt/route/extra_args through; see
+# docs/prompts/f2-build-strategy-fix-handoff.md for the full investigation.
+COPY patches/f2-build-bitstream.sh /opt/firesim/platforms/f2/build-bitstream.sh
+
 # Stub env.sh — skips build-setup.sh (aws-fpga hdk/sdk handled separately).
 RUN echo 'export FIRESIM_ENV_SOURCED=1' >> /opt/firesim/env.sh && \
     echo 'export FS_DIR=/opt/firesim' >> /opt/firesim/env.sh

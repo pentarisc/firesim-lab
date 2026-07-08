@@ -382,7 +382,8 @@ class F2BitBuilder(BitBuilder):
 
         info(
             f"Staging F2 inputs for {cfg.quintuplet} on {_host_label(host)} "
-            f"(freq={cfg.fpga_frequency} MHz, strategy={cfg.build_strategy.name})"
+            f"(freq={cfg.fpga_frequency} MHz, place={cfg.place or '(default)'}, "
+            f"phy_opt={cfg.phy_opt or '(default)'}, route={cfg.route or '(default)'})"
         )
         if self._log_file:
             info(f"Logging command output to {self._log_file}")
@@ -1025,8 +1026,10 @@ def _initial_local_stamp(
             quintuplet=cfg.quintuplet,
             fpga_frequency=int(cfg.fpga_frequency)
                 if cfg.fpga_frequency is not None else None,
-            build_strategy=cfg.build_strategy.name
-                if cfg.build_strategy is not None else None,
+            place=cfg.place,
+            phy_opt=cfg.phy_opt,
+            route=cfg.route,
+            extra_args=cfg.extra_args,
         ),
         cleanup=cleanup_state,
     )

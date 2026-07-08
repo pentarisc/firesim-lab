@@ -92,7 +92,6 @@ target:
 
   build:
     fpga_frequency: 100.0
-    build_strategy: "TIMING"
     bitbuilder_args: {}
     host:
       type: external

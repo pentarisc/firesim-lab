@@ -166,7 +166,7 @@ Output: `scripts/remote_build_f2.sh`, rendered by `fslab generate` (it is the
 one render-plan entry added conditionally for `platform == "f2"`). It lives under
 `scripts/` so it survives `fslab clean`, and `fslab build fpga` re-uploads it
 each run. Jinja2 bakes in **project-static** config — `project_name`,
-`quintuplet`, `dcp_glob`, `fpga_frequency`, `build_strategy`, `s3_bucket_base`,
+`quintuplet`, `dcp_glob`, `fpga_frequency`, `place`/`phy_opt`/`route`/`extra_args`, `s3_bucket_base`,
 `append_userid_region`, `aws_region`. **Per-build** values (`BUILD_ID`, `S3_KEY`,
 `AFI_NAME`, `CL_DIR`, `REMOTE_BUILD_SCRIPT`, log/result/stamp paths) arrive as
 environment variables at launch, not in the rendered body. Once launched it

@@ -248,7 +248,7 @@ bitbuilders:
     params_schema: "F2BitbuilderParams"
 
     build_script_basename: "build-bitstream.sh"
-    build_script_flags:    ["--cl_dir", "--frequency", "--strategy"]
+    build_script_flags:    ["--cl_dir", "--frequency", "--place", "--phy_opt", "--route", "--extra_args"]
     template_cl_name:      "cl_firesim"
     remote_cl_parent_subdir: "hdk/cl/developer_designs"
     artifact_glob:         "build/checkpoints/*.tar"
