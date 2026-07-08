@@ -43,7 +43,9 @@
 #  Build arguments
 #  ───────────────
 #  FIRESIM_COMMIT     git ref for firesim          (default: pinned SHA below)
-#  AWS_FPGA_F2_REF    git ref for aws-fpga-firesim-f2 fork (default: pinned SHA)
+#  AWS_FPGA_F2_REF    git ref for firesim/aws-fpga-firesim-f2 (default: pinned SHA;
+#                     overrides the stale `rocket`-branch pin in firesim/firesim's
+#                     own .gitmodules — see the Stage 2 comment below)
 #  FIRESIM_LAB_COMMIT git ref for firesim-lab       (default: main; CI passes the
 #                     release tag so the image carries the tagged source)
 #  SBT_VERSION        SBT launcher version          (default: 1.10.1)
@@ -209,10 +211,13 @@ ENV CACHE_GID=${CACHE_GID}
 FROM base AS firesim-stage
 
 ARG FIRESIM_COMMIT=ef2051a94e903e7e4f2fe583c91fb1d44ac60a06
-ARG AWS_FPGA_F2_REF=f4c4980c3ee1d5add25a8aefcf38720ff22d73c2
+ARG AWS_FPGA_F2_REF=6d714e6409d8d26f12b209f54b3641115a149900
 
 # /opt/firesim is root-owned, world-readable (755).  No chown required.
-# We also overwrite the aws-fpga-firesim-f2 fork with our own to support ubuntu 24.04.
+# firesim/firesim's own .gitmodules pins aws-fpga-firesim-f2's `rocket` branch,
+# which is stale (missing Vivado 2025.1/Ubuntu 24.04 support and later timing/PCI
+# fixes). We override with upstream firesim/aws-fpga-firesim-f2's `main` branch
+# instead, which has both.
 RUN git clone https://github.com/firesim/firesim.git /opt/firesim \
     && cd /opt/firesim \
     && git checkout ${FIRESIM_COMMIT} \
@@ -221,7 +226,7 @@ RUN git clone https://github.com/firesim/firesim.git /opt/firesim \
     && git submodule update --init --recursive \
     && git config -f .gitmodules --remove-section submodule.platforms/f2/aws-fpga-firesim-f2 \
     && rmdir platforms/f2/aws-fpga-firesim-f2 \
-    && git clone https://github.com/pentarisc/aws-fpga-firesim-f2.git platforms/f2/aws-fpga-firesim-f2 \
+    && git clone https://github.com/firesim/aws-fpga-firesim-f2.git platforms/f2/aws-fpga-firesim-f2 \
     && git -C platforms/f2/aws-fpga-firesim-f2 checkout ${AWS_FPGA_F2_REF}
 
 # Stub env.sh — skips build-setup.sh (aws-fpga hdk/sdk handled separately).
