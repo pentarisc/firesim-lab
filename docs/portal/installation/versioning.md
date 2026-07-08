@@ -150,6 +150,52 @@ The built-in `lib/registry.yaml` is stamped to ship with each release, so it
 always matches the container's CLI. For your own registries, migrate the entries
 to any new schema and bump `fslab_version` exactly as you would for a project.
 
+```{note}
+That last sentence is a design intent, not an automatic guarantee — nothing
+currently enforces it in CI. `lib/registry.yaml`'s stamp is a plain string
+literal that has to be bumped by hand alongside `pyproject.toml`, same as
+every other file in the maintainer checklist below. It *has* drifted before
+(caught manually right before tagging `v0.9.0rc1`, where the registry was
+still stamped `0.8.0` against a `0.9.0rc1` CLI) — see the checklist to avoid
+a repeat.
+```
+
+## Maintainer checklist — files to bump together on a release
+
+`fslab-cli/pyproject.toml`'s `version` is the single source of truth for a
+firesim-lab release; every file below carries its own *copy* of that value (or
+of `skill_version`) and goes stale independently if missed. This list was
+built by grepping the whole repo for `fslab_version` / `skill_version` /
+`"version"` and checking each hit — code that reads the field name
+generically (`fslab/utils/versioning.py`, `fslab/utils/state.py`,
+`fslab/schemas/project.py`, `fslab/schemas/registry.py`,
+`fslab/commands/init.py`) or doc prose using illustrative example numbers
+(this page, `docs/portal/troubleshooting/index.md`, `docs/setup-options.md`)
+is **excluded** — those are dynamic or example-only and never need a manual
+bump.
+
+| File | Field(s) |
+|---|---|
+| `fslab-cli/pyproject.toml` | `version` (the source of truth) |
+| `lib/registry.yaml` | `fslab_version` — **the one that bit us in v0.9.0rc1**: built into every image at `/opt/firesim-lab/lib/registry.yaml` and gated by `check_registry_version` on *every* `fslab` command, so a stale MINOR here breaks the whole CLI, silently, for every user of that image |
+| `.claude-plugin/plugin.json` | `version`, `fslab_version` |
+| `.claude-plugin/marketplace.json` | `plugins[].version` |
+| `skills/firesim-lab-help/SKILL.md` | frontmatter `fslab_version`, `skill_version` |
+| `skills/firesim-lab-setup/SKILL.md` | frontmatter `fslab_version`, `skill_version` + one inline prose mention (§ "Skill↔tool compatibility") |
+| `skills/firesim-lab-sim/SKILL.md` | frontmatter `fslab_version`, `skill_version` + one inline prose mention (§ "Version detect + bind") |
+| `skills/firesim-lab-setup/reference/prereqs.md` | example JSON stamp + one inline prose mention |
+| `skills/firesim-lab-sim/reference/metasim.md` | example JSON stamp |
+| `docs/prompts/skill-requirements.md` | the spec's own example JSON stamps (multiple) — this is the one `docs/prompts/*` file that *is* live (see the repo's `CLAUDE.md`, "Version & SKILL synchronization"); the other handoff docs there are historical design logs and don't get updated |
+
+Before trusting this table blind on a future bump, re-run the grep it was
+built from and eyeball anything new — this list is a snapshot, not a
+guarantee against drift:
+
+```bash
+grep -rln "fslab_version\|skill_version" --include="*.md" --include="*.json" --include="*.yaml" --include="*.toml" . \
+  | grep -v "/tests/\|__pycache__\|docs/prompts/versioning-handoff.md"
+```
+
 ## See also
 
 - {doc}`first-container-start` — the launcher lifecycle commands, including
