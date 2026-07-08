@@ -79,8 +79,10 @@ pre-warmed locations regardless of the running UID.
 ### Stage 2 — `firesim`
 
 Clones FireSim at the pinned `FIRESIM_COMMIT` into `/opt/firesim`, initializes
-submodules, and swaps the upstream `aws-fpga-firesim-f2` submodule for the
-pentarisc fork (needed for Ubuntu 24.04 / AWS F2 support). It stubs out
+submodules, and overrides the `aws-fpga-firesim-f2` submodule's pinned commit
+with a newer one from upstream `firesim/aws-fpga-firesim-f2`'s `main` branch
+(needed for Vivado 2025.1 / Ubuntu 24.04 support — `firesim/firesim`'s own
+`.gitmodules` tracks that repo's older, stale `rocket` branch). It stubs out
 `env.sh` so the heavy `build-setup.sh` is skipped, then runs the F2 SDK/HDK
 setup. This tree is root-owned and world-readable; end users only read it.
 
@@ -124,7 +126,7 @@ All four stages are parameterized:
 |---|---|---|
 | `FIRESIM_COMMIT` | `main` | Git ref for FireSim |
 | `FIRESIM_LAB_COMMIT` | `main` | Git ref for firesim-lab |
-| `AWS_FPGA_F2_REF` | `main` | Git ref for the F2 aws-fpga fork |
+| `AWS_FPGA_F2_REF` | `main` | Git ref for `firesim/aws-fpga-firesim-f2` (overrides the stale `rocket`-branch pin in firesim/firesim's `.gitmodules`) |
 | `SBT_VERSION` | `1.10.1` | SBT launcher version |
 | `JAVA_VERSION` | `17` | OpenJDK major version |
 | `CACHE_GID` | `2543` | GID of the `firesim-lab-cache` group |
